@@ -1,3 +1,7 @@
+// first step of the auth work this only checks Supabase tokens nothing uses it yet
+
+// I'll continue the guard & loading user next but I might make a fake supabase project myself first
+
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createRemoteJWKSet, errors, jwtVerify } from 'jose';
@@ -28,17 +32,14 @@ export class TokenVerifierService {
 
   constructor(@Inject(ConfigService) private readonly config: ConfigService) {}
 
-  // resolve caller identity null when the token not trusted
+  // returns who the token belongs to or null if it can't be trusted
   async verify(token: string): Promise<TokenIdentity | null> {
-    // Read on first use so the app still starts where Supabase is not configured.
     const { issuer, keys } = (this.supabase ??= this.loadSupabase());
 
     try {
       const { payload } = await jwtVerify(token, keys, {
         issuer,
         audience: 'authenticated',
-
-        // public-key signatures only; the shared-secret algorithm (HS256) is refused
         algorithms: ['ES256', 'RS256'],
         requiredClaims: ['exp'],
       });
