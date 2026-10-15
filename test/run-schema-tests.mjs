@@ -3,7 +3,6 @@ import { randomBytes } from 'node:crypto';
 import {
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   mkdirSync,
   writeFileSync,
@@ -12,6 +11,29 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
+import {
+  copyMigrationHistory,
+  injectMigrationFailure,
+  migrationNames,
+} from './schema-migrations.mjs';
+
+const initialTables = [
+  'committee',
+  'event_questions',
+  'event_registrations',
+  'events',
+  'member',
+  'member_committee',
+  'permissions',
+  'registration_answers',
+  'registration_blacklist_entries',
+  'role_permissions',
+  'roles',
+  'user_roles',
+  'users',
+];
+// Update this explicit manifest when a migration adds or removes project tables.
+const expectedTables = [...initialTables];
 
 // This runner creates its own server; it never accepts an application database URL.
 const name = `gdg-schema-test-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -69,6 +91,53 @@ function sql(database, query) {
     query,
   ]).trim();
 }
+function tables(database) {
+  const result = sql(
+    database,
+    "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations' ORDER BY tablename",
+  );
+  return result ? result.split('\n') : [];
+}
+function assertTables(database, expected) {
+  assert.deepEqual(
+    tables(database),
+    [...expected].sort(),
+    'Unexpected project tables',
+  );
+}
+function schemaDump(database) {
+  return run('docker', [
+    'exec',
+    name,
+    'pg_dump',
+    '-U',
+    'postgres',
+    '-d',
+    database,
+    '--schema-only',
+    '--no-owner',
+    '--no-privileges',
+    '--exclude-table=public._prisma_migrations',
+  ])
+    .split('\n')
+    .filter(
+      (line) =>
+        !line.startsWith('--') &&
+        !line.startsWith('\\restrict ') &&
+        !line.startsWith('\\unrestrict '),
+    )
+    .join('\n');
+}
+function domainRows(database) {
+  return tables(database).map((table) => [
+    table,
+    sql(
+      database,
+      `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text), '[]'::jsonb) FROM "${table.replaceAll('"', '""')}" r`,
+    ),
+  ]);
+}
+
 try {
   run('docker', ['network', 'create', name]);
   networkStarted = true;
@@ -156,151 +225,175 @@ try {
       DATABASE_URL: url(database),
     });
     assert.match(repeat, /No pending migrations/);
-    assert.equal(
-      sql(
-        database,
-        "SELECT (xpath('/row/c/text()', query_to_xml('SELECT count(*) AS c FROM ' || quote_ident(tablename), false, true, '')))[1]::text FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations' ORDER BY tablename",
-      ),
-      Array(13).fill('0').join('\n'),
+    assertTables(database, expectedTables);
+    assert.deepEqual(
+      domainRows(database),
+      [...expectedTables].sort().map((table) => [table, '[]']),
       'Tests must clean up all committed fixtures',
     );
-    const dump = run('docker', [
-      'exec',
-      name,
-      'pg_dump',
-      '-U',
-      'postgres',
-      '-d',
-      database,
-      '--schema-only',
-      '--no-owner',
-      '--no-privileges',
-    ]);
-    dumps.push(
-      dump
-        .split('\n')
-        .filter(
-          (line) =>
-            !line.startsWith('--') &&
-            !line.startsWith('\\restrict ') &&
-            !line.startsWith('\\unrestrict '),
-        )
-        .join('\n'),
-    );
+    dumps.push(schemaDump(database));
   }
   assert.equal(dumps[0], dumps[1], 'Clean database schemas differ');
   console.log(
     'PASS: two clean replays are equivalent; repeat deploy is a no-op.',
   );
 
-  const failingDatabase = 'gdg_schema_test_failure';
-  run('docker', ['exec', name, 'createdb', '-U', 'postgres', failingDatabase]);
-  const migrations = readdirSync('prisma/migrations').filter((entry) =>
-    /^\d+_/.test(entry),
-  );
-  assert.equal(
-    migrations.length,
-    1,
-    'Update rollback fixture explicitly when migration history grows',
-  );
-  const migration = readFileSync(
-    join('prisma/migrations', migrations[0], 'migration.sql'),
-    'utf8',
-  );
-  assert.match(migration, /COMMIT;\s*$/);
-  const failureRoot = join(scratch, 'prisma');
-  const failureMigration = join(failureRoot, 'migrations', migrations[0]);
-  mkdirSync(failureMigration, { recursive: true });
-  writeFileSync(
-    join(failureRoot, 'schema.prisma'),
-    readFileSync('prisma/schema.prisma'),
-  );
-  writeFileSync(
-    join(failureRoot, 'migrations', 'migration_lock.toml'),
-    readFileSync('prisma/migrations/migration_lock.toml'),
-  );
-  writeFileSync(
-    join(failureMigration, 'migration.sql'),
-    migration.replace(/COMMIT;\s*$/, 'SELECT 1 / 0;\nCOMMIT;\n'),
-  );
-  // Config contains no credentials and uses only the runner-owned environment URL.
-  writeFileSync(
-    join(scratch, 'prisma.config.ts'),
-    `export default { schema: ${JSON.stringify(join(failureRoot, 'schema.prisma'))}, migrations: { path: ${JSON.stringify(join(failureRoot, 'migrations'))} }, datasource: { url: process.env.DATABASE_URL } };\n`,
-  );
-  const failureArgs = [
-    'exec',
-    'prisma',
-    'migrate',
-    'deploy',
-    '--config',
-    join(scratch, 'prisma.config.ts'),
-  ];
-  let rolledBack = false;
-  try {
-    run('pnpm', failureArgs, { DATABASE_URL: url(failingDatabase) });
-  } catch (error) {
-    assert.match(
-      error.message,
-      /division by zero|current transaction is aborted/,
+  const migrations = migrationNames('prisma/migrations');
+  assert(migrations.length > 0, 'Expected committed migration history');
+
+  function verifyFailure(source, history, database, expected) {
+    run('docker', ['exec', name, 'createdb', '-U', 'postgres', database]);
+    const target = history.at(-1);
+    const predecessors = history.slice(0, -1);
+    const failureRoot = join(scratch, database, 'prisma');
+    copyMigrationHistory(source, failureRoot, predecessors);
+    const config = join(scratch, database, 'prisma.config.ts');
+    // Config contains no credentials and uses only the runner-owned URL.
+    writeFileSync(
+      config,
+      `export default { schema: ${JSON.stringify(join(failureRoot, 'schema.prisma'))}, migrations: { path: ${JSON.stringify(join(failureRoot, 'migrations'))} }, datasource: { url: process.env.DATABASE_URL } };\n`,
     );
-    // Prisma can mask the original SQL error while recording the aborted transaction.
-    const logs = spawnSync('docker', ['logs', name], { encoding: 'utf8' });
-    assert.equal(logs.status, 0);
-    assert.match(`${logs.stdout}${logs.stderr}`, /division by zero/);
-    rolledBack = true;
+    const args = ['exec', 'prisma', 'migrate', 'deploy', '--config', config];
+    if (predecessors.length) {
+      run('pnpm', args, { DATABASE_URL: url(database) });
+      // Separate schema: the sentinel never changes the expected project-table manifest.
+      sql(
+        database,
+        "CREATE SCHEMA runner_fixture; CREATE TABLE runner_fixture.preserved(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO runner_fixture.preserved VALUES (1, 'preserved')",
+      );
+    }
+    const beforeSchema = schemaDump(database);
+    const beforeRows = domainRows(database);
+    const original = readFileSync(
+      join(source, 'migrations', target, 'migration.sql'),
+      'utf8',
+    );
+    const targetDirectory = join(failureRoot, 'migrations', target);
+    mkdirSync(targetDirectory, { recursive: true });
+    const targetFile = join(targetDirectory, 'migration.sql');
+    const injected = injectMigrationFailure(original);
+    writeFileSync(
+      targetFile,
+      predecessors.length
+        ? injected.replace(
+            'SELECT 1 / 0;',
+            "UPDATE runner_fixture.preserved SET value = 'changed';\nSELECT 1 / 0;",
+          )
+        : injected,
+    );
+    let failed = false;
+    try {
+      run('pnpm', args, { DATABASE_URL: url(database) });
+    } catch (error) {
+      assert.match(
+        error.message,
+        /division by zero|current transaction is aborted/,
+      );
+      failed = true;
+    }
+    assert(failed, 'Injected migration failure must be observed');
+    assert.equal(
+      schemaDump(database),
+      beforeSchema,
+      'Failed migration changed the previous schema',
+    );
+    assert.deepEqual(
+      domainRows(database),
+      beforeRows,
+      'Failed migration changed previous domain data',
+    );
+    if (predecessors.length)
+      assert.equal(
+        sql(database, 'SELECT value FROM runner_fixture.preserved WHERE id=1'),
+        'preserved',
+      );
+
+    function assertHistory(recovered) {
+      for (const migration of history) {
+        // Names come only from repository migration directories or the runner-owned probe.
+        const escaped = migration.replaceAll("'", "''");
+        assert.equal(
+          sql(
+            database,
+            `SELECT count(*) FILTER (WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL) || ':' || count(*) FILTER (WHERE finished_at IS NULL AND rolled_back_at IS NULL) || ':' || count(*) FILTER (WHERE rolled_back_at IS NOT NULL) FROM _prisma_migrations WHERE migration_name='${escaped}'`,
+          ),
+          migration === target ? (recovered ? '1:0:1' : '0:1:0') : '1:0:0',
+          `Unexpected history for ${migration}`,
+        );
+      }
+    }
+    assertHistory(false);
+    console.log(
+      `PASS: ${target} failure preserved predecessor schema/data and recorded failed history.`,
+    );
+    writeFileSync(targetFile, original);
+    run(
+      'pnpm',
+      [
+        'exec',
+        'prisma',
+        'migrate',
+        'resolve',
+        '--rolled-back',
+        target,
+        '--config',
+        config,
+      ],
+      { DATABASE_URL: url(database) },
+    );
+    run('pnpm', args, { DATABASE_URL: url(database) });
+    assertHistory(true);
+    assertTables(database, expected);
+    if (predecessors.length)
+      assert.equal(
+        sql(database, 'SELECT value FROM runner_fixture.preserved WHERE id=1'),
+        'preserved',
+      );
+    assert.match(
+      run('pnpm', args, { DATABASE_URL: url(database) }),
+      /No pending migrations/,
+    );
+    console.log(
+      `PASS: ${target} recovery succeeded; repeat deploy is a no-op.`,
+    );
   }
-  assert(rolledBack, 'Injected migration failure must be observed');
-  assert.equal(
-    sql(
-      failingDatabase,
-      "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'",
-    ),
-    '0',
+
+  verifyFailure(
+    'prisma',
+    migrations.slice(0, 1),
+    'gdg_schema_test_initial_failure',
+    initialTables,
   );
-  assert.equal(
-    sql(
-      failingDatabase,
-      "SELECT count(*) FROM pg_type WHERE typnamespace='public'::regnamespace AND typtype='e'",
-    ),
-    '0',
-  );
-  assert.equal(
-    sql(
-      failingDatabase,
-      'SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL',
-    ),
-    '1',
-  );
-  console.log(
-    'PASS: injected failure rolled back domain tables/enums while Prisma recorded failed history.',
-  );
-  run(
-    'pnpm',
-    [
-      'exec',
+  if (migrations.length > 1) {
+    verifyFailure(
       'prisma',
-      'migrate',
-      'resolve',
-      '--rolled-back',
-      migrations[0],
-      '--config',
-      join(scratch, 'prisma.config.ts'),
-    ],
-    { DATABASE_URL: url(failingDatabase) },
+      migrations,
+      'gdg_schema_test_latest_failure',
+      expectedTables,
+    );
+  }
+  // Exercise multiple migrations even while the repository has only its initial migration.
+  const probeRoot = join(scratch, 'probe');
+  copyMigrationHistory('prisma', probeRoot, migrations);
+  const probe = '99999999999999_runner_probe';
+  assert(
+    probe > migrations.at(-1),
+    'Probe must sort after committed migrations',
   );
-  run('pnpm', ['prisma:migrate:deploy'], {
-    DATABASE_URL: url(failingDatabase),
-  });
+  mkdirSync(join(probeRoot, 'migrations', probe));
+  writeFileSync(
+    join(probeRoot, 'migrations', probe, 'migration.sql'),
+    'BEGIN;\nCREATE TABLE runner_probe(id integer PRIMARY KEY);\nINSERT INTO runner_probe VALUES (1);\nCOMMIT;\n',
+  );
+  verifyFailure(
+    probeRoot,
+    [...migrations, probe],
+    'gdg_schema_test_probe_failure',
+    [...expectedTables, 'runner_probe'],
+  );
   assert.equal(
-    sql(
-      failingDatabase,
-      "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'",
-    ),
-    '13',
-  );
-  console.log(
-    'PASS: explicit failed-history resolution permits a successful retry.',
+    sql('gdg_schema_test_probe_failure', 'SELECT id FROM runner_probe'),
+    '1',
   );
   console.log(run('pnpm', ['test:e2e'], testEnv));
   if (process.argv.includes('--performance')) {
@@ -488,13 +581,7 @@ try {
       throw new Error('Isolated backend did not become HTTP ready');
     };
     await waitForHttp(startBackend());
-    assert.equal(
-      sql(
-        startupDb,
-        "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'",
-      ),
-      '13',
-    );
+    assertTables(startupDb, expectedTables);
     sql(
       startupDb,
       "INSERT INTO users(full_name,email,updated_at) VALUES ('Preserved fixture','preserved@example.test',CURRENT_TIMESTAMP)",
