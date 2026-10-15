@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, Prisma } from '../src/generated/prisma/client.js';
 import { schemaTestTarget } from './schema-test-target.js';
@@ -22,6 +23,12 @@ const excuse = {
   excuse_reason: 'Documented excuse',
 };
 const rollback = new Error('rollback successful fixture');
+const approvedSkills: { skill_id: number; skill_name: string }[] = JSON.parse(
+  readFileSync(
+    new URL('./fixtures/approved-skills.json', import.meta.url),
+    'utf8',
+  ),
+);
 
 // Normal app e2e runs do not connect to a schema target unless explicitly supplied.
 describe.skipIf(!process.env.TEST_DATABASE_URL)(
@@ -201,6 +208,66 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         });
         await tx.$executeRaw`INSERT INTO role_permissions(role_code, permission_id) VALUES ('MISSING_ROLE', ${permission.permissionId})`;
       }, 'role_permissions_role_code_fkey');
+    });
+
+    it('contains exactly the 32 approved production skill definitions', async () => {
+      const rows =
+        await db.$queryRaw`SELECT skill_id, skill_name FROM skill ORDER BY skill_id`;
+      expect(rows).toEqual(approvedSkills);
+      expect(approvedSkills).toHaveLength(32);
+    });
+
+    it('generates new skill IDs from 1000 and permits explicit IDs', async () => {
+      await valid(async (tx) => {
+        const [row] = await tx.$queryRaw<{ skill_id: number }[]>`
+          INSERT INTO skill(skill_name) VALUES ('Synthetic skill') RETURNING skill_id`;
+        expect(row.skill_id).toBeGreaterThanOrEqual(1000);
+        const explicit = await tx.skill.create({
+          data: { skillId: -100, skillName: 'x'.repeat(255) },
+        });
+        expect(explicit.skillId).toBe(-100);
+        expect(explicit.skillName).toHaveLength(255);
+        const [identity] = await tx.$queryRaw<
+          { identity_start: string; identity_generation: string }[]
+        >`
+          SELECT identity_start, identity_generation FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'skill' AND column_name = 'skill_id'`;
+        expect(identity).toEqual({
+          identity_start: '1000',
+          identity_generation: 'BY DEFAULT',
+        });
+      });
+    });
+
+    it('rejects duplicate skill names on insert and update', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO skill(skill_name) VALUES (${approvedSkills[0].skill_name})`;
+      }, 'skill_skill_name_key');
+      await invalid(async (tx) => {
+        const skill = await tx.skill.create({
+          data: { skillName: 'Synthetic skill rename' },
+        });
+        await tx.$executeRaw`UPDATE skill SET skill_name = ${approvedSkills[0].skill_name} WHERE skill_id = ${skill.skillId}`;
+      }, 'skill_skill_name_key');
+    });
+
+    it('rejects duplicate skill IDs', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO skill(skill_id, skill_name) VALUES (1, 'Synthetic duplicate ID')`;
+      }, 'skill_pkey');
+    });
+
+    it('requires skill names and enforces their 255-character limit', async () => {
+      await expect(
+        db.$transaction(async (tx) => {
+          await tx.$executeRaw`INSERT INTO skill(skill_name) VALUES (NULL)`;
+        }),
+      ).rejects.toThrow(/23502|not-null/);
+      await expect(
+        db.$transaction(async (tx) => {
+          await tx.$executeRaw`INSERT INTO skill(skill_name) VALUES (${'x'.repeat(256)})`;
+        }),
+      ).rejects.toThrow(/22001|character varying\(255\)/);
     });
 
     it('starts without any member-role assignments', async () => {
@@ -524,6 +591,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           {
             table_name: 'person',
             column_name: 'person_id',
+            identity_generation: 'BY DEFAULT',
+          },
+          {
+            table_name: 'skill',
+            column_name: 'skill_id',
             identity_generation: 'BY DEFAULT',
           },
         ]);

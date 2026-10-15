@@ -40,7 +40,11 @@ const expectedTables = [
   'person',
   'role',
   'member_role',
+  'skill',
 ].sort();
+const approvedSkills = JSON.parse(
+  readFileSync('test/fixtures/approved-skills.json', 'utf8'),
+);
 
 // This runner creates its own server; it never accepts an application database URL.
 const name = `gdg-schema-test-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -246,7 +250,9 @@ try {
       domainRows(database).map(([table, rows]) => [
         table,
         JSON.parse(rows).sort((a, b) =>
-          (a.role_code ?? '').localeCompare(b.role_code ?? ''),
+          String(a.role_code ?? a.skill_id ?? '').localeCompare(
+            String(b.role_code ?? b.skill_id ?? ''),
+          ),
         ),
       ]),
       [...expectedTables].sort().map((table) => [
@@ -269,7 +275,11 @@ try {
                 is_privileged: true,
               },
             ].sort((a, b) => a.role_code.localeCompare(b.role_code))
-          : [],
+          : table === 'skill'
+            ? [...approvedSkills].sort((a, b) =>
+                String(a.skill_id).localeCompare(String(b.skill_id)),
+              )
+            : [],
       ]),
       'Tests must preserve approved seeds and clean up all committed fixtures',
     );
@@ -436,7 +446,10 @@ try {
       'utf8',
     ),
   );
-  assertTables(roleDatabase, expectedTables);
+  assertTables(roleDatabase, [
+    ...beforeAssignmentRows.map(([table]) => table),
+    'member_role',
+  ]);
   assert.equal(sql(roleDatabase, 'SELECT count(*) FROM member_role'), '0');
   assert.deepEqual(
     domainRows(roleDatabase).filter(([table]) => table !== 'member_role'),
@@ -444,6 +457,36 @@ try {
   );
   console.log(
     'PASS: member-role migration creates no assignments and preserves all existing domain records.',
+  );
+
+  sql(
+    roleDatabase,
+    "INSERT INTO member_role(member_id, role_code) SELECT member_id, 'ADVISOR' FROM member",
+  );
+  const beforeSkillRows = domainRows(roleDatabase);
+  sql(
+    roleDatabase,
+    readFileSync(
+      'prisma/migrations/20261015210000_skill_registry/migration.sql',
+      'utf8',
+    ),
+  );
+  assertTables(roleDatabase, expectedTables);
+  assert.deepEqual(
+    domainRows(roleDatabase).filter(([table]) => table !== 'skill'),
+    beforeSkillRows,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      sql(
+        roleDatabase,
+        'SELECT jsonb_agg(to_jsonb(s) ORDER BY skill_id) FROM skill s',
+      ),
+    ),
+    approvedSkills,
+  );
+  console.log(
+    'PASS: skill migration preserves all previous records and inserts only the 32 approved reference skills.',
   );
 
   function verifyFailure(source, history, database, expected) {

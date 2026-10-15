@@ -140,3 +140,11 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Constraints: one open-ended assignment per member/role (ends_on IS NULL), repeated ended history allowed, end not before start when both exist, required recipient/role FKs and optional assigning-member FK with delete RESTRICT/update NO ACTION.
 - Migration is additive and transactional; preserve existing people, memberships, roles and permissions, with no seed assignments, transfers or changes to earlier migrations.
 - Does not approve authorization endpoints, automatic expiry, permission distribution, skills, deployment or commit. Commit requires separate user confirmation.
+
+## 2026-10-15 Skill registry and production reference values approval
+
+- Owner/approver: project user explicitly approved skill with the 32 production values reviewed in this chat, without linking any members.
+- Scope: skill_id integer BY DEFAULT identity primary key and skill_name required unique varchar(255). Preserve the reviewed reference IDs 1–32 and their exact names as initial definitions. Automatic IDs start at 1000, matching the supporting SQL 2.2 and observed Supabase identity definition; explicit reference IDs do not advance this sequence.
+- Source: the user-approved production snapshot is embedded in the new local migration and asserted by test/fixtures/approved-skills.json. Production remains read-only reference evidence, not an automatic synchronization source or implementation authority.
+- Preservation: additive transactional migration, no changes to prior records or migrations, no member_skill table/links, no inferred personal data or assignments. No extra name normalization or domain constraints beyond the approved shape.
+- Commit requires separate confirmation. Member linking, permission redesign, APIs, Supabase deployment, push and PR remain outside this authorization.

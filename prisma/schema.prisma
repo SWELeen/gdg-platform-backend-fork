@@ -123,6 +123,13 @@ model Member {
   @@map("member")
 }
 
+model Skill {
+  skillId   Int    @id @default(autoincrement()) @map("skill_id")
+  skillName String @unique @map("skill_name") @db.VarChar(255)
+
+  @@map("skill")
+}
+
 model MemberRole {
   id         Int       @id @default(autoincrement())
   memberId   Int       @map("member_id")
