@@ -79,25 +79,29 @@ model Role {
 }
 
 model Permission {
-  permissionId   Int     @id @default(autoincrement()) @map("permission_id")
-  permissionName String  @unique @map("permission_name") @db.VarChar(100)
-  description    String? @db.Text
+  code            String  @id @db.Text
+  description     String  @db.Text
+  scope           String  @db.Text
+  grantPermission String? @map("grant_permission") @db.Text
+  isSensitive     Boolean @default(false) @map("is_sensitive")
 
-  roles RolePermission[]
+  grant  Permission?      @relation("PermissionGrantRequirement", fields: [grantPermission], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  grants Permission[]     @relation("PermissionGrantRequirement")
+  roles  RolePermission[]
 
-  @@map("permissions")
+  @@map("permission")
 }
 
 model RolePermission {
-  id           Int    @id @default(autoincrement())
-  roleCode     String @map("role_code") @db.Text
-  permissionId Int    @map("permission_id")
+  id       Int    @id @default(autoincrement())
+  roleCode String @map("role_code") @db.Text
+  code     String @db.Text
 
   role       Role       @relation(fields: [roleCode], references: [roleCode], onDelete: Restrict, onUpdate: NoAction)
-  permission Permission @relation(fields: [permissionId], references: [permissionId], onDelete: Restrict, onUpdate: Restrict)
+  permission Permission @relation(fields: [code], references: [code], onDelete: Restrict, onUpdate: NoAction)
 
-  @@unique([roleCode, permissionId])
-  @@index([permissionId])
+  @@unique([roleCode, code])
+  @@index([code])
   @@map("role_permissions")
 }
 

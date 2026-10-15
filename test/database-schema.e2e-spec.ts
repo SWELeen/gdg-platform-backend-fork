@@ -195,19 +195,158 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
     it('keeps role-permission links valid and restricts deletion of referenced roles', async () => {
       await invalid(async (tx) => {
         const permission = await tx.permission.create({
-          data: { permissionName: randomUUID() },
+          data: {
+            code: 'test.permission',
+            description: 'Synthetic permission',
+            scope: 'global',
+          },
         });
         await tx.rolePermission.create({
-          data: { roleCode: 'ADVISOR', permissionId: permission.permissionId },
+          data: { roleCode: 'ADVISOR', code: permission.code },
         });
         await tx.$executeRaw`DELETE FROM role WHERE role_code = 'ADVISOR'`;
       }, 'role_permissions_role_code_fkey');
       await invalid(async (tx) => {
         const permission = await tx.permission.create({
-          data: { permissionName: randomUUID() },
+          data: {
+            code: 'test.permission',
+            description: 'Synthetic permission',
+            scope: 'global',
+          },
         });
-        await tx.$executeRaw`INSERT INTO role_permissions(role_code, permission_id) VALUES ('MISSING_ROLE', ${permission.permissionId})`;
+        await tx.$executeRaw`INSERT INTO role_permissions(role_code, code) VALUES ('MISSING_ROLE', ${permission.code})`;
       }, 'role_permissions_role_code_fkey');
+    });
+
+    it('starts without permission definitions or grants to roles', async () => {
+      const [row] = await db.$queryRaw<
+        { count: bigint }[]
+      >`SELECT count(*) FROM permission`;
+      expect(row.count).toBe(0n);
+      expect(await db.rolePermission.count()).toBe(0);
+    });
+
+    it.each(['global', 'event', 'committee'])(
+      'supports permission scope %s with database defaults',
+      async (scope) => {
+        await valid(async (tx) => {
+          const [row] = await tx.$queryRaw<
+            { grant_permission: string | null; is_sensitive: boolean }[]
+          >`
+          INSERT INTO permission(code, description, scope) VALUES ('test.permission', 'Synthetic permission', ${scope}) RETURNING grant_permission, is_sensitive`;
+          expect(row).toEqual({ grant_permission: null, is_sensitive: false });
+        });
+      },
+    );
+
+    it('supports sensitive permissions and their grant-permission reference', async () => {
+      await valid(async (tx) => {
+        await tx.permission.create({
+          data: {
+            code: 'grants.test',
+            description: 'Grant test permission',
+            scope: 'global',
+          },
+        });
+        const permission = await tx.permission.create({
+          data: {
+            code: 'test.permission',
+            description: 'Synthetic sensitive permission',
+            scope: 'event',
+            grantPermission: 'grants.test',
+            isSensitive: true,
+          },
+          include: { grant: true },
+        });
+        expect(permission.grant?.code).toBe('grants.test');
+        expect(permission.isSensitive).toBe(true);
+      });
+    });
+
+    it.each([
+      '',
+      'EVENTS.create',
+      'events',
+      'eventsXcreate',
+      'events.create.extra',
+      'events.create1',
+    ])('rejects invalid permission code %j', async (code) => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO permission(code, description, scope) VALUES (${code}, 'Test', 'global')`;
+      }, 'permission_code_check');
+    });
+
+    it.each(['', 'GLOBAL', 'member'])(
+      'rejects invalid permission scope %j',
+      async (scope) => {
+        await invalid(async (tx) => {
+          await tx.$executeRaw`INSERT INTO permission(code, description, scope) VALUES ('test.permission', 'Test', ${scope})`;
+        }, 'permission_scope_check');
+      },
+    );
+
+    it('rejects duplicate permission codes and missing required descriptions', async () => {
+      await invalid(async (tx) => {
+        await tx.permission.create({
+          data: {
+            code: 'test.permission',
+            description: 'Test',
+            scope: 'global',
+          },
+        });
+        await tx.$executeRaw`INSERT INTO permission(code, description, scope) VALUES ('test.permission', 'Duplicate', 'event')`;
+      }, 'permission_pkey');
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO permission(code, description, scope) VALUES ('test.permission', NULL, 'global')`;
+      }, 'description');
+    });
+
+    it('rejects missing grant references and deletion or code changes of referenced grant permissions', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO permission(code, description, scope, grant_permission) VALUES ('test.permission', 'Test', 'global', 'grants.missing')`;
+      }, 'permission_grant_permission_fkey');
+      for (const action of ['delete', 'update']) {
+        await invalid(async (tx) => {
+          await tx.permission.create({
+            data: {
+              code: 'grants.test',
+              description: 'Grant test',
+              scope: 'global',
+            },
+          });
+          await tx.permission.create({
+            data: {
+              code: 'test.permission',
+              description: 'Test',
+              scope: 'event',
+              grantPermission: 'grants.test',
+            },
+          });
+          if (action === 'delete')
+            await tx.$executeRaw`DELETE FROM permission WHERE code = 'grants.test'`;
+          else
+            await tx.$executeRaw`UPDATE permission SET code = 'grants.changed' WHERE code = 'grants.test'`;
+        }, 'permission_grant_permission_fkey');
+      }
+    });
+
+    it('keeps role links valid and restricts deleting referenced permissions', async () => {
+      await invalid(async (tx) => {
+        await tx.permission.create({
+          data: {
+            code: 'test.permission',
+            description: 'Test',
+            scope: 'global',
+          },
+        });
+        await tx.rolePermission.create({
+          data: { roleCode: 'ADVISOR', code: 'test.permission' },
+        });
+        await tx.$executeRaw`DELETE FROM permission WHERE code = 'test.permission'`;
+      }, 'role_permissions_code_fkey');
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO role_permissions(role_code, code) VALUES ('ADVISOR', 'test.missing')`;
+      }, 'role_permissions_code_fkey');
     });
 
     it('contains exactly the 32 approved production skill definitions', async () => {
@@ -883,6 +1022,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         'member_committee_role_check',
         'member_member_type_check',
         'member_role_dates_check',
+        'permission_code_check',
+        'permission_scope_check',
         'person_full_name_check',
         'registrations_approval_check',
         'registrations_cancellation_check',
@@ -1463,20 +1604,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           },
         });
         const permission = await tx.permission.create({
-          data: { permissionName: randomUUID() },
+          data: {
+            code: 'test.permission',
+            description: 'Synthetic permission',
+            scope: 'global',
+          },
         });
         await tx.rolePermission.create({
           data: {
             roleCode: role.roleCode,
-            permissionId: permission.permissionId,
+            code: permission.code,
           },
         });
         await tx.$executeRawUnsafe(
-          'INSERT INTO role_permissions(role_code,permission_id) VALUES ($1,$2)',
+          'INSERT INTO role_permissions(role_code,code) VALUES ($1,$2)',
           role.roleCode,
-          permission.permissionId,
+          permission.code,
         );
-      }, 'role_permissions_role_code_permission_id_key');
+      }, 'role_permissions_role_code_code_key');
     });
 
     it('enforces registration-side composite FK and referenced history deletion restrictions', async () => {

@@ -12,7 +12,7 @@ Each developer has a separate local database and data. The same committed migrat
 
 The `20261015164000_people_membership_fresh` migration is for a **separate empty database**. It replays after the original migration, locks all thirteen original project tables, and refuses to continue if any contains records. It does not migrate, match, or delete old records. Keep an existing database and its volume intact; provision a different empty database and configure its connection separately. Do not point the regular backend startup at a populated old database expecting an automatic upgrade.
 
-The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; member_role now stores assignments of global roles to members without any initial assignments. The role registry now uses role_code; permissions retain their previous numeric IDs until their own step.
+The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; member_role now stores assignments of global roles to members without any initial assignments. The registries now use role_code and permission.code; the role_permissions link keeps its existing surrogate ID until its own final-shape step.
 
 The official `person.auth_user_id → auth.users.id ON DELETE SET NULL` link is not installed in this plain PostgreSQL local setup: auth_user_id is a unique nullable UUID only. Release 2.3 views, RLS, guards, audit, and access rules are not reproduced. Event/incident details still follow the previous local implementation except for their identity references. This is not a complete official schema export.
 
@@ -48,6 +48,16 @@ The pair index supports lookup by member; the skill_id index supports listing me
 
 The additive transactional migration inserts no selections and preserves all prior records, including the 32 approved skills and three role definitions. It adds no selection APIs, authorization, proficiency levels or member data transfer. No application/Supabase database is changed by isolated verification, and there is no automatic down migration deleting selections.
 
+## Permission registry
+
+`20261015230000_permission_registry` replaces the empty numeric permissions registry with permission: required text code primary key, required text description and scope, optional grant_permission referencing permission.code, and is_sensitive boolean NOT NULL DEFAULT false. Codes match `^[a-z_]+[.][a-z_]+$` (one literal dot); scope is global, event or committee. The optional grant reference uses delete/update NO ACTION, as in the supporting DBA DDL.
+
+Only the required permission side of role_permissions changes from numeric permission_id to text code. The existing surrogate ID and plural table name remain until the separately reviewed role_permission step. Links retain unique(role_code, code), a code lookup index and delete RESTRICT/update NO ACTION foreign keys. No permission definitions or role-permission assignments are seeded in this step.
+
+The migration locks permissions and role_permissions, and rejects either populated table with permission_registry_requires_empty_permission_tables before DDL. It does not infer mappings or delete old records. Other existing data, including member roles/selections and all approved registry seeds, is preserved. A rejected database must be preserved for review; do not delete records or bypass the guard. The migration is transactional and has no automatic down migration.
+
+These columns describe permissions; they do not enforce API access, validate a user's event/committee scope, grant/revoke access, audit sensitive reads or evaluate delegation. Those behaviors and the exact permission list/distribution remain separate work. No application or Supabase database is modified by isolated verification.
+
 ## Apply migrations — teammates
 
 Run these commands from the backend clone after pulling the team's merged updates. Preserve your existing `.env`.
@@ -75,7 +85,7 @@ Expect these fifteen project tables, plus `_prisma_migrations`:
 
 | Area | Tables |
 | --- | --- |
-| People and access registries | `person`, `role`, `skill`, `permissions`, `role_permissions` |
+| People and access registries | `person`, `role`, `skill`, `permission`, `role_permissions` |
 | Group membership | `member`, `committee`, `member_committee`, `member_role`, `member_skill` |
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
@@ -92,6 +102,7 @@ Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. K
 | P3005 / database is not empty | The initial migration expects an empty project schema. If you already created tables manually, stop and ask the schema owner to inspect them and plan preservation/transfer. Do not reset or baseline them yourself. |
 | people_membership_requires_empty_database | Preserve the populated database; provision a separate empty one. Do not delete records or mark this migration applied to bypass its precondition. Prisma may record a failed attempt even though domain DDL rolled back. |
 | role_registry_requires_empty_role_tables | Preserve the old role tables and request review; do not delete records or bypass the guard. |
+| permission_registry_requires_empty_permission_tables | Preserve old permissions/role links for review; do not delete rows or bypass the guard. |
 | P3009 / a previous migration failed | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back. |
 | Backend is healthy but tables are missing in pgAdmin | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above. |
 

@@ -35,9 +35,10 @@ const initialTables = [
 // Update this explicit manifest when a migration adds or removes project tables.
 const expectedTables = [
   ...initialTables.filter(
-    (table) => !['users', 'user_roles', 'roles'].includes(table),
+    (table) => !['users', 'user_roles', 'roles', 'permissions'].includes(table),
   ),
   'person',
+  'permission',
   'role',
   'member_role',
   'member_skill',
@@ -501,7 +502,10 @@ try {
       'utf8',
     ),
   );
-  assertTables(roleDatabase, expectedTables);
+  assertTables(roleDatabase, [
+    ...beforeMemberSkillRows.map(([table]) => table),
+    'member_skill',
+  ]);
   assert.equal(sql(roleDatabase, 'SELECT count(*) FROM member_skill'), '0');
   assert.deepEqual(
     domainRows(roleDatabase).filter(([table]) => table !== 'member_skill'),
@@ -509,6 +513,49 @@ try {
   );
   console.log(
     'PASS: member-skill migration creates no links and preserves all previous domain records.',
+  );
+
+  const permissionSQL = readFileSync(
+    'prisma/migrations/20261015230000_permission_registry/migration.sql',
+    'utf8',
+  );
+  for (const [table, insert] of [
+    ['permissions', null], // Preserved permission fixture already exists at this boundary.
+    [
+      'role_permissions',
+      "INSERT INTO role_permissions(role_code, permission_id) VALUES ('ADVISOR', 1)",
+    ],
+  ]) {
+    if (insert)
+      sql(roleDatabase, `SET session_replication_role=replica; ${insert}`);
+    const beforeSchema = schemaDump(roleDatabase);
+    const beforeRows = domainRows(roleDatabase);
+    assert.throws(
+      () => sql(roleDatabase, permissionSQL),
+      /permission_registry_requires_empty_permission_tables/,
+    );
+    assert.equal(schemaDump(roleDatabase), beforeSchema);
+    assert.deepEqual(domainRows(roleDatabase), beforeRows);
+    // Only runner-owned synthetic records are removed to exercise the next isolated case.
+    sql(
+      roleDatabase,
+      `SET session_replication_role=replica; DELETE FROM "${table}"`,
+    );
+  }
+  const beforePermissionRows = domainRows(roleDatabase);
+  sql(roleDatabase, permissionSQL);
+  assertTables(roleDatabase, expectedTables);
+  assert.deepEqual(
+    domainRows(roleDatabase),
+    beforePermissionRows
+      .map(([table, rows]) => [
+        table === 'permissions' ? 'permission' : table,
+        rows,
+      ])
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+  console.log(
+    'PASS: permission migration rejects each populated old permission table and preserves unrelated records with no permission seeds.',
   );
 
   function verifyFailure(source, history, database, expected) {

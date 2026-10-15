@@ -155,3 +155,11 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Scope: generated integer identity id, required member_id and skill_id, unique member/skill pair, delete RESTRICT/update NO ACTION FKs and a skill lookup index. Start empty, with no initial member selections or proficiency fields.
 - Preservation: additive transactional migration, unchanged earlier migrations and existing data. Removing a link does not remove its member or skill; referenced members/skills cannot be deleted until unlinked.
 - Commit is authorized for this step only. Selection APIs, authorization, permission redesign, deployment, push and PR remain outside scope.
+
+## 2026-10-15 Permission registry design acceptance
+
+- Owner/approver: project user accepted the reviewed five-column permission design in this chat after discussing its suitability.
+- Scope: code text primary key, required description/scope, optional grant_permission self-reference, is_sensitive default false. Scope is global/event/committee; codes contain one literal dot between lowercase/underscore segments. Grant references use delete/update NO ACTION.
+- Necessary dependency: replace numeric permission_id with code in the existing role_permissions link, retaining its surrogate ID/plural name until that table's separate step. Preserve unique pairs and restrictive deletion; no permission definitions or distribution are implicitly approved by accepting the table.
+- New migration locks and rejects either populated old permission table before any DDL; no backfill, inferred matching or deletion of old records. Earlier migrations and unrelated rows remain unchanged.
+- Commit requires separate user confirmation. Permission seeds/distribution, final role_permission shape, authorization enforcement, deployment, push and PR are outside this step.
