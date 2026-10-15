@@ -166,6 +166,8 @@ try {
     'run',
     '--network',
     name,
+    '--network-alias',
+    'db',
     '--detach',
     '--rm',
     '--name',
@@ -212,6 +214,294 @@ try {
     DATABASE_URL: url('postgres'),
     TEST_DATABASE_URL: url('gdg_schema_test_a'),
   };
+  if (process.argv.includes('--seed')) {
+    const seedDatabase = 'gdg_schema_test_seed';
+    const createSeedDatabase = (database) => {
+      run('docker', ['exec', name, 'createdb', '-U', 'postgres', database]);
+      run('pnpm', ['prisma:migrate:deploy'], { DATABASE_URL: url(database) });
+    };
+    const seed = (database) =>
+      run('node', ['scripts/seed-development.mjs'], {
+        DATABASE_URL: url(database),
+        NODE_ENV: 'test',
+      });
+    createSeedDatabase(seedDatabase);
+    sql(
+      seedDatabase,
+      "INSERT INTO person(full_name,email_personal) VALUES ('Unrelated sentinel','sentinel@example.test')",
+    );
+    const initial = domainRows(seedDatabase);
+    assert.match(seed(seedDatabase), /Local development seed completed/);
+    const overrideFile = join(scratch, 'seed-target.env');
+    writeFileSync(
+      overrideFile,
+      `DATABASE_URL=${url('gdg_schema_test_seed_unwanted')}\n`,
+    );
+    assert.match(
+      run('node', ['scripts/seed-development.mjs'], {
+        DATABASE_URL: url(seedDatabase),
+        NODE_ENV: 'test',
+        DOTENV_CONFIG_PATH: overrideFile,
+        DOTENV_CONFIG_OVERRIDE: 'true',
+      }),
+      /Local development seed completed/,
+    );
+
+    const expected = [
+      {
+        name: 'Ammar Babaset',
+        email: 'babaset99@gmail.com',
+        type: 'current',
+        committees: { WEB: 'Leader', PM: 'Member' },
+        roles: [],
+        skills: [2, 3, 10],
+      },
+      {
+        name: 'Leen Alghamdi',
+        email: 'LeenAlghamdi@gmail.com',
+        type: 'current',
+        committees: {},
+        roles: ['GROUP_LEADER'],
+        skills: [3, 4, 5],
+      },
+      {
+        name: 'Abdullah Misar',
+        email: 'AbdullahMisar@gmail.com',
+        type: 'current',
+        committees: { DEV: 'Leader', WEB: 'Member' },
+        roles: [],
+        skills: [3, 8, 10],
+      },
+      {
+        name: 'Mohmmad Alamri',
+        email: 'MohmmadAlamri@gmail.com',
+        type: 'alumni',
+        committees: { CYBER: 'Member', PR: 'Member' },
+        roles: [],
+        skills: [4, 6, 28],
+      },
+      {
+        name: 'Sara Alqahtani',
+        email: 'sara.alqahtani@example.test',
+        type: 'current',
+        committees: { WEB: 'Co-Leader', PM: 'Member' },
+        roles: [],
+        skills: [1, 2, 10],
+      },
+    ]
+      .map((row) => ({
+        ...row,
+        auth: null,
+        active: true,
+        memberActive: true,
+        joinDate: null,
+        skills: row.skills
+          .map(
+            (id) =>
+              approvedSkills.find((skill) => skill.skill_id === id).skill_name,
+          )
+          .sort(),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const actual = JSON.parse(
+      sql(
+        seedDatabase,
+        `SELECT jsonb_agg(to_jsonb(r) ORDER BY name) FROM (
+      SELECT p.full_name AS name, p.email_personal AS email, m.member_type AS type, p.auth_user_id AS auth,
+        p.is_active AS active, m.is_active AS "memberActive", m.join_date AS "joinDate",
+        COALESCE((SELECT jsonb_object_agg(c.committee_code, mc.role) FROM member_committee mc JOIN committee c USING(committee_id) WHERE mc.member_id=m.member_id), '{}'::jsonb) AS committees,
+        COALESCE((SELECT jsonb_agg(role_code ORDER BY role_code) FROM member_role WHERE member_id=m.member_id), '[]'::jsonb) AS roles,
+        COALESCE((SELECT jsonb_agg(s.skill_name ORDER BY s.skill_name) FROM member_skill ms JOIN skill s USING(skill_id) WHERE ms.member_id=m.member_id), '[]'::jsonb) AS skills
+      FROM person p JOIN member m USING(person_id)) r`,
+      ),
+    );
+    assert.deepEqual(actual, expected);
+    const counts = Object.fromEntries(
+      [
+        'person',
+        'member',
+        'committee',
+        'member_committee',
+        'member_role',
+        'member_skill',
+        'role',
+        'skill',
+        'permission',
+        'role_permission',
+        'events',
+      ].map((table) => [
+        table,
+        Number(sql(seedDatabase, `SELECT count(*) FROM ${table}`)),
+      ]),
+    );
+    assert.deepEqual(counts, {
+      person: 6,
+      member: 5,
+      committee: 5,
+      member_committee: 8,
+      member_role: 1,
+      member_skill: 15,
+      role: 3,
+      skill: 32,
+      permission: 0,
+      role_permission: 0,
+      events: 0,
+    });
+    assert.deepEqual(
+      JSON.parse(
+        sql(
+          seedDatabase,
+          'SELECT jsonb_object_agg(c.committee_code,p.committee_code) FROM committee c LEFT JOIN committee p ON p.committee_id=c.parent_committee_id',
+        ),
+      ),
+      { DEV: null, WEB: 'DEV', CYBER: 'DEV', PM: null, PR: null },
+    );
+    for (const table of ['role', 'skill'])
+      assert.equal(
+        domainRows(seedDatabase).find(([key]) => key === table)[1],
+        initial.find(([key]) => key === table)[1],
+      );
+    assert.equal(
+      sql(
+        seedDatabase,
+        "SELECT count(*) FROM person WHERE full_name='Unrelated sentinel' AND email_personal='sentinel@example.test'",
+      ),
+      '1',
+    );
+    const originalSentinel = JSON.parse(
+      initial.find(([table]) => table === 'person')[1],
+    )[0];
+    assert.deepEqual(
+      JSON.parse(
+        domainRows(seedDatabase).find(([table]) => table === 'person')[1],
+      ).find((row) => row.email_personal === 'sentinel@example.test'),
+      originalSentinel,
+    );
+    sql(
+      seedDatabase,
+      "UPDATE person SET email_personal=' BABASET99@GMAIL.COM ' WHERE email_personal='babaset99@gmail.com'",
+    );
+    const normalized = domainRows(seedDatabase);
+    seed(seedDatabase);
+    assert.deepEqual(
+      domainRows(seedDatabase),
+      normalized,
+      'Normalized email reuse must not rewrite stored values',
+    );
+    sql(
+      seedDatabase,
+      "UPDATE person SET email_personal='babaset99@gmail.com' WHERE email_personal=' BABASET99@GMAIL.COM '",
+    );
+    const first = domainRows(seedDatabase);
+    seed(seedDatabase);
+    assert.deepEqual(
+      domainRows(seedDatabase),
+      first,
+      'Repeat seed must preserve rows and timestamps',
+    );
+    sql(
+      seedDatabase,
+      "DELETE FROM member_skill WHERE member_id=(SELECT member_id FROM member JOIN person USING(person_id) WHERE email_personal='babaset99@gmail.com') AND skill_id=2",
+    );
+    seed(seedDatabase);
+    assert.equal(sql(seedDatabase, 'SELECT count(*) FROM member_skill'), '15');
+    assert.deepEqual(
+      domainRows(seedDatabase).filter(([table]) => table !== 'member_skill'),
+      first.filter(([table]) => table !== 'member_skill'),
+    );
+    sql(
+      seedDatabase,
+      "INSERT INTO member_skill(member_id,skill_id) SELECT member_id,32 FROM member JOIN person USING(person_id) WHERE email_personal='babaset99@gmail.com'",
+    );
+    const extra = domainRows(seedDatabase);
+    seed(seedDatabase);
+    assert.deepEqual(
+      domainRows(seedDatabase),
+      extra,
+      'Additional selections must be preserved',
+    );
+    const conflictCases = [
+      [
+        'person name',
+        "UPDATE person SET full_name='Conflicting name' WHERE email_personal='babaset99@gmail.com'",
+        "UPDATE person SET full_name='Ammar Babaset' WHERE email_personal='babaset99@gmail.com'",
+        'development_seed_conflict_person',
+      ],
+      [
+        'member type',
+        "UPDATE member SET member_type='alumni' WHERE person_id=(SELECT person_id FROM person WHERE email_personal='babaset99@gmail.com')",
+        "UPDATE member SET member_type='current' WHERE person_id=(SELECT person_id FROM person WHERE email_personal='babaset99@gmail.com')",
+        'development_seed_conflict_member',
+      ],
+      [
+        'committee name',
+        "UPDATE committee SET committee_name='Conflicting Web' WHERE committee_code='WEB'",
+        "UPDATE committee SET committee_name='Web' WHERE committee_code='WEB'",
+        'development_seed_conflict_committee',
+      ],
+      [
+        'committee parent',
+        "UPDATE committee SET parent_committee_id=(SELECT committee_id FROM committee WHERE committee_code='PM') WHERE committee_code='WEB'",
+        "UPDATE committee SET parent_committee_id=(SELECT committee_id FROM committee WHERE committee_code='DEV') WHERE committee_code='WEB'",
+        'development_seed_conflict_committee',
+      ],
+      [
+        'committee position',
+        "UPDATE member_committee SET role='Member' WHERE role='Leader' AND committee_id=(SELECT committee_id FROM committee WHERE committee_code='WEB')",
+        "UPDATE member_committee SET role='Leader' WHERE member_id=(SELECT member_id FROM member JOIN person USING(person_id) WHERE email_personal='babaset99@gmail.com') AND committee_id=(SELECT committee_id FROM committee WHERE committee_code='WEB')",
+        'development_seed_conflict_position',
+      ],
+      [
+        'role metadata',
+        "UPDATE member_role SET starts_on=DATE '2030-01-01'",
+        'UPDATE member_role SET starts_on=NULL',
+        'development_seed_conflict_role',
+      ],
+    ];
+    for (const [label, change, restore, code] of conflictCases) {
+      sql(seedDatabase, change);
+      const before = domainRows(seedDatabase);
+      assert.throws(() => seed(seedDatabase), new RegExp(code), label);
+      assert.deepEqual(
+        domainRows(seedDatabase),
+        before,
+        `${label} must not be overwritten`,
+      );
+      sql(seedDatabase, restore);
+    }
+    for (const [suffix, change, code] of [
+      [
+        'role',
+        "DELETE FROM role WHERE role_code='GROUP_LEADER'",
+        'development_seed_missing_role',
+      ],
+      [
+        'skill',
+        "DELETE FROM skill WHERE skill_name='Research & Analysis'",
+        'development_seed_missing_skill',
+      ],
+      [
+        'parent',
+        "INSERT INTO committee(committee_code,committee_name) VALUES ('DEV','Wrong Development')",
+        'development_seed_conflict_committee',
+      ],
+    ]) {
+      const database = `gdg_schema_test_seed_${suffix}`;
+      createSeedDatabase(database);
+      sql(database, change);
+      const before = domainRows(database);
+      assert.throws(() => seed(database), new RegExp(code));
+      assert.deepEqual(
+        domainRows(database),
+        before,
+        'Failure must roll back the entire partial graph',
+      );
+    }
+    console.log(
+      'PASS: optional seed exact graph, defaults, repeat/no-op, missing-link repair, unrelated data, conflict rejection and atomic rollback.',
+    );
+  }
+
   assert.equal(
     sql(
       'gdg_schema_test_a',
@@ -946,12 +1236,60 @@ try {
     };
     await waitForHttp(startBackend());
     assertTables(startupDb, expectedTables);
+    let startupSeedRows;
+    if (process.argv.includes('--seed')) {
+      console.log(
+        run(
+          'docker',
+          [
+            'exec',
+            '-e',
+            'DATABASE_URL',
+            '-e',
+            'NODE_ENV=test',
+            backendName,
+            'pnpm',
+            'seed:dev',
+          ],
+          {
+            DATABASE_URL: url(startupDb).replace(
+              `127.0.0.1:${port}`,
+              'db:5432',
+            ),
+          },
+        ),
+      );
+      sql(
+        startupDb,
+        'DELETE FROM member_skill WHERE id=(SELECT min(id) FROM member_skill)',
+      );
+      startupSeedRows = domainRows(startupDb);
+    }
+
     sql(
       startupDb,
       "INSERT INTO person(full_name,email_personal) VALUES ('Preserved fixture','preserved@example.test')",
     );
     stopBackend();
     await waitForHttp(startBackend());
+    if (startupSeedRows) {
+      const withoutSentinel = domainRows(startupDb).map(([table, rows]) => [
+        table,
+        table === 'person'
+          ? JSON.stringify(
+              JSON.parse(rows).filter(
+                (row) => row.email_personal !== 'preserved@example.test',
+              ),
+            )
+          : rows,
+      ]);
+      // Compare parsed records because jsonb text formatting differs from JSON.stringify.
+      assert.deepEqual(
+        withoutSentinel.map(([table, rows]) => [table, JSON.parse(rows)]),
+        startupSeedRows.map(([table, rows]) => [table, JSON.parse(rows)]),
+        'Ordinary startup must not rerun the optional seed or repair deleted demo links',
+      );
+    }
     assert.equal(
       sql(
         startupDb,

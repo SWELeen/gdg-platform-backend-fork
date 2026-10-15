@@ -36,7 +36,15 @@ NestJS, Prisma/PostgreSQL, Docker startup, fifteen domain tables and versioned m
 
 Backend developers: start with the short [setup guide](SETUP.md), covering Docker, `gdg install`, local environment variables, and pgAdmin.
 
-Start with the local database only:
+The normal workflow is **setup → `gdg backend run` → verify migrations → optionally seed → inspect in pgAdmin → develop → `gdg backend stop`**. Docker startup installs the tables plus 3 roles and 32 skills. To add the five agreed demo members and their committee, role and skill links, run this separately from the backend folder after startup:
+
+```bash
+docker compose exec -T backend pnpm seed:dev
+```
+
+> **Optional local data:** Docker startup never runs this seed. Each developer chooses whether to add it to their own database. It creates no login accounts or permission grants and sends no data to Supabase. See the [step-by-step seed instructions and expected rows](SETUP.md#optional-add-the-local-demo-people) before running it.
+
+If you only need PostgreSQL and pgAdmin, without starting the backend:
 
 1. Install and start Docker Desktop.
 2. Copy `.env.example` to `.env`. Replace `CHANGE_ME` in `POSTGRES_PASSWORD` and `DATABASE_URL` with the same private, URL-safe password. Choose a separate private `PGADMIN_DEFAULT_PASSWORD`. Never commit `.env`.

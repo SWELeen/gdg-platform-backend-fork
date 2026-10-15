@@ -100,6 +100,36 @@ Expect these fifteen project tables, plus `_prisma_migrations`:
 
 Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Other project tables are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
 
+## Optional development seed
+
+> **Optional and local only:** Docker startup never invokes the seed. For the complete beginner workflow, expected rows, pgAdmin inspection and conflict handling, follow [Add the local demo people](../SETUP.md#optional-add-the-local-demo-people).
+
+Migrations still install only the three approved roles and 32 skill definitions; the demo graph is a separate opt-in command, not migration history. After migrations finish:
+
+```bash
+docker compose exec -T backend pnpm seed:dev
+# Or, with a host-local DATABASE_URL:
+pnpm seed:dev
+```
+
+Successful execution prints `Local development seed completed.`. The command runs the fixture against your configured local database; testing it separately uses `pnpm test:seed:local` below. Stopping Docker preserves the data. Pulling code or restarting the backend does not add or restore the fixture; rerun the explicit command only when needed.
+
+The fixture is in prisma/seed-development.sql and is launched by scripts/seed-development.mjs through the installed Prisma CLI. No dependencies, Prisma config hooks or Compose startup changes are required. Only PostgreSQL URLs on localhost, 127.0.0.1, ::1 or the Compose db hostname are accepted, with an optional single schema=public query parameter. NODE_ENV=production, remote hosts and unexpected connection options are rejected before Prisma runs; credentials and database output are not printed. An explicitly supplied DATABASE_URL takes precedence over env files; dotenv override mode is disabled in the launcher and removed from the child environment so Prisma uses the checked target.
+
+On a fresh migrated database it adds 5 person, 5 member, 5 committee, 8 member_committee, 1 member_role and 15 member_skill rows. The person/member IDs are generated, not fixed. The 3 role and 32 skill definitions are reused; permission, role_permission and event tables remain unchanged. Names, supplied personal emails and relationships follow the approved [local seed plan](superpowers/plans/2026-10-15-optional-local-development-seed.md). Sara is fictional. Four members are current; Mohmmad is alumni. Leen stays current and holds GROUP_LEADER without a committee assignment. All have is_active=true; auth_user_id and unspecified optional fields remain NULL when created. No Auth identities, passwords, messages or login functionality are created.
+
+The whole graph is transactional and concurrent seed invocations serialize on one advisory transaction lock. Personal email matching uses lower(btrim(email_personal)); committee code and exact skill names resolve existing IDs. Compatible existing rows are reused without updates. Re-running leaves rows/timestamps unchanged and restores missing expected links while preserving additional links. Existing optional details are not erased. A missing registry definition or conflicting name/type/active state/auth link/committee parent/position/open-role metadata fails atomically; the command never overwrites those records or deletes rows to force success.
+
+Failure codes include development_seed_conflict_person, development_seed_conflict_member, development_seed_conflict_committee, development_seed_conflict_position, development_seed_conflict_role, development_seed_missing_role and development_seed_missing_skill. Inspect the local data before correcting a conflict; do not reset or bypass validation. Ordinary Docker startup never invokes the seed and never repairs a removed demo link automatically.
+
+Verify without using your development database:
+
+```bash
+pnpm test:seed:local
+```
+
+This extends the existing disposable schema runner with exact graph/count/default checks, normalized-email reuse, reference/sentinel preservation, repeated-run equality, missing-link repair, extra-link preservation and conflict/late-failure rollback. Guard tests are included in pnpm check. The combined author verification `node test/run-schema-tests.mjs --seed --startup` also executes the public seed command inside the isolated backend container and proves a subsequent ordinary restart does not rerun it.
+
 ## If migration fails
 
 Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. Keep `.env` and connection strings private when sharing an error.

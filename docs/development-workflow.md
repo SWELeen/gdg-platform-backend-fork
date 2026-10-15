@@ -18,13 +18,24 @@
 
 ## Before handoff
 
-1. Run available checks relevant to the change: lint, type check, tests, build, API checks, and/or migration validation as supported by the repository. Exact commands are **TBD** until project configuration exists.
-2. Update and validate the Swagger/OpenAPI contract; assess compatibility and communicate any frontend action required.
+1. Run relevant checks: `pnpm check`, `pnpm build`, and application/database checks as appropriate. Use the [testing guide](testing.md) to select the commands and required environment.
+2. For API changes, update and validate the Swagger/OpenAPI contract; assess compatibility and communicate any frontend action required. Domain APIs and the published Swagger route are not implemented yet.
 3. Document API, auth/RBAC, schema, migration, and environment impacts.
 4. Report checks actually run and unresolved `TBD` items.
 
 ## Local development baseline
 
-The technical guide uses `npm run start:dev` for the backend and `http://localhost:3001` as its local address. It also shows `npx prisma generate` and `npx prisma migrate dev`. Treat these as initial guidance; the final commands and ports are governed by the actual repository configuration once created.
+Follow [Backend Local Setup](../SETUP.md) once, including the local `.env` and pgAdmin connection. Then use this workflow:
 
-Branch naming, commits, PRs, review ownership, CI, Docker workflow, Swagger route, release process, and deployment process are **TBD** and intentionally not invented here.
+1. Pull the reviewed backend changes using your team's Git process and keep your existing `.env`.
+2. Run `gdg backend run`. Startup applies pending committed migrations, then starts the backend at `http://localhost:3001`.
+3. Verify migration status using the command in the setup guide. A migration failure must be resolved before continuing; preserve existing data and ask the schema owner for help.
+4. **Optional:** from the backend folder, run `docker compose exec -T backend pnpm seed:dev` when you want the five demo members and their relationships. Follow the [seed walkthrough](../SETUP.md#optional-add-the-local-demo-people) for expected rows and conflict handling.
+5. Develop with the source watcher, inspect local tables in pgAdmin, and run the checks relevant to your change. `gdg backend test` runs checks/application e2e inside the running container.
+6. Run `gdg backend stop` when finished. Data remains available next time.
+
+Migrations provide the structure and approved role/skill reference values for everyone. The optional seed provides local demo people; it never runs on startup and creates no Auth identities or permission grants. Restarting keeps existing demo rows without rerunning the seed. Each developer's database is independent; sharing code does not synchronize its rows.
+
+Teammates apply committed migrations through startup. Only schema authors create new migrations, following [Database and Prisma](database-prisma.md#schema-authors-only). For a host process instead of the Docker backend, use the [host development instructions](database-prisma.md#optional-host-development).
+
+Branch naming, commits, PRs, review ownership, CI, Swagger route, release process, and deployment process are **TBD** and intentionally not invented here.

@@ -170,3 +170,11 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Scope: required role_code and code text columns, composite primary key, no surrogate ID, delete RESTRICT/update NO ACTION FKs and retained reverse code lookup index. No permission definitions or distribution is approved by this structural change.
 - Preservation: lock/reject a populated legacy role_permissions table before renaming it and dropping its unused ID. No data transfer, row deletion, inferred links or seed assignments. Other data and earlier migrations remain unchanged.
 - Verification is isolated. Commit requires separate confirmation; authorization enforcement, permission seeds/distribution, deployment, push and PR remain outside scope.
+
+## 2026-10-15 Optional local development seed approval
+
+- Owner/approver: project user supplied four people and their email/committee/global-role details, delegated a fictional fifth person and skill selection, accepted mixed current/alumni examples with the club leader current, confirmed Web/Cyber under Development with PM/PR independent, and explicitly approved the English seed plan for implementation and tests before commit.
+- Scope: optional pnpm seed:dev command, 5 people/members, 5 committees, 8 committee memberships, 1 GROUP_LEADER assignment and 15 selections from the approved skill registry. The exact fixture is recorded in the local seed plan; Mohmmad is the alumni example and Sara the fictional fifth member. No extra global roles are inferred from committee leadership.
+- Separate from migrations and Docker startup. Local loopback/Compose-db targets only, non-production mode, one transaction, generated IDs, compatible-row reuse and conflict rejection. Preserve unrelated records, optional details and additional links; never reset/delete or overwrite conflicts.
+- No Supabase data transfer, Auth accounts, password seeding, outgoing messages, permission definitions/distribution, event fixtures or automatic startup seeding. These demo records do not implement login/authorization.
+- Commit requires separate user confirmation after verification results. Push, PR and deployment remain unauthorized.
