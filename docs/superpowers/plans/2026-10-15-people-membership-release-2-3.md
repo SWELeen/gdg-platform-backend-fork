@@ -34,6 +34,7 @@ Names below are PostgreSQL names. `?` means nullable; all other fields are NOT N
 | `skill` | Identity PK; `skill_name varchar(255)` UNIQUE; SQL 2.2 starts identity at 1000 (not specified by the PDF; record its source) |
 | `member_skill` | Identity PK; member/skill FKs RESTRICT; UNIQUE(member_id,skill_id) |
 | `permission` | code text PK; required description/scope text; scope global/event/committee; code CHECK lowercase/underscore segments separated by one dot; optional grant_permission self FK NO ACTION; is_sensitive=false |
+| `role_permission` | Required role_code/code text composite PK; FKs RESTRICT/NO ACTION; no surrogate ID; code lookup index; no initial links |
 
 - The two email columns have independent indexes: `UNIQUE lower(btrim(email_*)) WHERE email_* IS NOT NULL`. This enforces neither cross-column uniqueness nor lowercase storage. Do not substitute plain `@unique` for an expression index.
 - Supabase owns login email and `isVerified/lastLogin`; these are not target person columns. No legacy columns are retained in the fresh design.
@@ -82,7 +83,7 @@ Names below are PostgreSQL names. `?` means nullable; all other fields are NOT N
 
 All actor references reject non-members. A non-member Person may register. RolePermission remains linked to the existing numeric role registry until Stage C. Event table names and other event fields are not being presented as release 2.3-complete.
 
-## Stage C — Incremental approval; role, member-role, skill, member-skill and permission registry steps accepted
+## Stage C — Incremental approval; role, member-role, skill, member-skill, permission registry and role-permission steps accepted
 
 - Create target role/member_role and skill/member_skill structures using the contract above.
 - Coordinate role_code with role_permission and permission.code; no old-role transfer or inferred seed values.
@@ -93,7 +94,8 @@ All actor references reject non-members. A non-member Person may register. RoleP
 - Skill-only step approved: create skill in migration 20261015210000_skill_registry with the 32 production names/IDs reviewed in chat, explicit seed IDs 1–32 and BY DEFAULT identity START WITH 1000. No member_skill table or member links. Test exact seeds, identity, required/unique/length-limited names, preserved predecessor records, replay/no-op and rollback.
 - Member-skill step approved as the reviewed three-column empty junction, with commit authorized after passing checks/review. Add migration 20261015220000_member_skill; verify generated/explicit IDs, many-to-many navigation, pair uniqueness on insert/update, required/FK values, deletion restrictions, unlink behavior, preserved predecessor rows, empty initial state, replay/no-op and rollback.
 - Permission registry design accepted: implement migration 20261015230000_permission_registry with the five reviewed columns and code/scope/self-FK constraints. Adapt only the permission side of existing role_permissions to code, retaining its ID/name. Lock/reject either populated old permission table; preserve unrelated data. Test empty initial registries, defaults, valid/invalid codes/scopes, grant references, uniqueness, role links, migration rejection/rollback/recovery/no-op and startup on disposable PostgreSQL.
-- Permission seeds/distribution and final role_permission shape require their own review/authorization. Live row counts are not seed definitions.
+- Final role_permission step explicitly approved without initial links: migration 20261015233000_role_permission locks/rejects populated role_permissions, renames it, removes unused id and replaces pair uniqueness with a composite primary key. Retain restrictive FKs/code index. Verify exact columns/PK, composite CRUD and navigation, uniqueness, required/FK constraints, referenced deletions, populated rejection, data preservation, replay/no-op, rollback/recovery and startup. Present results before a separately confirmed commit.
+- Permission seeds/distribution and authorization integration require their own review/authorization. Live row counts are not seed definitions.
 
 ## Later dependencies and integration boundary
 
@@ -174,3 +176,12 @@ All actor references reject non-members. A non-member Person may register. RoleP
 - PASS: pnpm check (5 helper tests, 12 Vitest tests, lint/typecheck), pnpm build, Prisma validate, Prettier, git diff checks and isolated startup/restart/failure protection through node test/run-schema-tests.mjs --startup. Disposable resources were cleaned up. Performance checks were not repeated; existing event queries/indexes are unchanged.
 - Independent read-only review found no actionable findings; the parent agent executed runtime checks. Earlier migrations and preserved proposal/frontend lockfile hashes are unchanged. Application and Supabase databases were not changed.
 - The user approved committing the permission step on 2026-10-15 after reviewing the results. No push, PR or deployment is authorized. Permission seeds/distribution, final role_permission structure and authorization/delegation/audit behavior remain separate work.
+
+## Final role-permission step verification — 2026-10-15
+
+- Implemented transactional migration 20261015233000_role_permission: guard/lock empty legacy role_permissions, rename to role_permission, remove unused surrogate ID/old unique index, add composite primary key and rename retained FKs/code index. No link rows are seeded; earlier migrations remain unchanged.
+- RED: new final-shape and renamed-link tests failed against predecessor. GREEN: two clean replays passed 139 schema tests each; e2e passed 143 tests. Verified exact two required columns and composite PK, composite lookup/deletion, both relation directions, multiple role/permission combinations, insert/update duplicate rejection, null/FK rejection and referenced-parent deletion restrictions. Unlinking preserves role/permission definitions.
+- Independent populated-link rejection preserves schema and rows before any DDL. Successful empty-link upgrade preserves unrelated populated permission/member/role/skill data. Historical permission-upgrade assertions use their predecessor manifest. Initial/latest/probe failure, recovery, repeat deploy/no-op and prior population guards passed.
+- PASS: pnpm check (5 helper tests, 12 Vitest tests, lint/typecheck), pnpm build, Prisma validate, Prettier, git diff checks and isolated startup/restart/failure protection through node test/run-schema-tests.mjs --startup. Disposable containers/network/image were cleaned up. Existing event queries/indexes are unchanged; performance checks were not repeated.
+- Independent read-only review found no actionable findings; runtime checks were parent-owned. Earlier migrations, approved seeds and preserved proposal/frontend lockfile hashes remain unchanged. No application or Supabase database was changed.
+- The user confirmed the final role-permission step after reviewing the verification results on 2026-10-15, authorizing its commit. No push, PR or deployment is authorized. Permission seeds/distribution and authorization/delegation/audit behavior remain separate work.

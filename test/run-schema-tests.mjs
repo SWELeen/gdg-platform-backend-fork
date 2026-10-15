@@ -35,10 +35,18 @@ const initialTables = [
 // Update this explicit manifest when a migration adds or removes project tables.
 const expectedTables = [
   ...initialTables.filter(
-    (table) => !['users', 'user_roles', 'roles', 'permissions'].includes(table),
+    (table) =>
+      ![
+        'users',
+        'user_roles',
+        'roles',
+        'permissions',
+        'role_permissions',
+      ].includes(table),
   ),
   'person',
   'permission',
+  'role_permission',
   'role',
   'member_role',
   'member_skill',
@@ -544,7 +552,12 @@ try {
   }
   const beforePermissionRows = domainRows(roleDatabase);
   sql(roleDatabase, permissionSQL);
-  assertTables(roleDatabase, expectedTables);
+  assertTables(
+    roleDatabase,
+    beforePermissionRows.map(([table]) =>
+      table === 'permissions' ? 'permission' : table,
+    ),
+  );
   assert.deepEqual(
     domainRows(roleDatabase),
     beforePermissionRows
@@ -556,6 +569,40 @@ try {
   );
   console.log(
     'PASS: permission migration rejects each populated old permission table and preserves unrelated records with no permission seeds.',
+  );
+
+  const rolePermissionSQL = readFileSync(
+    'prisma/migrations/20261015233000_role_permission/migration.sql',
+    'utf8',
+  );
+  sql(
+    roleDatabase,
+    "INSERT INTO permission(code, description, scope) VALUES ('test.preserved', 'Preserved permission', 'global'); INSERT INTO role_permissions(role_code, code) VALUES ('ADVISOR', 'test.preserved')",
+  );
+  const populatedLinkSchema = schemaDump(roleDatabase);
+  const populatedLinkRows = domainRows(roleDatabase);
+  assert.throws(
+    () => sql(roleDatabase, rolePermissionSQL),
+    /role_permission_requires_empty_link_table/,
+  );
+  assert.equal(schemaDump(roleDatabase), populatedLinkSchema);
+  assert.deepEqual(domainRows(roleDatabase), populatedLinkRows);
+  sql(roleDatabase, 'DELETE FROM role_permissions'); // Runner-owned synthetic link only.
+  const beforeRolePermissionRows = domainRows(roleDatabase);
+  sql(roleDatabase, rolePermissionSQL);
+  assertTables(roleDatabase, expectedTables);
+  assert.equal(sql(roleDatabase, 'SELECT count(*) FROM role_permission'), '0');
+  assert.deepEqual(
+    domainRows(roleDatabase),
+    beforeRolePermissionRows
+      .map(([table, rows]) => [
+        table === 'role_permissions' ? 'role_permission' : table,
+        rows,
+      ])
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+  console.log(
+    'PASS: role-permission migration rejects populated legacy links and preserves all other records without seeding assignments.',
   );
 
   function verifyFailure(source, history, database, expected) {

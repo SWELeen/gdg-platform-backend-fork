@@ -205,7 +205,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           data: { roleCode: 'ADVISOR', code: permission.code },
         });
         await tx.$executeRaw`DELETE FROM role WHERE role_code = 'ADVISOR'`;
-      }, 'role_permissions_role_code_fkey');
+      }, 'role_permission_role_code_fkey');
       await invalid(async (tx) => {
         const permission = await tx.permission.create({
           data: {
@@ -214,8 +214,106 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
             scope: 'global',
           },
         });
-        await tx.$executeRaw`INSERT INTO role_permissions(role_code, code) VALUES ('MISSING_ROLE', ${permission.code})`;
-      }, 'role_permissions_role_code_fkey');
+        await tx.$executeRaw`INSERT INTO role_permission(role_code, code) VALUES ('MISSING_ROLE', ${permission.code})`;
+      }, 'role_permission_role_code_fkey');
+    });
+
+    it('starts with an empty two-column role-permission table and composite primary key', async () => {
+      const [count] = await db.$queryRaw<
+        { count: bigint }[]
+      >`SELECT count(*) FROM role_permission`;
+      expect(count.count).toBe(0n);
+      const columns = await db.$queryRaw<
+        { column_name: string; is_nullable: string }[]
+      >`
+        SELECT column_name, is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'role_permission' ORDER BY ordinal_position`;
+      expect(columns).toEqual([
+        { column_name: 'role_code', is_nullable: 'NO' },
+        { column_name: 'code', is_nullable: 'NO' },
+      ]);
+      const [key] = await db.$queryRaw<{ definition: string }[]>`
+        SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid = 'role_permission'::regclass AND contype = 'p'`;
+      expect(key.definition).toBe('PRIMARY KEY (role_code, code)');
+    });
+
+    it('supports many roles and permissions with composite-key lookup and unlinking', async () => {
+      await valid(async (tx) => {
+        await tx.permission.createMany({
+          data: [
+            {
+              code: 'test.first',
+              description: 'First test permission',
+              scope: 'global',
+            },
+            {
+              code: 'test.second',
+              description: 'Second test permission',
+              scope: 'event',
+            },
+          ],
+        });
+        await tx.rolePermission.createMany({
+          data: [
+            { roleCode: 'ADVISOR', code: 'test.first' },
+            { roleCode: 'ADVISOR', code: 'test.second' },
+            { roleCode: 'GROUP_LEADER', code: 'test.first' },
+          ],
+        });
+        const link = await tx.rolePermission.findUniqueOrThrow({
+          where: { roleCode_code: { roleCode: 'ADVISOR', code: 'test.first' } },
+          include: { role: true, permission: true },
+        });
+        expect(link.role.roleCode).toBe('ADVISOR');
+        expect(link.permission.code).toBe('test.first');
+        const role = await tx.role.findUniqueOrThrow({
+          where: { roleCode: 'ADVISOR' },
+          include: { permissions: true },
+        });
+        expect(role.permissions).toHaveLength(2);
+        const permission = await tx.permission.findUniqueOrThrow({
+          where: { code: 'test.first' },
+          include: { roles: true },
+        });
+        expect(permission.roles).toHaveLength(2);
+        await tx.rolePermission.delete({
+          where: { roleCode_code: { roleCode: 'ADVISOR', code: 'test.first' } },
+        });
+        expect(await tx.rolePermission.count()).toBe(2);
+        expect(
+          await tx.role.findUnique({ where: { roleCode: 'ADVISOR' } }),
+        ).not.toBeNull();
+        expect(
+          await tx.permission.findUnique({ where: { code: 'test.first' } }),
+        ).not.toBeNull();
+      });
+    });
+
+    it('rejects duplicate role-permission pairs on update', async () => {
+      await invalid(async (tx) => {
+        await tx.permission.create({
+          data: {
+            code: 'test.permission',
+            description: 'Test',
+            scope: 'global',
+          },
+        });
+        await tx.rolePermission.createMany({
+          data: [
+            { roleCode: 'ADVISOR', code: 'test.permission' },
+            { roleCode: 'GROUP_LEADER', code: 'test.permission' },
+          ],
+        });
+        await tx.$executeRaw`UPDATE role_permission SET role_code = 'ADVISOR' WHERE role_code = 'GROUP_LEADER'`;
+      }, 'role_permission_pkey');
+    });
+
+    it('requires both role and permission codes', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO role_permission(role_code, code) VALUES (NULL, 'test.permission')`;
+      }, 'role_code');
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO role_permission(role_code, code) VALUES ('ADVISOR', NULL)`;
+      }, 'code');
     });
 
     it('starts without permission definitions or grants to roles', async () => {
@@ -343,10 +441,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           data: { roleCode: 'ADVISOR', code: 'test.permission' },
         });
         await tx.$executeRaw`DELETE FROM permission WHERE code = 'test.permission'`;
-      }, 'role_permissions_code_fkey');
+      }, 'role_permission_code_fkey');
       await invalid(async (tx) => {
-        await tx.$executeRaw`INSERT INTO role_permissions(role_code, code) VALUES ('ADVISOR', 'test.missing')`;
-      }, 'role_permissions_code_fkey');
+        await tx.$executeRaw`INSERT INTO role_permission(role_code, code) VALUES ('ADVISOR', 'test.missing')`;
+      }, 'role_permission_code_fkey');
     });
 
     it('contains exactly the 32 approved production skill definitions', async () => {
@@ -1617,11 +1715,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           },
         });
         await tx.$executeRawUnsafe(
-          'INSERT INTO role_permissions(role_code,code) VALUES ($1,$2)',
+          'INSERT INTO role_permission(role_code,code) VALUES ($1,$2)',
           role.roleCode,
           permission.code,
         );
-      }, 'role_permissions_role_code_code_key');
+      }, 'role_permission_pkey');
     });
 
     it('enforces registration-side composite FK and referenced history deletion restrictions', async () => {

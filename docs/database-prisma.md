@@ -12,7 +12,7 @@ Each developer has a separate local database and data. The same committed migrat
 
 The `20261015164000_people_membership_fresh` migration is for a **separate empty database**. It replays after the original migration, locks all thirteen original project tables, and refuses to continue if any contains records. It does not migrate, match, or delete old records. Keep an existing database and its volume intact; provision a different empty database and configure its connection separately. Do not point the regular backend startup at a populated old database expecting an automatic upgrade.
 
-The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; member_role now stores assignments of global roles to members without any initial assignments. The registries now use role_code and permission.code; the role_permissions link keeps its existing surrogate ID until its own final-shape step.
+The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; member_role now stores assignments of global roles to members without any initial assignments. The registries now use role_code and permission.code; role_permission now uses the role_code/code pair as its primary key, without a surrogate ID.
 
 The official `person.auth_user_id → auth.users.id ON DELETE SET NULL` link is not installed in this plain PostgreSQL local setup: auth_user_id is a unique nullable UUID only. Release 2.3 views, RLS, guards, audit, and access rules are not reproduced. Event/incident details still follow the previous local implementation except for their identity references. This is not a complete official schema export.
 
@@ -52,11 +52,19 @@ The additive transactional migration inserts no selections and preserves all pri
 
 `20261015230000_permission_registry` replaces the empty numeric permissions registry with permission: required text code primary key, required text description and scope, optional grant_permission referencing permission.code, and is_sensitive boolean NOT NULL DEFAULT false. Codes match `^[a-z_]+[.][a-z_]+$` (one literal dot); scope is global, event or committee. The optional grant reference uses delete/update NO ACTION, as in the supporting DBA DDL.
 
-Only the required permission side of role_permissions changes from numeric permission_id to text code. The existing surrogate ID and plural table name remain until the separately reviewed role_permission step. Links retain unique(role_code, code), a code lookup index and delete RESTRICT/update NO ACTION foreign keys. No permission definitions or role-permission assignments are seeded in this step.
+The permission-registry migration changes only the required permission side of role_permissions from numeric permission_id to text code. The subsequent role-permission migration below finalizes its name and primary key. Links retain unique(role_code, code), a code lookup index and delete RESTRICT/update NO ACTION foreign keys. No permission definitions or role-permission assignments are seeded in this step.
 
 The migration locks permissions and role_permissions, and rejects either populated table with permission_registry_requires_empty_permission_tables before DDL. It does not infer mappings or delete old records. Other existing data, including member roles/selections and all approved registry seeds, is preserved. A rejected database must be preserved for review; do not delete records or bypass the guard. The migration is transactional and has no automatic down migration.
 
 These columns describe permissions; they do not enforce API access, validate a user's event/committee scope, grant/revoke access, audit sensitive reads or evaluate delegation. Those behaviors and the exact permission list/distribution remain separate work. No application or Supabase database is modified by isolated verification.
+
+## Role-permission links
+
+`20261015233000_role_permission` finalizes role_permission with exactly two required text columns: role_code references role.role_code and code references permission.code. The pair is its primary key, without an id column. Both FKs use delete RESTRICT/update NO ACTION. The primary key supports role lookup; the existing code index is retained for reverse permission lookup.
+
+The migration locks the old role_permissions table and rejects any existing link with role_permission_requires_empty_link_table before renaming or dropping its surrogate ID. No link rows are copied, inferred or seeded. Other records, including existing permissions, role assignments, members and skill definitions, are preserved. Preserve a rejected database for review; do not delete records or bypass the guard.
+
+Prisma composite-key operations use roleCode_code. Unlinking a pair removes only the junction row; referenced roles and permissions cannot be deleted while links exist. This table describes assignments and does not implement API authorization or approve a permission distribution. Verification uses disposable PostgreSQL; there is no production deployment or automatic down migration.
 
 ## Apply migrations — teammates
 
@@ -85,7 +93,7 @@ Expect these fifteen project tables, plus `_prisma_migrations`:
 
 | Area | Tables |
 | --- | --- |
-| People and access registries | `person`, `role`, `skill`, `permission`, `role_permissions` |
+| People and access registries | `person`, `role`, `skill`, `permission`, `role_permission` |
 | Group membership | `member`, `committee`, `member_committee`, `member_role`, `member_skill` |
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
@@ -103,6 +111,7 @@ Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. K
 | people_membership_requires_empty_database | Preserve the populated database; provision a separate empty one. Do not delete records or mark this migration applied to bypass its precondition. Prisma may record a failed attempt even though domain DDL rolled back. |
 | role_registry_requires_empty_role_tables | Preserve the old role tables and request review; do not delete records or bypass the guard. |
 | permission_registry_requires_empty_permission_tables | Preserve old permissions/role links for review; do not delete rows or bypass the guard. |
+| role_permission_requires_empty_link_table | Preserve existing role links for review; do not delete rows or bypass the guard. |
 | P3009 / a previous migration failed | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back. |
 | Backend is healthy but tables are missing in pgAdmin | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above. |
 

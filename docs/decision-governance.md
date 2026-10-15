@@ -163,3 +163,10 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Necessary dependency: replace numeric permission_id with code in the existing role_permissions link, retaining its surrogate ID/plural name until that table's separate step. Preserve unique pairs and restrictive deletion; no permission definitions or distribution are implicitly approved by accepting the table.
 - New migration locks and rejects either populated old permission table before any DDL; no backfill, inferred matching or deletion of old records. Earlier migrations and unrelated rows remain unchanged.
 - Commit requires separate user confirmation. Permission seeds/distribution, final role_permission shape, authorization enforcement, deployment, push and PR are outside this step.
+
+## 2026-10-15 Final role-permission table approval
+
+- Owner/approver: project user explicitly approved role_permission without initial links, requesting test results before any commit.
+- Scope: required role_code and code text columns, composite primary key, no surrogate ID, delete RESTRICT/update NO ACTION FKs and retained reverse code lookup index. No permission definitions or distribution is approved by this structural change.
+- Preservation: lock/reject a populated legacy role_permissions table before renaming it and dropping its unused ID. No data transfer, row deletion, inferred links or seed assignments. Other data and earlier migrations remain unchanged.
+- Verification is isolated. Commit requires separate confirmation; authorization enforcement, permission seeds/distribution, deployment, push and PR remain outside scope.

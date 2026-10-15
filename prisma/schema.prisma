@@ -93,16 +93,15 @@ model Permission {
 }
 
 model RolePermission {
-  id       Int    @id @default(autoincrement())
   roleCode String @map("role_code") @db.Text
   code     String @db.Text
 
   role       Role       @relation(fields: [roleCode], references: [roleCode], onDelete: Restrict, onUpdate: NoAction)
   permission Permission @relation(fields: [code], references: [code], onDelete: Restrict, onUpdate: NoAction)
 
-  @@unique([roleCode, code])
+  @@id([roleCode, code])
   @@index([code])
-  @@map("role_permissions")
+  @@map("role_permission")
 }
 
 model Member {
