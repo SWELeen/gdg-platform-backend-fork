@@ -203,6 +203,204 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       }, 'role_permissions_role_code_fkey');
     });
 
+    it('starts without any member-role assignments', async () => {
+      const [row] = await db.$queryRaw<
+        { count: bigint }[]
+      >`SELECT count(*) FROM member_role`;
+      expect(row.count).toBe(0n);
+    });
+
+    it('creates member roles with raw database defaults and optional assignment details', async () => {
+      await valid(async (tx, f) => {
+        const [row] = await tx.$queryRaw<
+          {
+            id: number;
+            member_id: number;
+            role_code: string;
+            starts_on: Date | null;
+            ends_on: Date | null;
+            assigned_by: number | null;
+            notes: string | null;
+            created_at: Date;
+          }[]
+        >`INSERT INTO member_role(member_id, role_code) VALUES (${f.member.memberId}, 'ADVISOR') RETURNING *`;
+        expect(row).toMatchObject({
+          member_id: f.member.memberId,
+          role_code: 'ADVISOR',
+          starts_on: null,
+          ends_on: null,
+          assigned_by: null,
+          notes: null,
+        });
+        expect(row.id).toBeGreaterThan(0);
+        expect(row.created_at).toBeInstanceOf(Date);
+        const assigned = await tx.memberRole.create({
+          data: {
+            memberId: f.member.memberId,
+            roleCode: 'GROUP_LEADER',
+            assignedBy: f.member.memberId,
+            startsOn: new Date('2030-01-01'),
+            endsOn: new Date('2030-01-01'),
+            notes: 'x'.repeat(500),
+          },
+          include: { member: true, role: true, assigner: true },
+        });
+        expect(assigned.member.memberId).toBe(f.member.memberId);
+        expect(assigned.role.roleCode).toBe('GROUP_LEADER');
+        expect(assigned.assigner?.memberId).toBe(f.member.memberId);
+        expect(assigned.notes).toHaveLength(500);
+      });
+    });
+
+    it('allows multiple roles, other members, repeated ended history and one open assignment', async () => {
+      await valid(async (tx, f) => {
+        const other = await fixture(tx);
+        await tx.memberRole.createMany({
+          data: [
+            {
+              memberId: f.member.memberId,
+              roleCode: 'ADVISOR',
+              endsOn: new Date('2029-01-01'),
+            },
+            {
+              memberId: f.member.memberId,
+              roleCode: 'ADVISOR',
+              endsOn: new Date('2029-01-01'),
+            },
+            {
+              memberId: f.member.memberId,
+              roleCode: 'ADVISOR',
+              startsOn: new Date('2031-01-01'),
+            },
+            { memberId: f.member.memberId, roleCode: 'GROUP_LEADER' },
+            { memberId: other.member.memberId, roleCode: 'ADVISOR' },
+          ],
+        });
+        expect(await tx.memberRole.count()).toBe(5);
+      });
+    });
+
+    it('rejects duplicate open roles and reopening history while an open assignment exists', async () => {
+      await invalid(async (tx, f) => {
+        await tx.memberRole.create({
+          data: { memberId: f.member.memberId, roleCode: 'ADVISOR' },
+        });
+        await tx.$executeRaw`INSERT INTO member_role(member_id, role_code) VALUES (${f.member.memberId}, 'ADVISOR')`;
+      }, 'uq_member_role_active');
+      await invalid(async (tx, f) => {
+        await tx.memberRole.create({
+          data: { memberId: f.member.memberId, roleCode: 'ADVISOR' },
+        });
+        const ended = await tx.memberRole.create({
+          data: {
+            memberId: f.member.memberId,
+            roleCode: 'ADVISOR',
+            endsOn: new Date('2029-01-01'),
+          },
+        });
+        await tx.$executeRaw`UPDATE member_role SET ends_on = NULL WHERE id = ${ended.id}`;
+      }, 'uq_member_role_active');
+    });
+
+    it('allows a new open assignment after closing the previous one', async () => {
+      await valid(async (tx, f) => {
+        const old = await tx.memberRole.create({
+          data: { memberId: f.member.memberId, roleCode: 'ADVISOR' },
+        });
+        await tx.memberRole.update({
+          where: { id: old.id },
+          data: { endsOn: new Date('2030-01-01') },
+        });
+        await tx.memberRole.create({
+          data: { memberId: f.member.memberId, roleCode: 'ADVISOR' },
+        });
+        expect(await tx.memberRole.count()).toBe(2);
+      });
+    });
+
+    it('rejects member-role dates ending before their start on insert and update', async () => {
+      await invalid(async (tx, f) => {
+        await tx.$executeRaw`INSERT INTO member_role(member_id, role_code, starts_on, ends_on) VALUES (${f.member.memberId}, 'ADVISOR', DATE '2030-02-01', DATE '2030-01-01')`;
+      }, 'member_role_dates_check');
+      await invalid(async (tx, f) => {
+        const row = await tx.memberRole.create({
+          data: {
+            memberId: f.member.memberId,
+            roleCode: 'ADVISOR',
+            startsOn: new Date('2030-02-01'),
+          },
+        });
+        await tx.$executeRaw`UPDATE member_role SET ends_on = DATE '2030-01-01' WHERE id = ${row.id}`;
+      }, 'member_role_dates_check');
+    });
+
+    it('limits assignment notes to 500 characters', async () => {
+      await expect(
+        db.$transaction(async (tx) => {
+          const f = await fixture(tx);
+          await tx.$executeRaw`INSERT INTO member_role(member_id, role_code, notes) VALUES (${f.member.memberId}, 'ADVISOR', ${'x'.repeat(501)})`;
+        }),
+      ).rejects.toThrow(/22001|character varying\(500\)/);
+    });
+
+    it('rejects missing members, roles and assigning members', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO member_role(member_id, role_code) VALUES (-1, 'ADVISOR')`;
+      }, 'member_role_member_id_fkey');
+      await invalid(async (tx, f) => {
+        await tx.$executeRaw`INSERT INTO member_role(member_id, role_code) VALUES (${f.member.memberId}, 'MISSING_ROLE')`;
+      }, 'member_role_role_code_fkey');
+      await invalid(async (tx, f) => {
+        await tx.$executeRaw`INSERT INTO member_role(member_id, role_code, assigned_by) VALUES (${f.member.memberId}, 'ADVISOR', -1)`;
+      }, 'member_role_assigned_by_fkey');
+    });
+
+    it('restricts deletion of roles, recipient members and assigning members with historical assignments', async () => {
+      await invalid(async (tx, f) => {
+        await tx.memberRole.create({
+          data: {
+            memberId: f.member.memberId,
+            roleCode: 'ADVISOR',
+            endsOn: new Date('2029-01-01'),
+          },
+        });
+        await tx.$executeRaw`DELETE FROM role WHERE role_code = 'ADVISOR'`;
+      }, 'member_role_role_code_fkey');
+      await invalid(async (tx) => {
+        const person = await tx.person.create({
+          data: { fullName: 'Role recipient' },
+        });
+        const member = await tx.member.create({
+          data: { personId: person.personId },
+        });
+        await tx.memberRole.create({
+          data: {
+            memberId: member.memberId,
+            roleCode: 'ADVISOR',
+            endsOn: new Date('2029-01-01'),
+          },
+        });
+        await tx.$executeRaw`DELETE FROM member WHERE member_id = ${member.memberId}`;
+      }, 'member_role_member_id_fkey');
+      await invalid(async (tx, f) => {
+        const person = await tx.person.create({
+          data: { fullName: 'Role assigner' },
+        });
+        const assigner = await tx.member.create({
+          data: { personId: person.personId },
+        });
+        await tx.memberRole.create({
+          data: {
+            memberId: f.member.memberId,
+            roleCode: 'ADVISOR',
+            assignedBy: assigner.memberId,
+            endsOn: new Date('2029-01-01'),
+          },
+        });
+        await tx.$executeRaw`DELETE FROM member WHERE member_id = ${assigner.memberId}`;
+      }, 'member_role_assigned_by_fkey');
+    });
+
     it('creates separate people and membership with database defaults', async () => {
       await valid(async (tx) => {
         const [person] = await tx.$queryRaw<
@@ -292,6 +490,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         await tx.member.create({
           data: { memberId: -100, personId: person.personId },
         });
+        await tx.memberRole.create({
+          data: { id: -100, memberId: -100, roleCode: 'ADVISOR' },
+        });
         const columns = await tx.$queryRaw<
           {
             table_name: string;
@@ -312,6 +513,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           },
           {
             table_name: 'member_committee',
+            column_name: 'id',
+            identity_generation: 'BY DEFAULT',
+          },
+          {
+            table_name: 'member_role',
             column_name: 'id',
             identity_generation: 'BY DEFAULT',
           },
@@ -480,6 +686,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         'events_schedule_check',
         'member_committee_role_check',
         'member_member_type_check',
+        'member_role_dates_check',
         'person_full_name_check',
         'registrations_approval_check',
         'registrations_cancellation_check',

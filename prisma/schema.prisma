@@ -73,6 +73,7 @@ model Role {
   isPrivileged Boolean @default(true) @map("is_privileged")
 
   permissions RolePermission[]
+  members     MemberRole[]
 
   @@map("role")
 }
@@ -110,6 +111,8 @@ model Member {
   updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   person                   Person                       @relation(fields: [personId], references: [personId], onDelete: Restrict, onUpdate: NoAction)
+  roleAssignments          MemberRole[]                 @relation("MemberRoleRecipient")
+  assignedRoles            MemberRole[]                 @relation("MemberRoleAssigner")
   committees               MemberCommittee[]
   createdEvents            Event[]                      @relation("EventCreator")
   reviewedRegistrations    EventRegistration[]          @relation("RegistrationReviewer")
@@ -118,6 +121,25 @@ model Member {
   resolvedBlacklistEntries RegistrationBlacklistEntry[] @relation("BlacklistResolver")
 
   @@map("member")
+}
+
+model MemberRole {
+  id         Int       @id @default(autoincrement())
+  memberId   Int       @map("member_id")
+  roleCode   String    @map("role_code") @db.Text
+  startsOn   DateTime? @map("starts_on") @db.Date
+  endsOn     DateTime? @map("ends_on") @db.Date
+  assignedBy Int?      @map("assigned_by")
+  notes      String?   @db.VarChar(500)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member   Member  @relation("MemberRoleRecipient", fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  role     Role    @relation(fields: [roleCode], references: [roleCode], onDelete: Restrict, onUpdate: NoAction)
+  assigner Member? @relation("MemberRoleAssigner", fields: [assignedBy], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+
+  // SQL migration enforces date order and partial indexes WHERE ends_on IS NULL.
+  // A full Prisma @@unique would incorrectly reject repeated ended assignments.
+  @@map("member_role")
 }
 
 model Committee {

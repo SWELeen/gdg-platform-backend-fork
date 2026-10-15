@@ -132,3 +132,11 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Necessary dependency: change only the role side of existing role_permissions from numeric role_id to role_code, keeping numeric permission IDs and the current link table until the separately approved permission step. Referenced roles cannot be deleted.
 - Preservation: new transactional migration rejects populated old roles or role_permissions before DDL, without transferring or deleting their records. Other tables are preserved. Earlier migrations are unchanged.
 - Approval does not cover permission seeds/distribution, member_role, skills, deployment, commit, push or PR. Production data is reference evidence only; the repository remains the implementation authority.
+
+## 2026-10-15 Member-role assignment table approval
+
+- Owner/approver: project user explicitly approved member_role without initial assignments.
+- Scope: the eight columns from the approved people/membership contract: id, member_id, role_code, starts_on, ends_on, assigned_by, notes and created_at. Dates, assigner and notes remain optional; no new required-start or inferred assignment rule is introduced.
+- Constraints: one open-ended assignment per member/role (ends_on IS NULL), repeated ended history allowed, end not before start when both exist, required recipient/role FKs and optional assigning-member FK with delete RESTRICT/update NO ACTION.
+- Migration is additive and transactional; preserve existing people, memberships, roles and permissions, with no seed assignments, transfers or changes to earlier migrations.
+- Does not approve authorization endpoints, automatic expiry, permission distribution, skills, deployment or commit. Commit requires separate user confirmation.

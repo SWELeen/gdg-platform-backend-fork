@@ -4,7 +4,7 @@
 
 For first-time setup, follow [Backend Local Setup](../SETUP.md). Docker provides PostgreSQL, pgAdmin, Node.js and pnpm; teammates do not need host Node.js/pnpm for the Docker workflow below.
 
-The repository currently defines twelve project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
+The repository currently defines thirteen project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
 
 Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, permission assignments or sample events; the role-registry migration inserts only the three approved role definitions. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
 
@@ -12,7 +12,7 @@ Each developer has a separate local database and data. The same committed migrat
 
 The `20261015164000_people_membership_fresh` migration is for a **separate empty database**. It replays after the original migration, locks all thirteen original project tables, and refuses to continue if any contains records. It does not migrate, match, or delete old records. Keep an existing database and its volume intact; provision a different empty database and configure its connection separately. Do not point the regular backend startup at a populated old database expecting an automatic upgrade.
 
-The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; the target member_role assignment table belongs to the next stage. The role registry now uses role_code; permissions retain their previous numeric IDs until their own step.
+The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; member_role now stores assignments of global roles to members without any initial assignments. The role registry now uses role_code; permissions retain their previous numeric IDs until their own step.
 
 The official `person.auth_user_id → auth.users.id ON DELETE SET NULL` link is not installed in this plain PostgreSQL local setup: auth_user_id is a unique nullable UUID only. Release 2.3 views, RLS, guards, audit, and access rules are not reproduced. Event/incident details still follow the previous local implementation except for their identity references. This is not a complete official schema export.
 
@@ -21,6 +21,16 @@ The official `person.auth_user_id → auth.users.id ON DELETE SET NULL` link is 
 `20261015190000_role_registry` replaces the empty numeric `roles` registry with `role(role_code text PRIMARY KEY, description text NULL, is_privileged boolean NOT NULL DEFAULT true)`. Codes must match `^[A-Z][A-Z_]*$`; the three initial values are seeds, not an exhaustive CHECK list. It updates only the role side of `role_permissions` to required `role_code`, with delete RESTRICT/update NO ACTION. Permission IDs, the link's existing surrogate ID, and permission-side behavior remain unchanged until the permission step.
 
 The migration locks both old role tables and rejects records in either with `role_registry_requires_empty_role_tables`. No old roles or assignments are copied or deleted. Other populated tables from the people/membership stage can be preserved. Preserve a rejected database and review it; do not delete records or bypass the guard. The migration is transactional, has no automatic down migration, and is verified only on disposable PostgreSQL. It does not deploy to Supabase, assign roles to members, implement authorization, or introduce member_role/skills.
+
+## Member-role assignments
+
+`20261015200000_member_role` adds `member_role` without inserts, updates or deletes of existing domain records. It leaves the three approved role definitions unchanged and creates no member assignments. Earlier migrations remain immutable.
+
+Columns: integer BY DEFAULT identity `id`; required member_id and role_code; optional DATE starts_on/ends_on, optional assigning member assigned_by, optional notes varchar(500), and created_at timestamptz DEFAULT now(). Recipient, role and assigner FKs use delete RESTRICT/update NO ACTION, including ended history. Dates must satisfy ends_on >= starts_on when both are present; a missing date is allowed.
+
+Custom SQL enforces UNIQUE(member_id, role_code) WHERE ends_on IS NULL and a role_code lookup index with the same predicate. The predicate means open-ended, regardless of whether the start is past or future. Ended history can repeat; this does not prevent overlaps between dated assignments. These partial indexes and the date CHECK are documented in Prisma and tested directly; do not replace them with an unconditional @@unique. Use the assignment id for Prisma unique operations.
+
+The table stores assignments only. Expiry evaluation, authorized assignment endpoints, privilege enforcement, Supabase RLS/audit and data transfer are separate work. Verification uses disposable PostgreSQL; no application or production database is modified. The migration is transactional and additive; there is no automatic down migration deleting assignment history.
 
 ## Apply migrations — teammates
 
@@ -45,12 +55,12 @@ The services should be healthy and Prisma should report that the database schema
 
 In pgAdmin, expand **GDG Local PostgreSQL → Databases → gdg_platform → Schemas → public → Tables** and refresh **Tables**. Use your `POSTGRES_DB` value if you changed the default database name.
 
-Expect these twelve project tables, plus `_prisma_migrations`:
+Expect these thirteen project tables, plus `_prisma_migrations`:
 
 | Area | Tables |
 | --- | --- |
 | People and access registries | `person`, `role`, `permissions`, `role_permissions` |
-| Group membership | `member`, `committee`, `member_committee` |
+| Group membership | `member`, `committee`, `member_committee`, `member_role` |
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
 

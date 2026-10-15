@@ -81,14 +81,15 @@ Names below are PostgreSQL names. `?` means nullable; all other fields are NOT N
 
 All actor references reject non-members. A non-member Person may register. RolePermission remains linked to the existing numeric role registry until Stage C. Event table names and other event fields are not being presented as release 2.3-complete.
 
-## Stage C — Incremental approval; role-only step authorized
+## Stage C — Incremental approval; role and member-role steps authorized
 
 - Create target role/member_role and skill/member_skill structures using the contract above.
 - Coordinate role_code with role_permission and permission.code; no old-role transfer or inferred seed values.
 - Test partial active-role uniqueness, history dates, skill pairs, and referenced-row deletion restrictions.
 - Role-only step approved: role_code/description/is_privileged and seeds ADVISOR, GROUP_LEADER, GROUP_CO_LEADER, using the reviewed descriptions and true privilege flags. Adapt only the existing role_permissions FK to role_code; leave permission IDs/link shape for the next step.
 - Add migration 20261015190000_role_registry; lock/reject either populated legacy role table before DDL, preserve unrelated records, and test seeds/defaults/code checks/uniqueness/FKs/rollback/no-op on disposable PostgreSQL.
-- Remaining Stage C tables, permission seeds/distribution, and skill values require their own review/authorization. Live row counts are not seed definitions.
+- Member-role step separately approved without initial assignments: add migration 20261015200000_member_role, the eight approved columns, partial open-role uniqueness, date CHECK and three restrictive FKs. Preserve all predecessor data. Verify an empty new table, optional dates/assigner/notes, closed history, unique/index behavior, FK integrity/deletion restrictions and migration rollback/no-op on disposable PostgreSQL.
+- Remaining permission/skill changes, permission seeds/distribution, and skill values require their own review/authorization. Live row counts are not seed definitions.
 
 ## Later dependencies and integration boundary
 
@@ -131,3 +132,12 @@ All actor references reject non-members. A non-member Person may register. RoleP
 - Fixed a reproduced test-container readiness race by waiting on the final TCP server instead of the initialization Unix socket server.
 - PASS: pnpm check (5 helper tests, 12 Vitest tests, lint/typecheck), pnpm build, Prisma validate, 97 schema tests per clean replay, 101 e2e tests, startup command check, combined isolated startup/performance runner, Prettier and git diff checks. Independent read-only review found no actionable findings; the parent agent ran runtime checks.
 - Disposable resources were cleaned up. No application/Supabase database was changed. User proposal and frontend lockfile hashes remain unchanged. The user subsequently approved committing this role-only step on 2026-10-15. No push, PR or deployment is authorized.
+
+## Member-role step verification — 2026-10-15
+
+- Implemented member_role with the eight approved columns and no initial assignments in additive transactional migration 20261015200000_member_role. Added the recipient/assigner/role Prisma relations; earlier migrations are unchanged.
+- Verified raw identity/timestamp defaults, optional details, explicit identity IDs, 500-character notes limit, valid/null/equal dates, date-order rejection on insert/update, open-role duplicate/reopen rejection, repeated ended history, multiple roles/members, close-and-reassign behavior, three FK orphan checks and historical reference deletion restrictions.
+- Two clean migration replays passed with 106 schema tests each; all assignment fixtures roll back, the new table stays empty and the three approved role seeds remain unchanged. The additive upgrade preserves pre-existing people, memberships, roles and permissions. Initial/latest/probe failure, recovery, repeat-deploy and previous populated-table rejection checks passed. E2e: 110 tests passed.
+- PASS: pnpm check (5 helper tests, 12 Vitest tests, lint/typecheck), pnpm build, Prisma validate, Prettier, git diff checks, and isolated startup/restart/failure protection using node test/run-schema-tests.mjs --startup. Disposable containers, image and network were cleaned up. Performance runner was not repeated: this step adds no changes to the existing event queries or indexes.
+- Independent read-only review found no actionable findings; runtime checks were run by the parent agent. Application and Supabase databases were not changed. Preserved proposal and frontend lockfile hashes match their prior values.
+- The user approved committing the member-role step on 2026-10-15 after reviewing the results. No push, PR or deployment is authorized. Assignment authorization, expiry, RLS/audit, permission redesign and skills remain outside this step.

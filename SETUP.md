@@ -75,7 +75,7 @@ This starts the backend, database, and pgAdmin. Open [the backend](http://localh
 
 The browser version already includes the server connection. If you use the desktop pgAdmin app, register a server with host `127.0.0.1`, port `5432`, database `gdg_platform`, username `gdg_local`, and the value of `POSTGRES_PASSWORD` as the password.
 
-You should see twelve project tables, plus Prisma’s `_prisma_migrations` history table. Refresh **Tables** if needed. Everyone gets the same structure from the committed migrations. Do not create or change tables manually in pgAdmin.
+You should see thirteen project tables, plus Prisma’s `_prisma_migrations` history table. Refresh **Tables** if needed. Everyone gets the same structure from the committed migrations. Do not create or change tables manually in pgAdmin.
 
 After pulling backend updates in your backend clone, run `gdg backend run` again to apply any new migrations. Startup does not reset your database. Teammates use `migrate deploy` through startup; only schema authors create new migrations. If your database already contains manually created project tables, stop and ask the schema owner before proceeding; do not reset or baseline it yourself.
 

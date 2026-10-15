@@ -39,6 +39,7 @@ const expectedTables = [
   ),
   'person',
   'role',
+  'member_role',
 ].sort();
 
 // This runner creates its own server; it never accepts an application database URL.
@@ -420,6 +421,29 @@ try {
   assert.equal(sql(roleDatabase, 'SELECT count(*) FROM role'), '3');
   console.log(
     'PASS: role migration preserves unrelated records and rejects each populated legacy role table.',
+  );
+
+  const assignmentMigration = '20261015200000_member_role';
+  sql(
+    roleDatabase,
+    'INSERT INTO member(person_id) SELECT person_id FROM person',
+  );
+  const beforeAssignmentRows = domainRows(roleDatabase);
+  sql(
+    roleDatabase,
+    readFileSync(
+      join('prisma/migrations', assignmentMigration, 'migration.sql'),
+      'utf8',
+    ),
+  );
+  assertTables(roleDatabase, expectedTables);
+  assert.equal(sql(roleDatabase, 'SELECT count(*) FROM member_role'), '0');
+  assert.deepEqual(
+    domainRows(roleDatabase).filter(([table]) => table !== 'member_role'),
+    beforeAssignmentRows,
+  );
+  console.log(
+    'PASS: member-role migration creates no assignments and preserves all existing domain records.',
   );
 
   function verifyFailure(source, history, database, expected) {
