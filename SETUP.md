@@ -85,7 +85,7 @@ To verify the migration, run this from the backend folder:
 docker compose exec -T backend pnpm exec prisma migrate status --config prisma7.config.ts
 ```
 
-Prisma should report that the database schema is up to date. Fresh tables are empty; setup does not create accounts or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
+Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER); other tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
 
 ## Daily commands
 

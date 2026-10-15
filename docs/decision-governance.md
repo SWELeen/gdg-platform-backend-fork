@@ -124,3 +124,11 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Source: the user's fresh-start clarification and authorization in this chat; target columns are recorded in the English people/membership plan and sourced from the DBA release 2.3 structure PDF, with SQL 2.2 as supporting evidence only.
 - Remaining limits: the official Supabase auth FK, RLS/guards/audit, views, permissions and other event/incident structures are not verified or claimed complete here. Existing populated databases are rejected and preserved, not automatically upgraded.
 - Supersedes: the original people/membership expansion/backfill proposal and User/Member proposal where they conflict with this fresh-start scope.
+
+## 2026-10-15 Role registry and initial values approval
+
+- Owner/approver: project user in this chat; explicitly approved implementing role with ADVISOR, GROUP_LEADER and GROUP_CO_LEADER.
+- Scope: role_code text primary key, optional description, is_privileged default true; initial descriptions are Club advisor, Club (group) leader and Club (group) co-leader. All three approved values have is_privileged=true. These are initial definitions, not member assignments or automatic authorization.
+- Necessary dependency: change only the role side of existing role_permissions from numeric role_id to role_code, keeping numeric permission IDs and the current link table until the separately approved permission step. Referenced roles cannot be deleted.
+- Preservation: new transactional migration rejects populated old roles or role_permissions before DDL, without transferring or deleting their records. Other tables are preserved. Earlier migrations are unchanged.
+- Approval does not cover permission seeds/distribution, member_role, skills, deployment, commit, push or PR. Production data is reference evidence only; the repository remains the implementation authority.

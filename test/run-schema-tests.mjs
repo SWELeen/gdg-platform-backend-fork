@@ -34,8 +34,11 @@ const initialTables = [
 ];
 // Update this explicit manifest when a migration adds or removes project tables.
 const expectedTables = [
-  ...initialTables.filter((table) => !['users', 'user_roles'].includes(table)),
+  ...initialTables.filter(
+    (table) => !['users', 'user_roles', 'roles'].includes(table),
+  ),
   'person',
+  'role',
 ].sort();
 
 // This runner creates its own server; it never accepts an application database URL.
@@ -166,7 +169,16 @@ try {
   let ready = false;
   for (let i = 0; i < 60; i++) {
     try {
-      run('docker', ['exec', name, 'pg_isready', '-U', 'postgres']);
+      // The image's temporary initialization server accepts Unix sockets before the test database exists.
+      run('docker', [
+        'exec',
+        name,
+        'pg_isready',
+        '-h',
+        '127.0.0.1',
+        '-U',
+        'postgres',
+      ]);
       ready = true;
       break;
     } catch {
@@ -230,9 +242,35 @@ try {
     assert.match(repeat, /No pending migrations/);
     assertTables(database, expectedTables);
     assert.deepEqual(
-      domainRows(database),
-      [...expectedTables].sort().map((table) => [table, '[]']),
-      'Tests must clean up all committed fixtures',
+      domainRows(database).map(([table, rows]) => [
+        table,
+        JSON.parse(rows).sort((a, b) =>
+          (a.role_code ?? '').localeCompare(b.role_code ?? ''),
+        ),
+      ]),
+      [...expectedTables].sort().map((table) => [
+        table,
+        table === 'role'
+          ? [
+              {
+                role_code: 'ADVISOR',
+                description: 'Club advisor',
+                is_privileged: true,
+              },
+              {
+                role_code: 'GROUP_LEADER',
+                description: 'Club (group) leader',
+                is_privileged: true,
+              },
+              {
+                role_code: 'GROUP_CO_LEADER',
+                description: 'Club (group) co-leader',
+                is_privileged: true,
+              },
+            ].sort((a, b) => a.role_code.localeCompare(b.role_code))
+          : [],
+      ]),
+      'Tests must preserve approved seeds and clean up all committed fixtures',
     );
     dumps.push(schemaDump(database));
   }
@@ -324,6 +362,64 @@ try {
   }
   console.log(
     'PASS: fresh-schema migration rejected each populated initial table without changing records, schema, or history.',
+  );
+
+  // Verify this role-only step rejects old role rows but preserves unrelated people/permissions.
+  const roleMigration = '20261015190000_role_registry';
+  const roleIndex = migrations.indexOf(roleMigration);
+  assert(roleIndex > freshIndex);
+  const roleDatabase = 'gdg_schema_test_role_guard';
+  run('docker', ['exec', name, 'createdb', '-U', 'postgres', roleDatabase]);
+  for (const migration of migrations.slice(0, roleIndex)) {
+    sql(
+      roleDatabase,
+      readFileSync(
+        join('prisma/migrations', migration, 'migration.sql'),
+        'utf8',
+      ),
+    );
+  }
+  sql(
+    roleDatabase,
+    "INSERT INTO person(full_name) VALUES ('Preserved role-stage person'); INSERT INTO permissions(permission_name) VALUES ('preserved.permission')",
+  );
+  const roleSQL = readFileSync(
+    join('prisma/migrations', roleMigration, 'migration.sql'),
+    'utf8',
+  );
+  for (const [table, insert] of [
+    ['roles', "INSERT INTO roles(role_name) VALUES ('Legacy role')"],
+    [
+      'role_permissions',
+      'INSERT INTO role_permissions(role_id,permission_id) VALUES (1,1)',
+    ],
+  ]) {
+    sql(roleDatabase, `SET session_replication_role=replica; ${insert}`);
+    const beforeSchema = schemaDump(roleDatabase);
+    const beforeRows = domainRows(roleDatabase);
+    assert.throws(
+      () => sql(roleDatabase, roleSQL),
+      /role_registry_requires_empty_role_tables/,
+    );
+    assert.equal(schemaDump(roleDatabase), beforeSchema);
+    assert.deepEqual(domainRows(roleDatabase), beforeRows);
+    sql(
+      roleDatabase,
+      `SET session_replication_role=replica; DELETE FROM "${table}"`,
+    );
+  }
+  sql(roleDatabase, roleSQL);
+  assert.equal(
+    sql(roleDatabase, 'SELECT full_name FROM person'),
+    'Preserved role-stage person',
+  );
+  assert.equal(
+    sql(roleDatabase, 'SELECT permission_name FROM permissions'),
+    'preserved.permission',
+  );
+  assert.equal(sql(roleDatabase, 'SELECT count(*) FROM role'), '3');
+  console.log(
+    'PASS: role migration preserves unrelated records and rejects each populated legacy role table.',
   );
 
   function verifyFailure(source, history, database, expected) {

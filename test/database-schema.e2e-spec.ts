@@ -136,6 +136,73 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       ).rejects.toThrow(constraint);
     }
 
+    it('includes exactly the three approved initial roles', async () => {
+      expect(await db.role.findMany({ orderBy: { roleCode: 'asc' } })).toEqual([
+        {
+          roleCode: 'ADVISOR',
+          description: 'Club advisor',
+          isPrivileged: true,
+        },
+        {
+          roleCode: 'GROUP_CO_LEADER',
+          description: 'Club (group) co-leader',
+          isPrivileged: true,
+        },
+        {
+          roleCode: 'GROUP_LEADER',
+          description: 'Club (group) leader',
+          isPrivileged: true,
+        },
+      ]);
+    });
+
+    it('supports optional role descriptions and the database privilege default', async () => {
+      await valid(async (tx) => {
+        const [role] = await tx.$queryRaw<
+          { description: string | null; is_privileged: boolean }[]
+        >`
+          INSERT INTO role(role_code) VALUES ('TEST_ROLE') RETURNING description, is_privileged`;
+        expect(role).toEqual({ description: null, is_privileged: true });
+        const ordinary = await tx.role.create({
+          data: { roleCode: 'TEST_ORDINARY', isPrivileged: false },
+        });
+        expect(ordinary.isPrivileged).toBe(false);
+      });
+    });
+
+    it.each(['', 'advisor', 'ROLE_1', '_ROLE', 'ROLE ADMIN'])(
+      'rejects invalid role code %j',
+      async (roleCode) => {
+        await invalid(async (tx) => {
+          await tx.$executeRaw`INSERT INTO role(role_code) VALUES (${roleCode})`;
+        }, 'role_code_check');
+      },
+    );
+
+    it('rejects duplicate role codes', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO role(role_code) VALUES ('ADVISOR')`;
+      }, 'role_pkey');
+    });
+
+    it('keeps role-permission links valid and restricts deletion of referenced roles', async () => {
+      await invalid(async (tx) => {
+        const permission = await tx.permission.create({
+          data: { permissionName: randomUUID() },
+        });
+        await tx.rolePermission.create({
+          data: { roleCode: 'ADVISOR', permissionId: permission.permissionId },
+        });
+        await tx.$executeRaw`DELETE FROM role WHERE role_code = 'ADVISOR'`;
+      }, 'role_permissions_role_code_fkey');
+      await invalid(async (tx) => {
+        const permission = await tx.permission.create({
+          data: { permissionName: randomUUID() },
+        });
+        await tx.$executeRaw`INSERT INTO role_permissions(role_code, permission_id) VALUES ('MISSING_ROLE', ${permission.permissionId})`;
+      }, 'role_permissions_role_code_fkey');
+    });
+
     it('creates separate people and membership with database defaults', async () => {
       await valid(async (tx) => {
         const [person] = await tx.$queryRaw<
@@ -421,6 +488,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         'registrations_excuse_check',
         'registrations_token_check',
         'registrations_waitlist_position_check',
+        'role_code_check',
       ]);
     });
 
@@ -982,19 +1050,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         });
       }, 'member_committee_member_id_committee_id_key');
       await invalid(async (tx) => {
-        const role = await tx.role.create({ data: { roleName: randomUUID() } });
+        const role = await tx.role.create({
+          data: {
+            roleCode:
+              'TEST_' +
+              randomUUID()
+                .replace(/[^a-z]/gi, '')
+                .toUpperCase(),
+          },
+        });
         const permission = await tx.permission.create({
           data: { permissionName: randomUUID() },
         });
         await tx.rolePermission.create({
-          data: { roleId: role.roleId, permissionId: permission.permissionId },
+          data: {
+            roleCode: role.roleCode,
+            permissionId: permission.permissionId,
+          },
         });
         await tx.$executeRawUnsafe(
-          'INSERT INTO role_permissions(role_id,permission_id) VALUES ($1,$2)',
-          role.roleId,
+          'INSERT INTO role_permissions(role_code,permission_id) VALUES ($1,$2)',
+          role.roleCode,
           permission.permissionId,
         );
-      }, 'role_permissions_role_id_permission_id_key');
+      }, 'role_permissions_role_code_permission_id_key');
     });
 
     it('enforces registration-side composite FK and referenced history deletion restrictions', async () => {

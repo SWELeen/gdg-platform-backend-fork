@@ -40,7 +40,7 @@ Names below are PostgreSQL names. `?` means nullable; all other fields are NOT N
 - Added timestamps use DEFAULT now(); updated_at requires database-level updates matching source triggers, tested through raw SQL. `@updatedAt` alone does not reproduce source behavior.
 - Reference indexes: committee parent; member_committee committee_id; member_role(role_code) WHERE ends_on IS NULL; member_skill skill_id. UNIQUE(member_id,committee_id) supports member lookup; do not add a duplicate member_id index merely because the dump has one. Other new indexes require a concrete query justification.
 - “Every member belongs to a committee” was a previous proposal; no general constraint enforcing it appeared in the reviewed DDL. Do not invent a general trigger; accepting a committee application has its own commit check in a later application stage.
-- Do not restrict global role codes to PDF examples or derive seed values from official row counts. Actual reference names and codes are still unavailable as seed data.
+- Do not restrict global role codes to PDF examples or derive seed values from official row counts. The user subsequently approved three explicit initial role definitions; see the incremental Stage C note below. Skill seed values remain unapproved.
 
 ## Stage A — Completed and committed
 
@@ -81,12 +81,14 @@ Names below are PostgreSQL names. `?` means nullable; all other fields are NOT N
 
 All actor references reject non-members. A non-member Person may register. RolePermission remains linked to the existing numeric role registry until Stage C. Event table names and other event fields are not being presented as release 2.3-complete.
 
-## Stage C — Planned, not authorized by Stage B execution
+## Stage C — Incremental approval; role-only step authorized
 
 - Create target role/member_role and skill/member_skill structures using the contract above.
 - Coordinate role_code with role_permission and permission.code; no old-role transfer or inferred seed values.
 - Test partial active-role uniqueness, history dates, skill pairs, and referenced-row deletion restrictions.
-- Obtain actual seed names/codes separately; live row counts are not seed definitions.
+- Role-only step approved: role_code/description/is_privileged and seeds ADVISOR, GROUP_LEADER, GROUP_CO_LEADER, using the reviewed descriptions and true privilege flags. Adapt only the existing role_permissions FK to role_code; leave permission IDs/link shape for the next step.
+- Add migration 20261015190000_role_registry; lock/reject either populated legacy role table before DDL, preserve unrelated records, and test seeds/defaults/code checks/uniqueness/FKs/rollback/no-op on disposable PostgreSQL.
+- Remaining Stage C tables, permission seeds/distribution, and skill values require their own review/authorization. Live row counts are not seed definitions.
 
 ## Later dependencies and integration boundary
 
@@ -120,3 +122,12 @@ All actor references reject non-members. A non-member Person may register. RoleP
 - Initial migration SHA256 and both pre-existing user file hashes remain unchanged. The frontend was not edited.
 - Review boundaries: official DBA parity beyond this recorded contract, Supabase/RLS/views/audit/access, Stage C assignments, and production deployment are unverified and intentionally deferred. Independent reviewer inspected code; the implementing agent executed the database/build/startup/performance checks.
 - Stage B implementation and verification are complete. The user approved its commit on 2026-10-15 after reviewing the results. No push or PR is authorized; Stage C has not started.
+
+## Role-only step verification — 2026-10-15
+
+- Implemented role with the three explicitly approved initial definitions in a new transactional migration, leaving earlier migrations unchanged. Existing role_permissions now references role_code; permission redesign, member_role and skills remain pending.
+- Added database checks for seeds/defaults/nullable description/explicit false privilege, valid custom codes, invalid and duplicate codes, missing-role FK, referenced-role deletion, and role-permission pair uniqueness. Updated the explicit table/check manifests and seed-preservation expectations.
+- Proved rejection of either independently populated legacy role table with unchanged schema/records and preservation of unrelated person/permission rows. Initial/latest/probe injected failure, recovery and repeat-deploy checks passed.
+- Fixed a reproduced test-container readiness race by waiting on the final TCP server instead of the initialization Unix socket server.
+- PASS: pnpm check (5 helper tests, 12 Vitest tests, lint/typecheck), pnpm build, Prisma validate, 97 schema tests per clean replay, 101 e2e tests, startup command check, combined isolated startup/performance runner, Prettier and git diff checks. Independent read-only review found no actionable findings; the parent agent ran runtime checks.
+- Disposable resources were cleaned up. No application/Supabase database was changed. User proposal and frontend lockfile hashes remain unchanged. The user subsequently approved committing this role-only step on 2026-10-15. No push, PR or deployment is authorized.

@@ -68,13 +68,13 @@ model Person {
 }
 
 model Role {
-  roleId      Int     @id @default(autoincrement()) @map("role_id")
-  roleName    String  @unique @map("role_name") @db.VarChar(50)
-  description String? @db.Text
+  roleCode     String  @id @map("role_code") @db.Text
+  description  String? @db.Text
+  isPrivileged Boolean @default(true) @map("is_privileged")
 
   permissions RolePermission[]
 
-  @@map("roles")
+  @@map("role")
 }
 
 model Permission {
@@ -88,14 +88,14 @@ model Permission {
 }
 
 model RolePermission {
-  id           Int @id @default(autoincrement())
-  roleId       Int @map("role_id")
-  permissionId Int @map("permission_id")
+  id           Int    @id @default(autoincrement())
+  roleCode     String @map("role_code") @db.Text
+  permissionId Int    @map("permission_id")
 
-  role       Role       @relation(fields: [roleId], references: [roleId], onDelete: Cascade, onUpdate: Restrict)
+  role       Role       @relation(fields: [roleCode], references: [roleCode], onDelete: Restrict, onUpdate: NoAction)
   permission Permission @relation(fields: [permissionId], references: [permissionId], onDelete: Restrict, onUpdate: Restrict)
 
-  @@unique([roleId, permissionId])
+  @@unique([roleCode, permissionId])
   @@index([permissionId])
   @@map("role_permissions")
 }

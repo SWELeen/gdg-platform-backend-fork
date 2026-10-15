@@ -6,15 +6,21 @@ For first-time setup, follow [Backend Local Setup](../SETUP.md). Docker provides
 
 The repository currently defines twelve project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
 
-Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, roles, permissions or sample events. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
+Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, permission assignments or sample events; the role-registry migration inserts only the three approved role definitions. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
 
 ## Fresh people/membership setup
 
 The `20261015164000_people_membership_fresh` migration is for a **separate empty database**. It replays after the original migration, locks all thirteen original project tables, and refuses to continue if any contains records. It does not migrate, match, or delete old records. Keep an existing database and its volume intact; provision a different empty database and configure its connection separately. Do not point the regular backend startup at a populated old database expecting an automatic upgrade.
 
-The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; the target member_role assignment table belongs to the next stage. Existing numeric role/permission registries are retained until that stage.
+The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; the target member_role assignment table belongs to the next stage. The role registry now uses role_code; permissions retain their previous numeric IDs until their own step.
 
 The official `person.auth_user_id → auth.users.id ON DELETE SET NULL` link is not installed in this plain PostgreSQL local setup: auth_user_id is a unique nullable UUID only. Release 2.3 views, RLS, guards, audit, and access rules are not reproduced. Event/incident details still follow the previous local implementation except for their identity references. This is not a complete official schema export.
+
+## Role registry step
+
+`20261015190000_role_registry` replaces the empty numeric `roles` registry with `role(role_code text PRIMARY KEY, description text NULL, is_privileged boolean NOT NULL DEFAULT true)`. Codes must match `^[A-Z][A-Z_]*$`; the three initial values are seeds, not an exhaustive CHECK list. It updates only the role side of `role_permissions` to required `role_code`, with delete RESTRICT/update NO ACTION. Permission IDs, the link's existing surrogate ID, and permission-side behavior remain unchanged until the permission step.
+
+The migration locks both old role tables and rejects records in either with `role_registry_requires_empty_role_tables`. No old roles or assignments are copied or deleted. Other populated tables from the people/membership stage can be preserved. Preserve a rejected database and review it; do not delete records or bypass the guard. The migration is transactional, has no automatic down migration, and is verified only on disposable PostgreSQL. It does not deploy to Supabase, assign roles to members, implement authorization, or introduce member_role/skills.
 
 ## Apply migrations — teammates
 
@@ -43,12 +49,12 @@ Expect these twelve project tables, plus `_prisma_migrations`:
 
 | Area | Tables |
 | --- | --- |
-| People and access registries | `person`, `roles`, `permissions`, `role_permissions` |
+| People and access registries | `person`, `role`, `permissions`, `role_permissions` |
 | Group membership | `member`, `committee`, `member_committee` |
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
 
-An empty table is expected on fresh setup. Do not create tables manually or insert privileged accounts to test authentication.
+Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Other project tables are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
 
 ## If migration fails
 
@@ -59,6 +65,7 @@ Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. K
 | Connection refused / authentication failed | Check Docker, the database service and your local credentials. Editing `.env` alone does not change an existing PostgreSQL user's password. |
 | P3005 / database is not empty | The initial migration expects an empty project schema. If you already created tables manually, stop and ask the schema owner to inspect them and plan preservation/transfer. Do not reset or baseline them yourself. |
 | people_membership_requires_empty_database | Preserve the populated database; provision a separate empty one. Do not delete records or mark this migration applied to bypass its precondition. Prisma may record a failed attempt even though domain DDL rolled back. |
+| role_registry_requires_empty_role_tables | Preserve the old role tables and request review; do not delete records or bypass the guard. |
 | P3009 / a previous migration failed | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back. |
 | Backend is healthy but tables are missing in pgAdmin | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above. |
 
