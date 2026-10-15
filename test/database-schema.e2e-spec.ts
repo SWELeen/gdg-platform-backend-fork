@@ -270,6 +270,125 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       ).rejects.toThrow(/22001|character varying\(255\)/);
     });
 
+    it('starts without any member-skill links', async () => {
+      const [row] = await db.$queryRaw<
+        { count: bigint }[]
+      >`SELECT count(*) FROM member_skill`;
+      expect(row.count).toBe(0n);
+    });
+
+    it('supports multiple skills per member and multiple members per skill with generated and explicit link IDs', async () => {
+      await valid(async (tx, f) => {
+        const other = await fixture(tx);
+        const [link] = await tx.$queryRaw<{ id: number }[]>`
+          INSERT INTO member_skill(member_id, skill_id) VALUES (${f.member.memberId}, 1) RETURNING id`;
+        expect(link.id).toBeGreaterThan(0);
+        await tx.memberSkill.create({
+          data: { id: -100, memberId: f.member.memberId, skillId: 2 },
+        });
+        await tx.memberSkill.create({
+          data: { memberId: other.member.memberId, skillId: 1 },
+        });
+        const member = await tx.member.findUniqueOrThrow({
+          where: { memberId: f.member.memberId },
+          include: {
+            skills: { include: { skill: true }, orderBy: { skillId: 'asc' } },
+          },
+        });
+        expect(member.skills.map((row) => row.skill.skillName)).toEqual(
+          approvedSkills.slice(0, 2).map((row) => row.skill_name),
+        );
+        const skill = await tx.skill.findUniqueOrThrow({
+          where: { skillId: 1 },
+          include: {
+            members: {
+              include: { member: true },
+              orderBy: { memberId: 'asc' },
+            },
+          },
+        });
+        expect(skill.members.map((row) => row.member.memberId)).toEqual(
+          [f.member.memberId, other.member.memberId].sort((a, b) => a - b),
+        );
+        expect(await tx.memberSkill.count()).toBe(3);
+      });
+    });
+
+    it('rejects duplicate member-skill pairs on insert and update', async () => {
+      await invalid(async (tx, f) => {
+        await tx.memberSkill.create({
+          data: { memberId: f.member.memberId, skillId: 1 },
+        });
+        await tx.$executeRaw`INSERT INTO member_skill(member_id, skill_id) VALUES (${f.member.memberId}, 1)`;
+      }, 'member_skill_member_id_skill_id_key');
+      await invalid(async (tx, f) => {
+        await tx.memberSkill.create({
+          data: { memberId: f.member.memberId, skillId: 1 },
+        });
+        const other = await tx.memberSkill.create({
+          data: { memberId: f.member.memberId, skillId: 2 },
+        });
+        await tx.$executeRaw`UPDATE member_skill SET skill_id = 1 WHERE id = ${other.id}`;
+      }, 'member_skill_member_id_skill_id_key');
+    });
+
+    it('rejects missing member or skill references', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO member_skill(member_id, skill_id) VALUES (-1, 1)`;
+      }, 'member_skill_member_id_fkey');
+      await invalid(async (tx, f) => {
+        await tx.$executeRaw`INSERT INTO member_skill(member_id, skill_id) VALUES (${f.member.memberId}, -1)`;
+      }, 'member_skill_skill_id_fkey');
+    });
+
+    it('requires both member and skill references', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO member_skill(member_id, skill_id) VALUES (NULL, 1)`;
+      }, 'member_id');
+      await invalid(async (tx, f) => {
+        await tx.$executeRaw`INSERT INTO member_skill(member_id, skill_id) VALUES (${f.member.memberId}, NULL)`;
+      }, 'skill_id');
+    });
+
+    it('restricts deleting referenced members and skills', async () => {
+      await invalid(async (tx) => {
+        const person = await tx.person.create({
+          data: { fullName: 'Synthetic skill owner' },
+        });
+        const member = await tx.member.create({
+          data: { personId: person.personId },
+        });
+        await tx.memberSkill.create({
+          data: { memberId: member.memberId, skillId: 1 },
+        });
+        await tx.$executeRaw`DELETE FROM member WHERE member_id = ${member.memberId}`;
+      }, 'member_skill_member_id_fkey');
+      await invalid(async (tx, f) => {
+        await tx.memberSkill.create({
+          data: { memberId: f.member.memberId, skillId: 1 },
+        });
+        await tx.$executeRaw`DELETE FROM skill WHERE skill_id = 1`;
+      }, 'member_skill_skill_id_fkey');
+    });
+
+    it('allows removing a link without changing its member or skill', async () => {
+      await valid(async (tx, f) => {
+        const link = await tx.memberSkill.create({
+          data: { memberId: f.member.memberId, skillId: 1 },
+        });
+        await tx.memberSkill.delete({ where: { id: link.id } });
+        expect(
+          await tx.member.findUnique({
+            where: { memberId: f.member.memberId },
+          }),
+        ).not.toBeNull();
+        expect(
+          await tx.skill.findUnique({ where: { skillId: 1 } }),
+        ).not.toBeNull();
+        expect(await tx.memberSkill.count()).toBe(0);
+      });
+    });
+
     it('starts without any member-role assignments', async () => {
       const [row] = await db.$queryRaw<
         { count: bigint }[]
@@ -585,6 +704,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           },
           {
             table_name: 'member_role',
+            column_name: 'id',
+            identity_generation: 'BY DEFAULT',
+          },
+          {
+            table_name: 'member_skill',
             column_name: 'id',
             identity_generation: 'BY DEFAULT',
           },

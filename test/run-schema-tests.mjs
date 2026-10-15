@@ -40,6 +40,7 @@ const expectedTables = [
   'person',
   'role',
   'member_role',
+  'member_skill',
   'skill',
 ].sort();
 const approvedSkills = JSON.parse(
@@ -471,7 +472,10 @@ try {
       'utf8',
     ),
   );
-  assertTables(roleDatabase, expectedTables);
+  assertTables(roleDatabase, [
+    ...beforeSkillRows.map(([table]) => table),
+    'skill',
+  ]);
   assert.deepEqual(
     domainRows(roleDatabase).filter(([table]) => table !== 'skill'),
     beforeSkillRows,
@@ -487,6 +491,24 @@ try {
   );
   console.log(
     'PASS: skill migration preserves all previous records and inserts only the 32 approved reference skills.',
+  );
+
+  const beforeMemberSkillRows = domainRows(roleDatabase);
+  sql(
+    roleDatabase,
+    readFileSync(
+      'prisma/migrations/20261015220000_member_skill/migration.sql',
+      'utf8',
+    ),
+  );
+  assertTables(roleDatabase, expectedTables);
+  assert.equal(sql(roleDatabase, 'SELECT count(*) FROM member_skill'), '0');
+  assert.deepEqual(
+    domainRows(roleDatabase).filter(([table]) => table !== 'member_skill'),
+    beforeMemberSkillRows,
+  );
+  console.log(
+    'PASS: member-skill migration creates no links and preserves all previous domain records.',
   );
 
   function verifyFailure(source, history, database, expected) {

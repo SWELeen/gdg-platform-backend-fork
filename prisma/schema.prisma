@@ -113,6 +113,7 @@ model Member {
   person                   Person                       @relation(fields: [personId], references: [personId], onDelete: Restrict, onUpdate: NoAction)
   roleAssignments          MemberRole[]                 @relation("MemberRoleRecipient")
   assignedRoles            MemberRole[]                 @relation("MemberRoleAssigner")
+  skills                   MemberSkill[]
   committees               MemberCommittee[]
   createdEvents            Event[]                      @relation("EventCreator")
   reviewedRegistrations    EventRegistration[]          @relation("RegistrationReviewer")
@@ -127,7 +128,22 @@ model Skill {
   skillId   Int    @id @default(autoincrement()) @map("skill_id")
   skillName String @unique @map("skill_name") @db.VarChar(255)
 
+  members MemberSkill[]
+
   @@map("skill")
+}
+
+model MemberSkill {
+  id       Int @id @default(autoincrement())
+  memberId Int @map("member_id")
+  skillId  Int @map("skill_id")
+
+  member Member @relation(fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  skill  Skill  @relation(fields: [skillId], references: [skillId], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([memberId, skillId])
+  @@index([skillId])
+  @@map("member_skill")
 }
 
 model MemberRole {

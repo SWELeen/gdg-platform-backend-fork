@@ -148,3 +148,10 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Source: the user-approved production snapshot is embedded in the new local migration and asserted by test/fixtures/approved-skills.json. Production remains read-only reference evidence, not an automatic synchronization source or implementation authority.
 - Preservation: additive transactional migration, no changes to prior records or migrations, no member_skill table/links, no inferred personal data or assignments. No extra name normalization or domain constraints beyond the approved shape.
 - Commit requires separate confirmation. Member linking, permission redesign, APIs, Supabase deployment, push and PR remain outside this authorization.
+
+## 2026-10-15 Member-skill junction approval and conditional commit
+
+- Owner/approver: project user approved the reviewed three-column member_skill design and explicitly requested a commit if the implementation is good. This authorizes implementing this step and committing after passing verification and review, without a further approval question.
+- Scope: generated integer identity id, required member_id and skill_id, unique member/skill pair, delete RESTRICT/update NO ACTION FKs and a skill lookup index. Start empty, with no initial member selections or proficiency fields.
+- Preservation: additive transactional migration, unchanged earlier migrations and existing data. Removing a link does not remove its member or skill; referenced members/skills cannot be deleted until unlinked.
+- Commit is authorized for this step only. Selection APIs, authorization, permission redesign, deployment, push and PR remain outside scope.
