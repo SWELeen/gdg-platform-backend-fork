@@ -33,7 +33,10 @@ const initialTables = [
   'users',
 ];
 // Update this explicit manifest when a migration adds or removes project tables.
-const expectedTables = [...initialTables];
+const expectedTables = [
+  ...initialTables.filter((table) => !['users', 'user_roles'].includes(table)),
+  'person',
+].sort();
 
 // This runner creates its own server; it never accepts an application database URL.
 const name = `gdg-schema-test-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -241,6 +244,88 @@ try {
   const migrations = migrationNames('prisma/migrations');
   assert(migrations.length > 0, 'Expected committed migration history');
 
+  // Prove the fresh-only precondition independently for every old table, not just users.
+  const freshMigration = '20261015164000_people_membership_fresh';
+  const freshIndex = migrations.indexOf(freshMigration);
+  assert(
+    freshIndex > 0,
+    'Expected the fresh-schema migration after initial history',
+  );
+  const preservedDatabase = 'gdg_schema_test_nonempty';
+  run('docker', [
+    'exec',
+    name,
+    'createdb',
+    '-U',
+    'postgres',
+    preservedDatabase,
+  ]);
+  const preservedRoot = join(scratch, 'nonempty', 'prisma');
+  copyMigrationHistory(
+    'prisma',
+    preservedRoot,
+    migrations.slice(0, freshIndex),
+  );
+  const preservedConfig = join(scratch, 'nonempty', 'prisma.config.ts');
+  writeFileSync(
+    preservedConfig,
+    `export default { schema: ${JSON.stringify(join(preservedRoot, 'schema.prisma'))}, migrations: { path: ${JSON.stringify(join(preservedRoot, 'migrations'))} }, datasource: { url: process.env.DATABASE_URL } };\n`,
+  );
+  run(
+    'pnpm',
+    ['exec', 'prisma', 'migrate', 'deploy', '--config', preservedConfig],
+    { DATABASE_URL: url(preservedDatabase) },
+  );
+  const preservedSchema = schemaDump(preservedDatabase);
+  const fixtures = JSON.parse(
+    readFileSync('test/fixtures/initial-nonempty.json', 'utf8'),
+  );
+  assert.deepEqual(Object.keys(fixtures).sort(), [...initialTables].sort());
+  const freshSQL = readFileSync(
+    join('prisma/migrations', freshMigration, 'migration.sql'),
+    'utf8',
+  );
+  for (const [table, insert] of Object.entries(fixtures)) {
+    // Test server only: disable FK triggers to isolate one populated table at a time.
+    sql(preservedDatabase, `SET session_replication_role=replica; ${insert}`);
+    const rows = domainRows(preservedDatabase);
+    assert.throws(
+      () => sql(preservedDatabase, freshSQL),
+      /people_membership_requires_empty_database/,
+    );
+    assert.equal(
+      schemaDump(preservedDatabase),
+      preservedSchema,
+      `Nonempty ${table} schema changed`,
+    );
+    assert.deepEqual(
+      domainRows(preservedDatabase),
+      rows,
+      `Nonempty ${table} records changed`,
+    );
+    assert.equal(
+      sql(
+        preservedDatabase,
+        'SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL',
+      ),
+      String(freshIndex),
+    );
+    assert.equal(
+      sql(
+        preservedDatabase,
+        'SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL',
+      ),
+      '0',
+    );
+    sql(
+      preservedDatabase,
+      `SET session_replication_role=replica; DELETE FROM "${table}"`,
+    );
+  }
+  console.log(
+    'PASS: fresh-schema migration rejected each populated initial table without changing records, schema, or history.',
+  );
+
   function verifyFailure(source, history, database, expected) {
     run('docker', ['exec', name, 'createdb', '-U', 'postgres', database]);
     const target = history.at(-1);
@@ -420,18 +505,18 @@ try {
       );
       const cursor = sql(
         database,
-        `SELECT min(registration_id) FROM event_registrations WHERE user_id=1`,
+        `SELECT min(registration_id) FROM event_registrations WHERE person_id=1`,
       );
       const queries = {
-        'PR status page': `SELECT registration_id,user_id,status FROM event_registrations WHERE event_id=${eventId} AND status='PENDING' ORDER BY registered_at,registration_id LIMIT 50`,
-        'My Events cursor page': `SELECT registration_id,event_id,status FROM event_registrations WHERE user_id=1 AND (registered_at,registration_id) > (SELECT registered_at,registration_id FROM event_registrations WHERE registration_id=${cursor}) ORDER BY registered_at,registration_id LIMIT 50`,
+        'PR status page': `SELECT registration_id,person_id,status FROM event_registrations WHERE event_id=${eventId} AND status='PENDING' ORDER BY registered_at,registration_id LIMIT 50`,
+        'My Events cursor page': `SELECT registration_id,event_id,status FROM event_registrations WHERE person_id=1 AND (registered_at,registration_id) > (SELECT registered_at,registration_id FROM event_registrations WHERE registration_id=${cursor}) ORDER BY registered_at,registration_id LIMIT 50`,
         'Reserved seats': `SELECT count(*) FROM event_registrations WHERE event_id=${eventId} AND status IN ('AWAITING_CONFIRMATION','CONFIRMED')`,
-        'Next waitlist entry': `SELECT registration_id,user_id FROM event_registrations WHERE event_id=${eventId} AND status='WAITLISTED' ORDER BY waitlist_position LIMIT 1`,
+        'Next waitlist entry': `SELECT registration_id,person_id FROM event_registrations WHERE event_id=${eventId} AND status='WAITLISTED' ORDER BY waitlist_position LIMIT 1`,
         'Expiry batch': `SELECT registration_id,event_id FROM event_registrations WHERE status='AWAITING_CONFIRMATION' AND confirmation_deadline <= now() ORDER BY confirmation_deadline,registration_id LIMIT 50`,
         'Due events': `SELECT event_id FROM events WHERE status='published' AND ends_at<=now() ORDER BY ends_at,event_id LIMIT 50`,
         'Token lookup': `SELECT registration_id,event_id,status FROM event_registrations WHERE attendance_token_hash=md5('${eventId}:5')`,
         Questions: `SELECT question_id,question_text,question_type FROM event_questions WHERE event_id=${eventId} ORDER BY position`,
-        'Warning flags page': `SELECT r.registration_id,r.user_id,COALESCE((SELECT true FROM event_registrations history JOIN registration_blacklist_entries b ON b.registration_id=history.registration_id WHERE history.user_id=r.user_id AND b.resolved_at IS NULL LIMIT 1),false) AS has_notice FROM event_registrations r WHERE r.event_id=${eventId} ORDER BY r.registered_at,r.registration_id LIMIT 50`,
+        'Warning flags page': `SELECT r.registration_id,r.person_id,COALESCE((SELECT true FROM event_registrations history JOIN registration_blacklist_entries b ON b.registration_id=history.registration_id WHERE history.person_id=r.person_id AND b.resolved_at IS NULL LIMIT 1),false) AS has_notice FROM event_registrations r WHERE r.event_id=${eventId} ORDER BY r.registered_at,r.registration_id LIMIT 50`,
       };
       assert.equal(
         sql(database, queries['Reserved seats']),
@@ -584,14 +669,14 @@ try {
     assertTables(startupDb, expectedTables);
     sql(
       startupDb,
-      "INSERT INTO users(full_name,email,updated_at) VALUES ('Preserved fixture','preserved@example.test',CURRENT_TIMESTAMP)",
+      "INSERT INTO person(full_name,email_personal) VALUES ('Preserved fixture','preserved@example.test')",
     );
     stopBackend();
     await waitForHttp(startBackend());
     assert.equal(
       sql(
         startupDb,
-        "SELECT count(*) FROM users WHERE email='preserved@example.test'",
+        "SELECT count(*) FROM person WHERE email_personal='preserved@example.test'",
       ),
       '1',
     );

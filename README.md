@@ -6,7 +6,7 @@ This repository is separate from the frontend. It owns the NestJS API, server-si
 
 ## Status
 
-NestJS, Prisma/PostgreSQL, Docker startup, thirteen domain tables and the initial migration are implemented. Startup applies committed migrations before NestJS starts. Domain APIs, Supabase Auth integration and production deployment procedures are not implemented yet.
+NestJS, Prisma/PostgreSQL, Docker startup, twelve domain tables and versioned migrations are implemented. Startup applies committed migrations before NestJS starts. The people/membership migration requires a separate empty database; see [Database and Prisma](docs/database-prisma.md). Domain APIs, Supabase Auth integration and production deployment procedures are not implemented yet.
 
 ## Approved technical direction
 

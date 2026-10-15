@@ -38,47 +38,33 @@ enum QuestionType {
   CHECKBOX @map("checkbox")
 }
 
-enum MemberType {
-  CURRENT @map("current")
-  ALUMNI  @map("alumni")
-}
-
-enum CommitteeRole {
-  LEADER      @map("Leader")
-  CO_LEADER   @map("Co-Leader")
-  COORDINATOR @map("Coordinator")
-  MEMBER      @map("Member")
-}
-
 enum BlacklistReason {
   CONFIRMATION_EXPIRED
   LATE_CANCELLATION
   NO_CHECK_IN
 }
 
-model User {
-  userId      Int       @id @default(autoincrement()) @map("user_id")
-  memberId    Int?      @unique @map("member_id")
-  authUserId  String?   @unique @map("auth_user_id") @db.Uuid
-  fullName    String    @map("full_name") @db.VarChar(150)
-  email       String    @unique @db.VarChar(255)
-  phoneNumber String?   @map("phone_number") @db.VarChar(20)
-  isActive    Boolean   @default(true) @map("is_active")
-  isVerified  Boolean   @default(false) @map("is_verified")
-  lastLogin   DateTime? @map("last_login") @db.Timestamptz(3)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+model Person {
+  personId        Int      @id @default(autoincrement()) @map("person_id")
+  authUserId      String?  @unique @map("auth_user_id") @db.Uuid
+  fullName        String   @map("full_name") @db.VarChar(255)
+  emailUniversity String?  @map("email_university") @db.VarChar(255)
+  emailPersonal   String?  @map("email_personal") @db.VarChar(255)
+  phoneNumber     String?  @map("phone_number") @db.VarChar(50)
+  university      String?  @db.VarChar(255)
+  branch          String?  @db.VarChar(100)
+  major           String?  @db.VarChar(255)
+  gender          String?  @db.VarChar(20)
+  profileImageUrl String?  @map("profile_image_url") @db.Text
+  bio             String?  @db.VarChar(1000)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  member                   Member?                      @relation(fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: Restrict)
-  roles                    UserRole[]
-  createdEvents            Event[]                      @relation("EventCreator")
-  registrations            EventRegistration[]          @relation("RegistrationOwner")
-  reviewedRegistrations    EventRegistration[]          @relation("RegistrationReviewer")
-  checkedInRegistrations   EventRegistration[]          @relation("RegistrationCheckInStaff")
-  excusedRegistrations     EventRegistration[]          @relation("RegistrationExcuseStaff")
-  resolvedBlacklistEntries RegistrationBlacklistEntry[] @relation("BlacklistResolver")
+  member        Member?
+  registrations EventRegistration[] @relation("RegistrationOwner")
 
-  @@map("users")
+  @@map("person")
 }
 
 model Role {
@@ -86,24 +72,9 @@ model Role {
   roleName    String  @unique @map("role_name") @db.VarChar(50)
   description String? @db.Text
 
-  users       UserRole[]
   permissions RolePermission[]
 
   @@map("roles")
-}
-
-model UserRole {
-  id         Int      @id @default(autoincrement())
-  userId     Int      @map("user_id")
-  roleId     Int      @map("role_id")
-  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
-
-  user User @relation(fields: [userId], references: [userId], onDelete: Cascade, onUpdate: Restrict)
-  role Role @relation(fields: [roleId], references: [roleId], onDelete: Restrict, onUpdate: Restrict)
-
-  @@unique([userId, roleId])
-  @@index([roleId])
-  @@map("user_roles")
 }
 
 model Permission {
@@ -130,33 +101,32 @@ model RolePermission {
 }
 
 model Member {
-  memberId        Int        @id @default(autoincrement()) @map("member_id")
-  fullName        String     @map("full_name") @db.VarChar(150)
-  phoneNumber     String?    @map("phone_number") @db.VarChar(20)
-  emailPersonal   String?    @map("email_personal") @db.VarChar(255)
-  emailUniversity String?    @unique @map("email_university") @db.VarChar(255)
-  university      String?    @db.VarChar(150)
-  branch          String?    @db.VarChar(20)
-  major           String?    @db.VarChar(100)
-  profileImageUrl String?    @map("profile_image_url") @db.VarChar(255)
-  bio             String?    @db.Text
-  memberType      MemberType @default(CURRENT) @map("member_type")
-  joinDate        DateTime?  @map("join_date") @db.Date
-  isActive        Boolean    @default(true) @map("is_active")
+  memberId   Int       @id @default(autoincrement()) @map("member_id")
+  personId   Int       @unique @map("person_id")
+  memberType String    @default("current") @map("member_type") @db.Text
+  joinDate   DateTime? @map("join_date") @db.Date
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user       User?
-  committees MemberCommittee[]
+  person                   Person                       @relation(fields: [personId], references: [personId], onDelete: Restrict, onUpdate: NoAction)
+  committees               MemberCommittee[]
+  createdEvents            Event[]                      @relation("EventCreator")
+  reviewedRegistrations    EventRegistration[]          @relation("RegistrationReviewer")
+  checkedInRegistrations   EventRegistration[]          @relation("RegistrationCheckInStaff")
+  excusedRegistrations     EventRegistration[]          @relation("RegistrationExcuseStaff")
+  resolvedBlacklistEntries RegistrationBlacklistEntry[] @relation("BlacklistResolver")
 
   @@map("member")
 }
 
 model Committee {
   committeeId       Int    @id @default(autoincrement()) @map("committee_id")
-  committeeName     String @unique @map("committee_name") @db.VarChar(100)
-  committeeCode     String @unique @map("committee_code") @db.VarChar(50)
+  committeeName     String @unique @map("committee_name") @db.VarChar(255)
+  committeeCode     String @unique @map("committee_code") @db.VarChar(20)
   parentCommitteeId Int?   @map("parent_committee_id")
 
-  parent   Committee?        @relation("CommitteeHierarchy", fields: [parentCommitteeId], references: [committeeId], onDelete: Restrict, onUpdate: Restrict)
+  parent   Committee?        @relation("CommitteeHierarchy", fields: [parentCommitteeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
   children Committee[]       @relation("CommitteeHierarchy")
   members  MemberCommittee[]
   events   Event[]
@@ -166,16 +136,17 @@ model Committee {
 }
 
 model MemberCommittee {
-  id          Int           @id @default(autoincrement())
-  memberId    Int           @map("member_id")
-  committeeId Int           @map("committee_id")
-  role        CommitteeRole
+  id          Int      @id @default(autoincrement())
+  memberId    Int      @map("member_id")
+  committeeId Int      @map("committee_id")
+  role        String   @default("Member") @db.VarChar(100)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  member    Member    @relation(fields: [memberId], references: [memberId], onDelete: Cascade, onUpdate: Restrict)
-  committee Committee @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: Restrict)
+  member    Member    @relation(fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  committee Committee @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
 
   @@unique([memberId, committeeId])
-  @@index([committeeId, role])
+  @@index([committeeId])
   @@map("member_committee")
 }
 
@@ -192,19 +163,19 @@ model Event {
   imageUrl                String?     @map("image_url") @db.VarChar(255)
   requirements            String?     @db.Text
   status                  EventStatus @default(DRAFT)
-  createdBy               Int         @map("created_by")
+  createdByMemberId       Int         @map("created_by_member_id")
   committeeId             Int         @map("committee_id")
   createdAt               DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt               DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  creator       User                @relation("EventCreator", fields: [createdBy], references: [userId], onDelete: Restrict, onUpdate: Restrict)
+  creator       Member              @relation("EventCreator", fields: [createdByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
   committee     Committee           @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: Restrict)
   questions     EventQuestion[]
   registrations EventRegistration[]
 
   @@index([status, startsAt, eventId])
   @@index([status, endsAt, eventId])
-  @@index([createdBy, createdAt, eventId])
+  @@index([createdByMemberId, createdAt, eventId])
   @@index([committeeId, createdAt, eventId])
   @@map("events")
 }
@@ -229,40 +200,40 @@ model EventQuestion {
 model EventRegistration {
   registrationId           Int                @id @default(autoincrement()) @map("registration_id")
   eventId                  Int                @map("event_id")
-  userId                   Int                @map("user_id")
+  personId                 Int                @map("person_id")
   registeredAt             DateTime           @default(now()) @map("registered_at") @db.Timestamptz(3)
   status                   RegistrationStatus @default(PENDING)
-  reviewedBy               Int?               @map("reviewed_by")
+  reviewedByMemberId       Int?               @map("reviewed_by_member_id")
   approvedAt               DateTime?          @map("approved_at") @db.Timestamptz(3)
   confirmationDeadline     DateTime?          @map("confirmation_deadline") @db.Timestamptz(3)
   confirmedAt              DateTime?          @map("confirmed_at") @db.Timestamptz(3)
   waitlistPosition         Int?               @map("waitlist_position")
   cancelledAt              DateTime?          @map("cancelled_at") @db.Timestamptz(3)
   excusedAt                DateTime?          @map("excused_at") @db.Timestamptz(3)
-  excusedBy                Int?               @map("excused_by")
+  excusedByMemberId        Int?               @map("excused_by_member_id")
   excuseReason             String?            @map("excuse_reason") @db.Text
   attendanceTokenHash      String?            @unique @map("attendance_token_hash") @db.Text
   attendanceTokenEncrypted String?            @map("attendance_token_encrypted") @db.Text
   checkedInAt              DateTime?          @map("checked_in_at") @db.Timestamptz(3)
-  checkedInBy              Int?               @map("checked_in_by")
+  checkedInByMemberId      Int?               @map("checked_in_by_member_id")
 
   event            Event                        @relation(fields: [eventId], references: [eventId], onDelete: Restrict, onUpdate: Restrict)
-  user             User                         @relation("RegistrationOwner", fields: [userId], references: [userId], onDelete: Restrict, onUpdate: Restrict)
-  reviewer         User?                        @relation("RegistrationReviewer", fields: [reviewedBy], references: [userId], onDelete: Restrict, onUpdate: Restrict)
-  checkInStaff     User?                        @relation("RegistrationCheckInStaff", fields: [checkedInBy], references: [userId], onDelete: Restrict, onUpdate: Restrict)
-  excuseStaff      User?                        @relation("RegistrationExcuseStaff", fields: [excusedBy], references: [userId], onDelete: Restrict, onUpdate: Restrict)
+  person           Person                       @relation("RegistrationOwner", fields: [personId], references: [personId], onDelete: Restrict, onUpdate: NoAction)
+  reviewer         Member?                      @relation("RegistrationReviewer", fields: [reviewedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  checkInStaff     Member?                      @relation("RegistrationCheckInStaff", fields: [checkedInByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  excuseStaff      Member?                      @relation("RegistrationExcuseStaff", fields: [excusedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
   answers          RegistrationAnswer[]
   blacklistEntries RegistrationBlacklistEntry[]
 
-  @@unique([eventId, userId])
+  @@unique([eventId, personId])
   @@unique([registrationId, eventId])
   @@unique([eventId, waitlistPosition])
-  @@index([userId, registeredAt, registrationId])
+  @@index([personId, registeredAt, registrationId])
   @@index([eventId, status, registeredAt, registrationId])
   @@index([status, confirmationDeadline])
-  @@index([reviewedBy])
-  @@index([checkedInBy])
-  @@index([excusedBy])
+  @@index([reviewedByMemberId])
+  @@index([checkedInByMemberId])
+  @@index([excusedByMemberId])
   @@map("event_registrations")
 }
 
@@ -283,18 +254,18 @@ model RegistrationAnswer {
 }
 
 model RegistrationBlacklistEntry {
-  entryId          Int             @id @default(autoincrement()) @map("entry_id")
-  registrationId   Int             @map("registration_id")
-  reason           BlacklistReason
-  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  resolvedAt       DateTime?       @map("resolved_at") @db.Timestamptz(3)
-  resolvedBy       Int?            @map("resolved_by")
-  resolutionReason String?         @map("resolution_reason") @db.Text
+  entryId            Int             @id @default(autoincrement()) @map("entry_id")
+  registrationId     Int             @map("registration_id")
+  reason             BlacklistReason
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt         DateTime?       @map("resolved_at") @db.Timestamptz(3)
+  resolvedByMemberId Int?            @map("resolved_by_member_id")
+  resolutionReason   String?         @map("resolution_reason") @db.Text
 
   registration EventRegistration @relation(fields: [registrationId], references: [registrationId], onDelete: Restrict, onUpdate: Restrict)
-  resolver     User?             @relation("BlacklistResolver", fields: [resolvedBy], references: [userId], onDelete: Restrict, onUpdate: Restrict)
+  resolver     Member?           @relation("BlacklistResolver", fields: [resolvedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
 
   @@unique([registrationId, reason])
-  @@index([resolvedBy])
+  @@index([resolvedByMemberId])
   @@map("registration_blacklist_entries")
 }

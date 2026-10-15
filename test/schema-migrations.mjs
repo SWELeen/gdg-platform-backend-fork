@@ -23,11 +23,25 @@ export function copyMigrationHistory(source, target, names) {
 }
 
 export function injectMigrationFailure(sql) {
-  // shortcut: accepts simple transaction scripts with full-line comments; review SQL bodies/keywords manually.
-  const statements = sql.replace(/^[ \t]*--[^\n]*/gm, '').trim();
+  const statements = sql
+    .replace(
+      /--[^\n]*|\/\*[\s\S]*?\*\/|\bE'(?:\\.|''|[^'\\])*'|'(?:''|[^'])*'|"(?:""|[^"])*"|(?<body>\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$)[\s\S]*?\k<body>/gi,
+      (token) => {
+        assert(
+          !token.startsWith('/*') || !token.slice(2, -2).includes('/*'),
+          'Failure injection requires review of nested transaction comments',
+        );
+        return token.replace(/[^\n]/g, ' ');
+      },
+    )
+    .trim();
+  assert(
+    !/['"$]|\/\*|\*\//.test(statements),
+    'Failure injection requires complete transaction SQL tokens',
+  );
   const boundaries =
     statements.match(
-      /\b(?:BEGIN|COMMIT|ROLLBACK|ABORT|START\s+TRANSACTION|PREPARE\s+TRANSACTION)\b|\bEND\s*(?:WORK|TRANSACTION)?\s*;/gi,
+      /\b(?:BEGIN|COMMIT|ROLLBACK|ABORT|START\s+TRANSACTION|PREPARE\s+TRANSACTION)\b|\bEND\s*(?:(?:WORK|TRANSACTION)\s*)?(?:AND\s+(?:NO\s+)?CHAIN\s*)?;/gi,
     ) ?? [];
   assert(
     /^BEGIN;/i.test(statements) &&

@@ -4,9 +4,17 @@
 
 For first-time setup, follow [Backend Local Setup](../SETUP.md). Docker provides PostgreSQL, pgAdmin, Node.js and pnpm; teammates do not need host Node.js/pnpm for the Docker workflow below.
 
-The repository currently defines thirteen project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
+The repository currently defines twelve project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
 
 Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, roles, permissions or sample events. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
+
+## Fresh people/membership setup
+
+The `20261015164000_people_membership_fresh` migration is for a **separate empty database**. It replays after the original migration, locks all thirteen original project tables, and refuses to continue if any contains records. It does not migrate, match, or delete old records. Keep an existing database and its volume intact; provision a different empty database and configure its connection separately. Do not point the regular backend startup at a populated old database expecting an automatic upgrade.
+
+The fresh schema replaces users with person, makes member.person_id required and unique, and restricts committee positions to Leader, Co-Leader, and Member. Registrants reference Person; event creators and review/check-in/excuse/resolution actors reference Member. UserRole is removed; the target member_role assignment table belongs to the next stage. Existing numeric role/permission registries are retained until that stage.
+
+The official `person.auth_user_id → auth.users.id ON DELETE SET NULL` link is not installed in this plain PostgreSQL local setup: auth_user_id is a unique nullable UUID only. Release 2.3 views, RLS, guards, audit, and access rules are not reproduced. Event/incident details still follow the previous local implementation except for their identity references. This is not a complete official schema export.
 
 ## Apply migrations — teammates
 
@@ -31,11 +39,11 @@ The services should be healthy and Prisma should report that the database schema
 
 In pgAdmin, expand **GDG Local PostgreSQL → Databases → gdg_platform → Schemas → public → Tables** and refresh **Tables**. Use your `POSTGRES_DB` value if you changed the default database name.
 
-Expect these thirteen project tables, plus `_prisma_migrations`:
+Expect these twelve project tables, plus `_prisma_migrations`:
 
 | Area | Tables |
 | --- | --- |
-| Accounts and access | `users`, `roles`, `user_roles`, `permissions`, `role_permissions` |
+| People and access registries | `person`, `roles`, `permissions`, `role_permissions` |
 | Group membership | `member`, `committee`, `member_committee` |
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
@@ -50,6 +58,7 @@ Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. K
 | --- | --- |
 | Connection refused / authentication failed | Check Docker, the database service and your local credentials. Editing `.env` alone does not change an existing PostgreSQL user's password. |
 | P3005 / database is not empty | The initial migration expects an empty project schema. If you already created tables manually, stop and ask the schema owner to inspect them and plan preservation/transfer. Do not reset or baseline them yourself. |
+| people_membership_requires_empty_database | Preserve the populated database; provision a separate empty one. Do not delete records or mark this migration applied to bypass its precondition. Prisma may record a failed attempt even though domain DDL rolled back. |
 | P3009 / a previous migration failed | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back. |
 | Backend is healthy but tables are missing in pgAdmin | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above. |
 
@@ -87,7 +96,7 @@ Teammates apply committed files using `migrate deploy`; they do not generate the
    ```
 
    `--create-only` creates a draft instead of applying the new migration, but the development command still connects to databases and may request a reset on drift. Stop if it asks to reset; inspect the mismatch first.
-4. Inspect the SQL, including data loss/locking and custom PostgreSQL checks. Do not assume Prisma generates custom CHECK constraints. Update the isolated test fixtures/expectations for the new migration. The runner sorts migration directories and verifies rollback/recovery for the initial migration and the latest migration after its predecessors. Keep each tested migration inside one explicit `BEGIN;` / standalone final `COMMIT;` transaction; the conservative failure injector accepts full-line comments and rejects unsupported transaction layouts or embedded transaction keywords for manual review. Update the explicit `initialTables` and `expectedTables` manifests in `test/run-schema-tests.mjs` only for their respective schema snapshots, and update fixtures when adding migrations.
+4. Inspect the SQL, including data loss/locking and custom PostgreSQL checks. Do not assume Prisma generates custom CHECK constraints. Update the isolated test fixtures/expectations for the new migration. The runner sorts migration directories and verifies rollback/recovery for the initial migration and the latest migration after its predecessors. Keep each tested migration inside one explicit `BEGIN;` / standalone final `COMMIT;` transaction; the failure injector masks SQL comments, quoted literals/identifiers, and dollar-quoted bodies before checking outer transaction boundaries; it rejects unsupported transaction layouts and incomplete tokens for manual review. Update the explicit `initialTables` and `expectedTables` manifests in `test/run-schema-tests.mjs` only for their respective schema snapshots, and update fixtures when adding migrations.
 5. Run the checks below, review the final diff, and commit the schema, migration and relevant tests/docs together. Keep `.env`, real data and generated client files out of Git. Test and review official deployment separately.
 
 ## Isolated verification
@@ -102,7 +111,7 @@ pnpm test:startup:local
 pnpm test:performance:local
 ```
 
-The three `:local` runners create their own disposable PostgreSQL server with random credentials and remove their test resources afterwards. They never use your application database. Schema checks cover integrity, two clean replays, explicit expected-table names, fixture cleanup, repeat deploy, and failure/recovery. Failure checks compare the schema and domain rows, preserve a synthetic sentinel, and inspect history per migration before resolving only the injected failure. A scratch-only probe migration exercises populated multi-migration rollback even when the repository has only its initial migration; it is never added to committed history. `pnpm check` also runs the migration-helper tests without Docker. Startup checks add the actual container command, HTTP readiness, restart preservation and failure protection. Performance checks add synthetic 100/400/800-registration events and 40,000 historical registrations; these are SQL query measurements, not API traffic guarantees.
+The three `:local` runners create their own disposable PostgreSQL server with random credentials and remove their test resources afterwards. They never use your application database. Schema checks cover integrity, two clean replays, explicit expected-table names, fixture cleanup, repeat deploy, failure/recovery, and rejection of each independently populated original table without changing its schema, records, or migration history. The nonempty fixtures temporarily disable FK triggers only inside the runner-owned test server to isolate one table at a time; application/migration code never disables these guards. Failure checks compare the schema and domain rows, preserve a synthetic sentinel, and inspect history per migration before resolving only the injected failure. A scratch-only probe migration exercises populated multi-migration rollback even when the repository has only its initial migration; it is never added to committed history. `pnpm check` also runs the migration-helper tests without Docker. Startup checks add the actual container command, HTTP readiness, restart preservation and failure protection. Performance checks add synthetic 100/400/800-registration events and 40,000 historical registrations; these are SQL query measurements, not API traffic guarantees.
 
 For an explicitly provisioned disposable target only, `pnpm test:schema` requires `TEST_DATABASE_URL` pointing to a separate local `gdg_schema_test_*` database with the migrated schema. The command refuses missing/unsafe targets; it does not provision or migrate that database. Prefer the automatic `:local` runner. Normal application e2e skips schema cases when `TEST_DATABASE_URL` is absent.
 

@@ -18,7 +18,7 @@ const confirmation = {
 };
 const excuse = {
   excused_at: cancelled,
-  excused_by: 0,
+  excused_by_member_id: 0,
   excuse_reason: 'Documented excuse',
 };
 const rollback = new Error('rollback successful fixture');
@@ -48,12 +48,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
     });
 
     async function fixture(tx: Tx) {
-      const code = randomUUID();
-      const user = await tx.user.create({
+      const code = randomUUID().replaceAll('-', '').slice(0, 20).toUpperCase();
+      const person = await tx.person.create({
         data: {
           fullName: 'Synthetic participant',
-          email: `${code}@example.test`,
+          emailPersonal: `${code}@example.test`,
         },
+      });
+      const actorPerson = await tx.person.create({
+        data: { fullName: 'Synthetic staff' },
+      });
+      const member = await tx.member.create({
+        data: { personId: actorPerson.personId },
       });
       const committee = await tx.committee.create({
         data: { committeeCode: code, committeeName: code },
@@ -65,7 +71,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           startsAt: new Date('2030-01-02T10:00:00Z'),
           endsAt: new Date('2030-01-02T12:00:00Z'),
           registrationDeadline: deadline,
-          createdBy: user.userId,
+          createdByMemberId: member.memberId,
           committeeId: committee.committeeId,
         },
       });
@@ -78,9 +84,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         },
       });
       const registration = await tx.eventRegistration.create({
-        data: { eventId: event.eventId, userId: user.userId },
+        data: { eventId: event.eventId, personId: person.personId },
       });
-      return { user, committee, event, question, registration };
+      return {
+        person,
+        actorPerson,
+        member,
+        committee,
+        event,
+        question,
+        registration,
+      };
     }
     type Fixture = Awaited<ReturnType<typeof fixture>>;
 
@@ -122,19 +136,284 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       ).rejects.toThrow(constraint);
     }
 
-    it('installs all sixteen custom checks through migration history', async () => {
+    it('creates separate people and membership with database defaults', async () => {
+      await valid(async (tx) => {
+        const [person] = await tx.$queryRaw<
+          {
+            person_id: number;
+            is_active: boolean;
+            created_at: Date;
+            updated_at: Date;
+          }[]
+        >`
+          INSERT INTO person(full_name) VALUES ('Synthetic new person') RETURNING person_id,is_active,created_at,updated_at`;
+        expect(person.is_active).toBe(true);
+        expect(person.created_at).toEqual(person.updated_at);
+        const [member] = await tx.$queryRaw<
+          { member_id: number; member_type: string; is_active: boolean }[]
+        >`
+          INSERT INTO member(person_id) VALUES (${person.person_id}) RETURNING member_id,member_type,is_active`;
+        expect(member.member_id).toBeGreaterThanOrEqual(10000000);
+        expect(member.member_type).toBe('current');
+        expect(member.is_active).toBe(true);
+      });
+    });
+
+    it('keeps personal data separate, allows optional emails and independent email columns', async () => {
+      await valid(async (tx, f) => {
+        const person = await tx.person.create({
+          data: { fullName: 'No membership' },
+        });
+        expect(person.emailPersonal).toBeNull();
+        expect(person.emailUniversity).toBeNull();
+        expect(
+          await tx.member.findUnique({ where: { personId: person.personId } }),
+        ).toBeNull();
+        await tx.person.update({
+          where: { personId: f.person.personId },
+          data: { emailPersonal: 'Mixed@Example.test' },
+        });
+        await tx.person.update({
+          where: { personId: person.personId },
+          data: { emailUniversity: ' mixed@example.TEST ' },
+        });
+        const columns = await tx.$queryRaw<
+          { column_name: string }[]
+        >`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='member' ORDER BY column_name`;
+        expect(columns.map((c) => c.column_name)).toEqual([
+          'created_at',
+          'is_active',
+          'join_date',
+          'member_id',
+          'member_type',
+          'person_id',
+          'updated_at',
+        ]);
+      });
+    });
+
+    it('updates person and member timestamps through raw SQL', async () => {
+      await valid(async (tx) => {
+        const [person] = await tx.$queryRaw<
+          { person_id: number }[]
+        >`INSERT INTO person(full_name,updated_at) VALUES ('Timestamp fixture','2000-01-01') RETURNING person_id`;
+        const [member] = await tx.$queryRaw<
+          { member_id: number }[]
+        >`INSERT INTO member(person_id,updated_at) VALUES (${person.person_id},'2000-01-01') RETURNING member_id`;
+        for (const [table, key, id] of [
+          ['person', 'person_id', person.person_id],
+          ['member', 'member_id', member.member_id],
+        ] as const) {
+          await tx.$executeRawUnsafe(
+            `UPDATE "${table}" SET is_active=false WHERE "${key}"=$1`,
+            id,
+          );
+          const [row] = await tx.$queryRawUnsafe<{ changed: boolean }[]>(
+            `SELECT updated_at > '2000-01-01'::timestamptz AS changed FROM "${table}" WHERE "${key}"=$1`,
+            id,
+          );
+          expect(row.changed).toBe(true);
+        }
+      });
+    });
+
+    it('allows explicit core IDs and generates member IDs from the documented range', async () => {
+      await valid(async (tx) => {
+        const person = await tx.person.create({
+          data: { personId: -100, fullName: 'Explicit identity' },
+        });
+        await tx.member.create({
+          data: { memberId: -100, personId: person.personId },
+        });
+        const columns = await tx.$queryRaw<
+          {
+            table_name: string;
+            column_name: string;
+            identity_generation: string;
+          }[]
+        >`SELECT table_name,column_name,identity_generation FROM information_schema.columns WHERE table_schema='public' AND is_identity='YES' ORDER BY table_name,column_name`;
+        expect(columns).toEqual([
+          {
+            table_name: 'committee',
+            column_name: 'committee_id',
+            identity_generation: 'BY DEFAULT',
+          },
+          {
+            table_name: 'member',
+            column_name: 'member_id',
+            identity_generation: 'BY DEFAULT',
+          },
+          {
+            table_name: 'member_committee',
+            column_name: 'id',
+            identity_generation: 'BY DEFAULT',
+          },
+          {
+            table_name: 'person',
+            column_name: 'person_id',
+            identity_generation: 'BY DEFAULT',
+          },
+        ]);
+      });
+    });
+
+    it('defers the committee parent FK until transaction completion', async () => {
+      await valid(async (tx) => {
+        await tx.committee.create({
+          data: {
+            committeeId: -100,
+            committeeName: 'Deferred child',
+            committeeCode: 'DEFERRED_CHILD',
+            parentCommitteeId: -101,
+          },
+        });
+        await tx.committee.create({
+          data: {
+            committeeId: -101,
+            committeeName: 'Deferred parent',
+            committeeCode: 'DEFERRED_PARENT',
+          },
+        });
+        await tx.$executeRawUnsafe(
+          'SET CONSTRAINTS committee_parent_committee_id_fkey IMMEDIATE',
+        );
+      });
+    });
+
+    it.each(['Leader', 'Co-Leader', 'Member'])(
+      'allows committee position %s',
+      async (role) => {
+        await valid(async (tx, f) => {
+          const first = await tx.memberCommittee.create({
+            data: {
+              memberId: f.member.memberId,
+              committeeId: f.committee.committeeId,
+              role,
+            },
+          });
+          const secondCommittee = await tx.committee.create({
+            data: {
+              committeeName: 'Another committee',
+              committeeCode: 'ANOTHER',
+            },
+          });
+          const second = await tx.memberCommittee.create({
+            data: {
+              memberId: f.member.memberId,
+              committeeId: secondCommittee.committeeId,
+            },
+          });
+          expect(first.role).toBe(role);
+          expect(second.role).toBe('Member');
+          expect(second.createdAt).toBeInstanceOf(Date);
+        });
+      },
+    );
+
+    it.each(['Coordinator', 'member', ''])(
+      'rejects unsupported committee position %s',
+      async (role) => {
+        await invalid(async (tx, f) => {
+          await tx.memberCommittee.create({
+            data: {
+              memberId: f.member.memberId,
+              committeeId: f.committee.committeeId,
+              role,
+            },
+          });
+        }, 'member_committee_role_check');
+      },
+    );
+
+    it.each(['lower', 'HAS SPACE', 'BAD-CHAR', ''])(
+      'rejects invalid committee code %s',
+      async (committeeCode) => {
+        await invalid(async (tx, f) => {
+          await tx.committee.update({
+            where: { committeeId: f.committee.committeeId },
+            data: { committeeCode },
+          });
+        }, 'committee_code_check');
+      },
+    );
+
+    it('rejects invalid member types and missing person links', async () => {
+      await invalid(async (tx, f) => {
+        await tx.member.update({
+          where: { memberId: f.member.memberId },
+          data: { memberType: 'staff' },
+        });
+      }, 'member_member_type_check');
+      await invalid(async (tx) => {
+        await tx.member.create({ data: { personId: -1 } });
+      }, 'member_person_id_fkey');
+    });
+
+    it('restricts deleting people with membership and members/committees with assignments', async () => {
+      await invalid(async (tx, f) => {
+        await tx.person.delete({ where: { personId: f.actorPerson.personId } });
+      }, 'member_person_id_fkey');
+      for (const target of ['member', 'committee']) {
+        await invalid(async (tx) => {
+          const person = await tx.person.create({
+            data: { fullName: 'Assigned member' },
+          });
+          const member = await tx.member.create({
+            data: { personId: person.personId },
+          });
+          const committee = await tx.committee.create({
+            data: {
+              committeeName: 'Assigned committee',
+              committeeCode: 'ASSIGNED',
+            },
+          });
+          await tx.memberCommittee.create({
+            data: {
+              memberId: member.memberId,
+              committeeId: committee.committeeId,
+            },
+          });
+          if (target === 'member')
+            await tx.member.delete({ where: { memberId: member.memberId } });
+          else
+            await tx.committee.delete({
+              where: { committeeId: committee.committeeId },
+            });
+        }, `member_committee_${target}_id_fkey`);
+      }
+    });
+
+    it('rejects non-member event creators and reviewers', async () => {
+      await invalid(async (tx, f) => {
+        await tx.event.update({
+          where: { eventId: f.event.eventId },
+          data: { createdByMemberId: f.person.personId },
+        });
+      }, 'events_created_by_member_id_fkey');
+      await invalid(async (tx, f) => {
+        await tx.eventRegistration.update({
+          where: { registrationId: f.registration.registrationId },
+          data: { reviewedByMemberId: f.person.personId },
+        });
+      }, 'event_registrations_reviewed_by_member_id_fkey');
+    });
+
+    it('installs all custom checks through migration history', async () => {
       const rows = await db.$queryRaw<
         { conname: string }[]
       >`SELECT conname FROM pg_constraint WHERE contype = 'c' AND connamespace = 'public'::regnamespace ORDER BY conname`;
       expect(rows.map((row) => row.conname)).toEqual([
         'blacklist_resolution_check',
+        'committee_code_check',
         'committee_parent_not_self_check',
         'event_questions_options_check',
         'event_questions_position_check',
         'events_capacity_check',
         'events_confirmation_window_check',
         'events_schedule_check',
-        'member_branch_check',
+        'member_committee_role_check',
+        'member_member_type_check',
+        'person_full_name_check',
         'registrations_approval_check',
         'registrations_cancellation_check',
         'registrations_check_in_check',
@@ -142,7 +421,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         'registrations_excuse_check',
         'registrations_token_check',
         'registrations_waitlist_position_check',
-        'users_email_canonical_check',
       ]);
     });
 
@@ -163,7 +441,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       'allows valid %s records, including optional membership',
       async (status, fields) => {
         await valid(async (tx, f) => {
-          expect(f.user.memberId).toBeNull();
+          expect(
+            await tx.member.findUnique({
+              where: { personId: f.person.personId },
+            }),
+          ).toBeNull();
           await patch(
             tx,
             'event_registrations',
@@ -172,7 +454,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
             {
               status,
               ...fields,
-              ...(status === 'EXCUSED' ? { excused_by: f.user.userId } : {}),
+              ...(status === 'EXCUSED'
+                ? { excused_by_member_id: f.member.memberId }
+                : {}),
             },
           );
         });
@@ -199,7 +483,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
             'event_registrations',
             'registration_id',
             f.registration.registrationId,
-            { status: 'EXCUSED', ...excuse, excused_by: f.user.userId },
+            {
+              status: 'EXCUSED',
+              ...excuse,
+              excused_by_member_id: f.member.memberId,
+            },
           );
           const record = await tx.eventRegistration.findUniqueOrThrow({
             where: { registrationId: f.registration.registrationId },
@@ -327,7 +615,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           status: 'CONFIRMED',
           ...confirmation,
           checked_in_at: approved,
-          checked_in_by: 0,
+          checked_in_by_member_id: 0,
         },
         'registrations_check_in_check',
       ],
@@ -337,7 +625,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           status: 'NO_CHECK_IN',
           ...confirmation,
           checked_in_at: cancelled,
-          checked_in_by: 0,
+          checked_in_by_member_id: 0,
         },
         'registrations_check_in_check',
       ],
@@ -348,7 +636,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           ...confirmation,
           cancelled_at: cancelled,
           checked_in_at: cancelled,
-          checked_in_by: 0,
+          checked_in_by_member_id: 0,
         },
         'registrations_check_in_check',
       ],
@@ -365,8 +653,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
               f.registration.registrationId,
               {
                 ...fields,
-                ...('checked_in_by' in fields
-                  ? { checked_in_by: f.user.userId }
+                ...('checked_in_by_member_id' in fields
+                  ? { checked_in_by_member_id: f.member.memberId }
                   : {}),
               },
             ),
@@ -376,13 +664,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
     );
 
     it.each<[string, string, Patch, string]>([
-      [
-        'noncanonical email',
-        'users',
-        { email: ' Upper@Example.test ' },
-        'users_email_canonical_check',
-      ],
-      ['empty email', 'users', { email: '' }, 'users_email_canonical_check'],
+      ['blank name', 'person', { full_name: '   ' }, 'person_full_name_check'],
       ['self parent', 'committee', {}, 'committee_parent_not_self_check'],
       ['zero capacity', 'events', { capacity: 0 }, 'events_capacity_check'],
       [
@@ -448,7 +730,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
     ])('rejects %s', async (_name, table, fields, constraint) => {
       await invalid(async (tx, f) => {
         const target = {
-          users: ['user_id', f.user.userId],
+          person: ['person_id', f.person.personId],
           committee: ['committee_id', f.committee.committeeId],
           events: ['event_id', f.event.eventId],
           event_questions: ['question_id', f.question.questionId],
@@ -463,21 +745,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       }, constraint);
     });
 
-    it('accepts nullable branches and rejects undocumented branch values', async () => {
-      await valid(async (tx) => {
-        const member = await tx.member.create({
-          data: { fullName: 'Synthetic member' },
-        });
-        expect(member.branch).toBeNull();
-        await patch(tx, 'member', 'member_id', member.memberId, {
-          branch: 'MAIN_F',
+    it('accepts nullable and free-form person branches', async () => {
+      await valid(async (tx, f) => {
+        expect(f.person.branch).toBeNull();
+        await tx.person.update({
+          where: { personId: f.person.personId },
+          data: { branch: 'OTHER' },
         });
       });
-      await invalid(async (tx) => {
-        await tx.member.create({
-          data: { fullName: 'Synthetic member', branch: 'OTHER' },
-        });
-      }, 'member_branch_check');
     });
 
     it('accepts choices and both complete/absent check-in groups', async () => {
@@ -498,7 +773,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
             status: 'CONFIRMED',
             ...confirmation,
             checked_in_at: cancelled,
-            checked_in_by: f.user.userId,
+            checked_in_by_member_id: f.member.memberId,
           },
         );
       });
@@ -524,7 +799,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           where: { entryId: first.entryId },
           data: {
             resolvedAt: cancelled,
-            resolvedBy: f.user.userId,
+            resolvedByMemberId: f.member.memberId,
             resolutionReason: 'Accepted excuse',
           },
         });
@@ -548,11 +823,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
 
     it.each<Patch>([
       { resolved_at: cancelled },
-      { resolved_by: 0 },
-      { resolved_at: cancelled, resolved_by: 0, resolution_reason: ' ' },
+      { resolved_by_member_id: 0 },
+      {
+        resolved_at: cancelled,
+        resolved_by_member_id: 0,
+        resolution_reason: ' ',
+      },
       {
         resolved_at: new Date('2029-01-01T00:00:00Z'),
-        resolved_by: 0,
+        resolved_by_member_id: 0,
         resolution_reason: 'Reason',
       },
     ])('rejects incomplete/invalid blacklist resolution %#', async (fields) => {
@@ -571,7 +850,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           entry.entryId,
           {
             ...fields,
-            ...('resolved_by' in fields ? { resolved_by: f.user.userId } : {}),
+            ...('resolved_by_member_id' in fields
+              ? { resolved_by_member_id: f.member.memberId }
+              : {}),
           },
         );
       }, 'blacklist_resolution_check');
@@ -635,14 +916,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
 
     it('allows pending applications above capacity', async () => {
       await valid(async (tx, f) => {
-        const user = await tx.user.create({
+        const person = await tx.person.create({
           data: {
             fullName: 'Another applicant',
-            email: `${randomUUID()}@example.test`,
+            emailPersonal: `${randomUUID()}@example.test`,
           },
         });
         await tx.eventRegistration.create({
-          data: { eventId: f.event.eventId, userId: user.userId },
+          data: { eventId: f.event.eventId, personId: person.personId },
         });
         expect(
           await tx.eventRegistration.count({
@@ -653,50 +934,52 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       });
     });
 
-    it('prevents duplicate membership/provider/email links and duplicate authorization pairs', async () => {
-      for (const field of ['member_id', 'auth_user_id', 'email']) {
-        await invalid(async (tx, f) => {
-          const other = await tx.user.create({
-            data: { fullName: 'Other', email: `${randomUUID()}@example.test` },
-          });
-          let value: number | string;
-          if (field === 'member_id') {
-            const member = await tx.member.create({
-              data: { fullName: 'Member' },
+    it('prevents duplicate membership/provider/email links and authorization pairs', async () => {
+      await invalid(async (tx, f) => {
+        await tx.member.create({ data: { personId: f.member.personId } });
+      }, 'member_person_id_key');
+      await invalid(async (tx, f) => {
+        const authUserId = randomUUID();
+        await tx.person.update({
+          where: { personId: f.person.personId },
+          data: { authUserId },
+        });
+        await tx.person.create({
+          data: { fullName: 'Duplicate provider', authUserId },
+        });
+      }, 'person_auth_user_id_key');
+      for (const field of ['emailPersonal', 'emailUniversity'] as const) {
+        await invalid(
+          async (tx, f) => {
+            await tx.person.update({
+              where: { personId: f.person.personId },
+              data: { [field]: 'Same@Example.test' },
             });
-            value = member.memberId;
-          } else value = field === 'email' ? f.user.email : randomUUID();
-          await patch(tx, 'users', 'user_id', f.user.userId, {
-            [field]: value,
-          });
-          await patch(tx, 'users', 'user_id', other.userId, { [field]: value });
-        }, `users_${field}_key`);
+            await tx.person.create({
+              data: {
+                fullName: 'Duplicate email',
+                [field]: ' same@example.TEST ',
+              },
+            });
+          },
+          field === 'emailPersonal'
+            ? 'uq_person_email_personal'
+            : 'uq_person_email_university',
+        );
       }
       await invalid(async (tx, f) => {
-        const role = await tx.role.create({ data: { roleName: randomUUID() } });
-        await tx.userRole.create({
-          data: { userId: f.user.userId, roleId: role.roleId },
-        });
-        await tx.$executeRawUnsafe(
-          'INSERT INTO user_roles(user_id, role_id) VALUES ($1,$2)',
-          f.user.userId,
-          role.roleId,
-        );
-      }, 'user_roles_user_id_role_id_key');
-      await invalid(async (tx, f) => {
-        const member = await tx.member.create({ data: { fullName: 'Member' } });
         await tx.memberCommittee.create({
           data: {
-            memberId: member.memberId,
+            memberId: f.member.memberId,
             committeeId: f.committee.committeeId,
-            role: 'MEMBER',
           },
         });
-        await tx.$executeRawUnsafe(
-          "INSERT INTO member_committee(member_id,committee_id,role) VALUES ($1,$2,'Member')",
-          member.memberId,
-          f.committee.committeeId,
-        );
+        await tx.memberCommittee.create({
+          data: {
+            memberId: f.member.memberId,
+            committeeId: f.committee.committeeId,
+          },
+        });
       }, 'member_committee_member_id_committee_id_key');
       await invalid(async (tx) => {
         const role = await tx.role.create({ data: { roleName: randomUUID() } });
@@ -726,13 +1009,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         );
       }, 'registration_answers_registration_id_event_id_fkey');
       for (const [table, key, fk] of [
-        ['users', 'user_id', 'events_created_by_fkey'],
+        ['member', 'member_id', 'events_created_by_member_id_fkey'],
         ['events', 'event_id', 'event_registrations_event_id_fkey'],
       ]) {
         await invalid(async (tx, f) => {
           await tx.$executeRawUnsafe(
             `DELETE FROM "${table}" WHERE "${key}" = $1`,
-            table === 'users' ? f.user.userId : f.event.eventId,
+            table === 'member' ? f.member.memberId : f.event.eventId,
           );
         }, fk);
       }
@@ -768,17 +1051,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           'event_registrations',
           'registration_id',
           f.registration.registrationId,
-          { reviewed_by: -1 },
+          { reviewed_by_member_id: -1 },
         );
-      }, 'event_registrations_reviewed_by_fkey');
+      }, 'event_registrations_reviewed_by_member_id_fkey');
     });
 
     it('reorders waitlist positions using temporary positive positions and rolls back interrupted changes', async () => {
       const f = await db.$transaction(fixture);
-      const other = await db.user.create({
+      const other = await db.person.create({
         data: {
           fullName: 'Waitlist applicant',
-          email: `${randomUUID()}@example.test`,
+          emailPersonal: `${randomUUID()}@example.test`,
         },
       });
       try {
@@ -789,7 +1072,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         const second = await db.eventRegistration.create({
           data: {
             eventId: f.event.eventId,
-            userId: other.userId,
+            personId: other.personId,
             status: 'WAITLISTED',
             waitlistPosition: 2,
           },
@@ -840,8 +1123,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         await db.committee.delete({
           where: { committeeId: f.committee.committeeId },
         });
-        await db.user.deleteMany({
-          where: { userId: { in: [f.user.userId, other.userId] } },
+        await db.member.delete({ where: { memberId: f.member.memberId } });
+        await db.person.deleteMany({
+          where: {
+            personId: {
+              in: [f.person.personId, f.actorPerson.personId, other.personId],
+            },
+          },
         });
       }
     });
@@ -850,22 +1138,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       'allows only one simultaneous duplicate %s write',
       async (kind) => {
         const f = await db.$transaction(fixture);
-        let secondUser: number | undefined;
+        let secondPersonId: number | undefined;
         try {
-          const user = await db.user.create({
+          const person = await db.person.create({
             data: {
               fullName: 'Concurrent applicant',
-              email: `${randomUUID()}@example.test`,
+              emailPersonal: `${randomUUID()}@example.test`,
             },
           });
-          secondUser = user.userId;
+          secondPersonId = person.personId;
           let writes: Promise<unknown>[];
           if (kind === 'registration') {
             writes = [1, 2].map(() =>
               db.$executeRawUnsafe(
-                'INSERT INTO event_registrations(event_id,user_id) VALUES ($1,$2)',
+                'INSERT INTO event_registrations(event_id,person_id) VALUES ($1,$2)',
                 f.event.eventId,
-                user.userId,
+                person.personId,
               ),
             );
           } else if (kind === 'waitlist') {
@@ -875,9 +1163,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
                 f.registration.registrationId,
               ),
               db.$executeRawUnsafe(
-                "INSERT INTO event_registrations(event_id,user_id,status,waitlist_position) VALUES ($1,$2,'WAITLISTED',1)",
+                "INSERT INTO event_registrations(event_id,person_id,status,waitlist_position) VALUES ($1,$2,'WAITLISTED',1)",
                 f.event.eventId,
-                user.userId,
+                person.personId,
               ),
             ];
           } else {
@@ -912,10 +1200,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           await db.committee.delete({
             where: { committeeId: f.committee.committeeId },
           });
-          await db.user.deleteMany({
+          await db.member.delete({ where: { memberId: f.member.memberId } });
+          await db.person.deleteMany({
             where: {
-              userId: {
-                in: [f.user.userId, ...(secondUser ? [secondUser] : [])],
+              personId: {
+                in: [
+                  f.person.personId,
+                  f.actorPerson.personId,
+                  ...(secondPersonId ? [secondPersonId] : []),
+                ],
               },
             },
           });

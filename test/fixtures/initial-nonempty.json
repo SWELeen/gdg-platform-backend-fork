@@ -1,0 +1,15 @@
+{
+  "committee": "INSERT INTO committee(committee_name,committee_code) VALUES ('Preserved committee','PRESERVED')",
+  "member": "INSERT INTO member(full_name) VALUES ('Preserved member')",
+  "users": "INSERT INTO users(full_name,email,updated_at) VALUES ('Preserved person','preserved@example.test',now())",
+  "roles": "INSERT INTO roles(role_name) VALUES ('Preserved role')",
+  "permissions": "INSERT INTO permissions(permission_name) VALUES ('preserved.permission')",
+  "user_roles": "INSERT INTO user_roles(user_id,role_id) VALUES (1,1)",
+  "role_permissions": "INSERT INTO role_permissions(role_id,permission_id) VALUES (1,1)",
+  "member_committee": "INSERT INTO member_committee(member_id,committee_id,role) VALUES (1,1,'Member')",
+  "events": "INSERT INTO events(name,starts_at,ends_at,capacity,registration_deadline,created_by,committee_id,updated_at) VALUES ('Preserved event',now(),now()+interval '1 hour',1,now(),1,1,now())",
+  "event_questions": "INSERT INTO event_questions(event_id,question_text,question_type,position) VALUES (1,'Preserved question','text',0)",
+  "event_registrations": "INSERT INTO event_registrations(event_id,user_id) VALUES (1,1)",
+  "registration_answers": "INSERT INTO registration_answers(registration_id,question_id,event_id,answer_text) VALUES (1,1,1,'Preserved answer')",
+  "registration_blacklist_entries": "INSERT INTO registration_blacklist_entries(registration_id,reason) VALUES (1,'NO_CHECK_IN')"
+}

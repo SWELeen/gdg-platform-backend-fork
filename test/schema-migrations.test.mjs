@@ -115,7 +115,29 @@ test('refuses transaction aliases and comment markers inside SQL literals', () =
     'BEGIN;\nCREATE TABLE probe(id int);\nCOMMIT WORK;\nBEGIN WORK;\nCOMMIT;',
     'BEGIN;\nCREATE TABLE probe(id int);\nEND;\nSTART TRANSACTION;\nCOMMIT;',
     "BEGIN;\nSELECT '--'; COMMIT;\nCREATE TABLE probe(id int);\nCOMMIT;",
+    'BEGIN;\nCREATE TABLE probe(id int);\nEND AND CHAIN;\nCOMMIT;',
+    'BEGIN;\nCREATE TABLE probe(id int);\nEND WORK AND CHAIN;\nCOMMIT;',
+    'BEGIN;\nCREATE TABLE probe(id int);\nEND TRANSACTION AND NO CHAIN;\nCOMMIT;',
     'BEGIN;\nABORT;\nSTART TRANSACTION;\nCOMMIT;',
   ])
     assert.throws(() => injectMigrationFailure(sql), /transaction/);
+});
+
+test('ignores SQL bodies, literals, identifiers and comments when checking outer transactions', () => {
+  const sql = String.raw`-- BEGIN is a comment
+BEGIN;
+DO $guard$ BEGIN IF false THEN RAISE EXCEPTION 'COMMIT'; END IF; END $guard$;
+CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at := now(); RETURN NEW; END $$;
+SELECT '--', 'it''s COMMIT;', "BEGIN", E'escaped\'value';
+/* COMMIT WORK; */
+COMMIT;
+`;
+  assert.match(injectMigrationFailure(sql), /SELECT 1 \/ 0;\nCOMMIT;/);
+  assert.throws(
+    () =>
+      injectMigrationFailure(
+        'BEGIN;\n/* outer /* nested */ comment */\nCOMMIT;',
+      ),
+    /transaction/,
+  );
 });

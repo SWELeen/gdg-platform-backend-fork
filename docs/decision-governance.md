@@ -113,3 +113,14 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Proposal: thirteen tables including registration-linked blacklist history; required starts_at/ends_at instants support multi-day camps; canonical unique login email; JSONB choice options and JSON-encoded checkbox answers. Exact columns, constraints and mapping are in the core database design.
 - Execution checklist: [Database Schema Migrations Implementation Plan](superpowers/plans/2026-10-09-database-schema-migrations.md). Permission seeds and feature endpoints remain separate.
 - Migration/rollback: planning only. Future verification uses dedicated disposable databases, preserving the active developer database and Docker volumes.
+
+## 2026-10-15 Fresh local people and membership schema
+
+- Owner/approver: project user in this chat; explicitly requested a fresh start with no links between old/new records and authorized the next implementation stage.
+- Status: approved direction for local development/testing; this does not authorize a production deployment or commit without the separate stage confirmation.
+- Decision: implement person/member/committee/member_committee directly from the documented DBA release 2.3 shape, excluding Coordinator. No backfill, inferred identity matching, or temporary legacy identity bridges.
+- Migration: preserve the initial committed migration. A new transactional migration must lock all thirteen initial project tables and reject any populated table before changing their structure. Use a separate empty database; do not delete or reset an existing application database.
+- Dependencies: participant registrations reference Person; creators/reviewers/check-in/excuse/resolution actors reference Member. Remove User/UserRole; role assignments land as member_role in Stage C, while the existing role/permission registries remain temporarily unchanged.
+- Source: the user's fresh-start clarification and authorization in this chat; target columns are recorded in the English people/membership plan and sourced from the DBA release 2.3 structure PDF, with SQL 2.2 as supporting evidence only.
+- Remaining limits: the official Supabase auth FK, RLS/guards/audit, views, permissions and other event/incident structures are not verified or claimed complete here. Existing populated databases are rejected and preserved, not automatically upgraded.
+- Supersedes: the original people/membership expansion/backfill proposal and User/Member proposal where they conflict with this fresh-start scope.
