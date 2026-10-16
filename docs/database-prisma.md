@@ -6,7 +6,7 @@ For first-time setup, follow [Backend Local Setup](../SETUP.md). Docker provides
 
 The repository currently defines fifteen project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
 
-Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, permission assignments or sample events; the registry migrations insert the three approved role definitions and 32 approved skill definitions. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
+Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, permission assignments or sample events; the registry migrations insert the three approved role definitions, 32 approved skill definitions and 30 approved permission definitions. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
 
 ## Fresh people/membership setup
 
@@ -56,7 +56,17 @@ The permission-registry migration changes only the required permission side of r
 
 The migration locks permissions and role_permissions, and rejects either populated table with permission_registry_requires_empty_permission_tables before DDL. It does not infer mappings or delete old records. Other existing data, including member roles/selections and all approved registry seeds, is preserved. A rejected database must be preserved for review; do not delete records or bypass the guard. The migration is transactional and has no automatic down migration.
 
-These columns describe permissions; they do not enforce API access, validate a user's event/committee scope, grant/revoke access, audit sensitive reads or evaluate delegation. Those behaviors and the exact permission list/distribution remain separate work. No application or Supabase database is modified by isolated verification.
+These columns describe permissions; they do not enforce API access, validate a user's event/committee scope, grant/revoke access, audit sensitive reads or evaluate delegation. Those behaviors and permission distribution remain separate work. The later reference-values migration below installs the approved definitions only. No application or Supabase database is modified by isolated verification.
+
+## Approved permission reference values
+
+`20261016220000_permission_reference_values` adds the 30 production definitions approved by the user on 2026-10-16. It preserves the exact code, description, scope, grant_permission and is_sensitive values captured in `test/fixtures/approved-permissions.json`: 19 global, 8 event and 3 committee definitions, including 6 sensitive flags and 4 grant references. The single multi-row INSERT resolves the existing self-reference constraint within the statement. No Prisma model, table, column or constraint changes are needed.
+
+This is a versioned reference-data migration, applied by normal migration startup, not the optional people seed. Its explicit transaction inserts all definitions or none. Any existing approved code, including an identical definition, fails with permission_pkey; existing metadata is never overwritten or silently accepted. Keep the database and records intact and inspect the collision with the schema owner before a reviewed recovery. Unrelated permission definitions, existing role_permission links and all other records are preserved. A repeat migrate deploy after success is a no-op; do not rerun migration SQL manually.
+
+The migration creates no role_permission or member_role assignments. On fresh setup role_permission remains empty. Scope, sensitivity and grant_permission describe future access rules; they do not implement authentication, temporary grants, committee/event checks or delegation. The 21 production role links are not imported. Supabase was used as a read-only reference; remote deployment and any role distribution require separate approval. There is no automatic down migration deleting reference records.
+
+The disposable runner checks exact fresh metadata and Prisma grant relations, upgrade preservation with existing unrelated permissions/role links, atomic rejection of identical/conflicting codes and latest-migration rollback/recovery. `pnpm test:seed:local` also verifies that the optional people seed preserves these definitions and creates no permission links. Tests never target the configured application database.
 
 ## Role-permission links
 
@@ -98,13 +108,13 @@ Expect these fifteen project tables, plus `_prisma_migrations`:
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
 
-Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Other project tables are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
+Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Permission contains the 30 approved definitions described above. Other project tables, including role_permission, are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
 
 ## Optional development seed
 
 > **Optional and local only:** Docker startup never invokes the seed. For the complete beginner workflow, expected rows, pgAdmin inspection and conflict handling, follow [Add the local demo people](../SETUP.md#optional-add-the-local-demo-people).
 
-Migrations still install only the three approved roles and 32 skill definitions; the demo graph is a separate opt-in command, not migration history. After migrations finish:
+Migrations install the three approved roles, 32 skill definitions and 30 permission definitions; the demo graph is a separate opt-in command, not migration history. After migrations finish:
 
 ```bash
 docker compose exec -T backend pnpm seed:dev
@@ -142,6 +152,7 @@ Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. K
 | role_registry_requires_empty_role_tables | Preserve the old role tables and request review; do not delete records or bypass the guard. |
 | permission_registry_requires_empty_permission_tables | Preserve old permissions/role links for review; do not delete rows or bypass the guard. |
 | role_permission_requires_empty_link_table | Preserve existing role links for review; do not delete rows or bypass the guard. |
+| permission_pkey during permission-reference migration | Preserve existing definitions and links; inspect the duplicate code and failed migration state before any reviewed recovery. Do not overwrite/delete the existing definition or skip the migration. |
 | P3009 / a previous migration failed | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back. |
 | Backend is healthy but tables are missing in pgAdmin | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above. |
 

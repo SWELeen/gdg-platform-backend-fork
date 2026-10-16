@@ -1,0 +1,212 @@
+[
+  {
+    "code": "accounts.lock_temp",
+    "description": "Lock an account temporarily (1–72 h)",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "accounts.suspend",
+    "description": "Suspend an account (longer than 72 h)",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "announcements.manage",
+    "description": "Write announcements",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "applications.decide",
+    "description": "Accept / reject committee applications (inside the window)",
+    "scope": "committee",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "attendance.record",
+    "description": "Scan QR codes / record attendance",
+    "scope": "event",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "audit.export",
+    "description": "Export a month of the audit log",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": true
+  },
+  {
+    "code": "audit.view",
+    "description": "View the audit log",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": true
+  },
+  {
+    "code": "campus_id.view",
+    "description": "See university IDs collected for an on-campus workshop",
+    "scope": "event",
+    "grant_permission": null,
+    "is_sensitive": true
+  },
+  {
+    "code": "capacity.approve_club",
+    "description": "Approve more places (club side)",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "capacity.approve_dev",
+    "description": "Approve more places (Development side)",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "capacity.request",
+    "description": "Ask for more places in a published workshop",
+    "scope": "event",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "changes.approve_club",
+    "description": "Approve DBA change requests (club leader slot)",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "changes.approve_cyber",
+    "description": "Approve DBA change requests (Cyber leader slot) and bulk data access",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "changes.approve_data",
+    "description": "Approve DBA change requests (Data leader slot)",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "changes.review_emergency",
+    "description": "Review emergency DBA changes afterwards",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "contacts.view",
+    "description": "See phone numbers of accepted registrants (purpose required)",
+    "scope": "event",
+    "grant_permission": null,
+    "is_sensitive": true
+  },
+  {
+    "code": "decisions.any_time",
+    "description": "Decide applications / registrations outside the review window",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "events.create",
+    "description": "Create workshops (and manage the ones you created)",
+    "scope": "global",
+    "grant_permission": "grants.events_create",
+    "is_sensitive": false
+  },
+  {
+    "code": "events.manage_all",
+    "description": "Manage every workshop",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "grants.data_task",
+    "description": "Give Data Committee members temporary access for a data task",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "grants.events_create",
+    "description": "Give temporary \"create workshops\" permission",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "grants.review",
+    "description": "Give temporary \"review registrations\" permission",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "incidents.excuse",
+    "description": "Accept an excuse for an attendance incident",
+    "scope": "event",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "links.approve",
+    "description": "Approve requests to link an account to a member",
+    "scope": "committee",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "members.manage",
+    "description": "Add / change members, committees and non-leader committee roles",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "members.view_contacts",
+    "description": "See contact details of a committee's members",
+    "scope": "committee",
+    "grant_permission": "grants.data_task",
+    "is_sensitive": true
+  },
+  {
+    "code": "registrants.view",
+    "description": "See registrants' names and answers (no phones)",
+    "scope": "event",
+    "grant_permission": "grants.data_task",
+    "is_sensitive": true
+  },
+  {
+    "code": "registrations.review",
+    "description": "Accept / waitlist / reject registrations (inside the window)",
+    "scope": "event",
+    "grant_permission": "grants.review",
+    "is_sensitive": false
+  },
+  {
+    "code": "staff.assign",
+    "description": "Assign workshop organizers and PR staff",
+    "scope": "event",
+    "grant_permission": null,
+    "is_sensitive": false
+  },
+  {
+    "code": "windows.manage",
+    "description": "Open review windows",
+    "scope": "global",
+    "grant_permission": null,
+    "is_sensitive": false
+  }
+]

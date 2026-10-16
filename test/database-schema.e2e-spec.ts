@@ -30,6 +30,19 @@ const approvedSkills: { skill_id: number; skill_name: string }[] = JSON.parse(
   ),
 );
 
+const approvedPermissions: {
+  code: string;
+  description: string;
+  scope: string;
+  grant_permission: string | null;
+  is_sensitive: boolean;
+}[] = JSON.parse(
+  readFileSync(
+    new URL('./fixtures/approved-permissions.json', import.meta.url),
+    'utf8',
+  ),
+);
+
 // Normal app e2e runs do not connect to a schema target unless explicitly supplied.
 describe.skipIf(!process.env.TEST_DATABASE_URL)(
   'PostgreSQL schema integrity',
@@ -316,12 +329,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       }, 'code');
     });
 
-    it('starts without permission definitions or grants to roles', async () => {
-      const [row] = await db.$queryRaw<
-        { count: bigint }[]
-      >`SELECT count(*) FROM permission`;
-      expect(row.count).toBe(0n);
+    it('contains exactly the 30 approved permission definitions without role grants', async () => {
+      const rows = await db.$queryRaw`
+        SELECT code, description, scope, grant_permission, is_sensitive
+        FROM permission ORDER BY code`;
+      expect(rows).toEqual(approvedPermissions);
       expect(await db.rolePermission.count()).toBe(0);
+    });
+
+    it('resolves approved grant references through Prisma without role assignments', async () => {
+      const permissions = await db.permission.findMany({
+        where: { grantPermission: { not: null } },
+        orderBy: { code: 'asc' },
+        select: { code: true, grant: { select: { code: true } }, roles: true },
+      });
+      expect(permissions).toEqual(
+        approvedPermissions
+          .filter((p) => p.grant_permission)
+          .map((p) => ({
+            code: p.code,
+            grant: { code: p.grant_permission },
+            roles: [],
+          })),
+      );
     });
 
     it.each(['global', 'event', 'committee'])(
