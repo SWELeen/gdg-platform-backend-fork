@@ -178,3 +178,13 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Separate from migrations and Docker startup. Local loopback/Compose-db targets only, non-production mode, one transaction, generated IDs, compatible-row reuse and conflict rejection. Preserve unrelated records, optional details and additional links; never reset/delete or overwrite conflicts.
 - No Supabase data transfer, Auth accounts, password seeding, outgoing messages, permission definitions/distribution, event fixtures or automatic startup seeding. These demo records do not implement login/authorization.
 - Commit requires separate user confirmation after verification results. Push, PR and deployment remain unauthorized.
+
+## 2026-10-16 Shared HTTP response envelope approval
+
+- Owner/approver: project user explicitly approved the displayed response shape and requested an English implementation plan with phases and tests before execution.
+- Contract: JSON API responses use success/message/data/error. Success has success=true and error=null; failure has success=false, data=null and error={code,details}. Details is always an array; only DTO validation adds pointer/message entries. Real HTTP statuses remain authoritative.
+- Public error messages come from the reviewed catalog; no raw exception/SQL/token/input values are exposed. Existing root text/readiness behavior and bodyless responses are preserved. Authentication/authorization decisions remain with their owner.
+- Source: [Approved design](superpowers/specs/2026-10-16-api-error-handling-design.md); [implementation plan](superpowers/plans/2026-10-16-api-error-handling.md). This decision supersedes the earlier unapproved Problem Details proposal for this task.
+- After reviewing the split plan, the user authorized Phase 1A only: envelope types, success helper, owned validation metadata, tests and documentation, with results before commit. Global error-filter implementation/activation and shared validation remain pending. Commits, push, PR and deployment require separate authorization. No schema, migration, seed, frontend or authentication change is approved here.
+
+- After reviewing Phase 1A results, the user explicitly authorized its commit on 2026-10-16 and requested an explanation of Phase 1B before implementation. Phase 1B execution, push, PR and deployment remain unauthorized.
