@@ -14,7 +14,7 @@
 
 ## Global constraints
 
-- Contract approved; Phase 1A committed as ee71e3a. Phase 1B implemented and verified; its commit was authorized by the user on 2026-10-16. Phases 1C/2/3 remain pending. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
+- Contract approved; Phase 1A committed as ee71e3a. Phase 1B committed as ff688e1. Phase 1C implemented and verified; the user authorized its commit on 2026-10-16. Phases 2/3 remain pending. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
 - Work on `feat/api-error-handling`, based on `9246fde`. At planning time database PR #4 is open against main at that same head. Recheck its state and the auth branch at execution time; do not merge/rebase just to start this task. Settle the database PR dependency before proposing a separate feature PR.
 - Preserve `docs/user-member-proposal.md`, the frontend's `package-lock.json`, ignored local settings and unrelated changes.
 - Every JSON envelope has exactly `success`, `message`, `data`, `error`. Success uses true/error=null; failure uses false/data=null/error={code,details}. Use application/json and actual HTTP status codes, not HTTP 200 for failures.
@@ -144,11 +144,11 @@ The last two functions form the internal bridge consumed by Phase 2. Use one pri
 
 **Purpose:** Activate the tested filter for the real application and verify that real HTTP requests receive the approved errors while existing success behavior remains unchanged.
 
-**Files:** Modify `src/app.module.ts`, create `test/http-boundary.spec.ts`, and update `docs/api-errors.md` to distinguish implemented error handling from the pending Phase 2 validation pipe.
+**Files:** Modify `src/app.module.ts`, create `test/http-boundary.spec.ts`, and update `docs/api-errors.md` plus the active error-policy link in `docs/api-standards.md` to distinguish implemented error handling from the pending Phase 2 validation pipe.
 
 **Interfaces:** Consume HttpErrorFilter from Phase 1B. Register `{ provide: APP_FILTER, useClass: HttpErrorFilter }` in AppModule, preserving current imports/providers/bootstrap configuration. No APP_PIPE yet.
 
-- [ ] **Write failing HTTP integration tests.** Use `/__test/http` fixture controllers only in the test file. Import actual AppModule, add fixture controllers to TestingModule, override PrismaService with a harmless value before compilation, and never install the filter manually in tests. No database connection. Cover:
+- [x] **Write failing HTTP integration tests.** Use `/__test/http` fixture controllers only in the test file. Import actual AppModule, add fixture controllers to TestingModule, override PrismaService with a harmless value before compilation, and never install the filter manually in tests. No database connection. Cover:
 
   | Case | Required assertion |
   | --- | --- |
@@ -161,12 +161,14 @@ The last two functions form the internal bridge consumed by Phase 2. Use one pri
   | Pre-set non-JSON Content-Type on failure | Replaced with application/json; unrelated headers retained |
   | GET / | Exact existing Hello World! text, status 200 and text content type |
 
-- [ ] **Run RED:** `pnpm exec vitest run test/http-boundary.spec.ts`. Record the default Nest error-shape failures before registration; a missing generated Prisma client is setup, not an intended RED failure.
-- [ ] **Register APP_FILTER in AppModule.** Keep test fixtures out of production source; document that JSON success endpoints opt in through apiSuccess, and DTO validation remains pending.
-- [ ] **Run GREEN:** `pnpm exec vitest run src/common/http/api-response.spec.ts src/common/http/http-error.filter.spec.ts test/http-boundary.spec.ts`, then `pnpm check`, `pnpm build` and `git diff --check`. Require zero failures and confirm production build excludes fixture controllers.
-- [ ] **Explain and commit gate:** show a real HTTP error result, unchanged root behavior, files and actual checks. Wait for confirmation before committing. Suggested message: `feat: enable global HTTP error handling`.
+- [x] **Run RED:** `pnpm exec vitest run test/http-boundary.spec.ts`. Record the default Nest error-shape failures before registration; a missing generated Prisma client is setup, not an intended RED failure.
+- [x] **Register APP_FILTER in AppModule.** Keep test fixtures out of production source; document that JSON success endpoints opt in through apiSuccess, and DTO validation remains pending.
+- [x] **Run GREEN:** `pnpm exec vitest run src/common/http/api-response.spec.ts src/common/http/http-error.filter.spec.ts test/http-boundary.spec.ts`, then `pnpm check`, `pnpm build` and `git diff --check`. Require zero failures and confirm production build excludes fixture controllers.
+- [x] **Explain and commit gate:** show a real HTTP error result, unchanged root behavior, files and actual checks. The user reviewed the results and authorized this commit on 2026-10-16. Commit message: `feat: enable global HTTP error handling`.
 
 Each delivery ends with passing tests, a scoped diff and a user-visible explanation before its separately confirmed commit. Do not move to the next delivery automatically. No push or database PR changes.
+
+**Verification result (2026-10-16):** Before registration, the HTTP suite failed 14 cases on the default error shapes and passed the root compatibility case. After actual AppModule registration, all 15 HTTP cases and the earlier helper/filter suites passed (85 focused tests). `pnpm check` passed lint, TypeScript, 11 Node tests and 97 Vitest tests; `pnpm build`, changed-file Prettier and diff checks passed. Test-only fixtures are excluded from the production output. PrismaService is overridden before compilation; ConfigService additionally uses unreachable loopback as a safety fallback. No database/Compose/seed/migration change or startup run occurred. The API standards error-format link was updated during activation rather than leaving an implemented policy marked TBD until Phase 3. The user authorized this commit after reviewing the results and requested a Phase 2 explanation before implementation.
 
 ## Phase 2: Shared DTO Validation and Field Details
 

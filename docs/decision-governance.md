@@ -189,4 +189,8 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 
 - After reviewing Phase 1A results, the user explicitly authorized its commit on 2026-10-16 and requested an explanation of Phase 1B before implementation. The user subsequently authorized Phase 1B implementation and tests with results before commit. Phase 1C activation, further commits, push, PR and deployment require separate authorization.
 
-- After reviewing Phase 1B results, the user authorized its commit on 2026-10-16 and requested the Phase 1C explanation before implementation. No Phase 1C runtime work, push, PR or deployment is authorized by that request.
+- After reviewing Phase 1B results, the user authorized its commit on 2026-10-16 and requested the Phase 1C explanation before implementation. That commit/explanation request did not authorize Phase 1C runtime work, push, PR or deployment.
+
+- The user subsequently authorized Phase 1C implementation/tests with results before commit: register the tested filter through APP_FILTER in AppModule, verify real HTTP behavior with PrismaService replaced before compilation, and document the active error contract. DTO validation, final compatibility/startup verification and any commit/push/PR/deployment remain separate steps.
+
+- After reviewing Phase 1C results and global filter registration, the user authorized its commit on 2026-10-16 and requested the Phase 2 explanation. Phase 2 execution, further commits, push, PR and deployment require separate authorization.

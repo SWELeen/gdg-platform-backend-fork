@@ -4,7 +4,9 @@
 
 Phase 1A implements the envelope types, success helper and internal validation-error metadata helpers in `src/common/http/api-response.ts`.
 
-Phase 1B implements and unit-tests `HttpErrorFilter` in `src/common/http/http-error.filter.ts`. It is not registered in AppModule yet; global activation (Phase 1C) and the shared DTO validation pipe (Phase 2) are pending. The failure examples below describe the filter's output, not currently active application-wide behavior. Application-wide errors still use Nest's default format. No endpoint has been converted. `GET /` still returns the existing `Hello World!` text.
+Phase 1B implements and unit-tests `HttpErrorFilter` in `src/common/http/http-error.filter.ts`. Phase 1C registers it through APP_FILTER in AppModule, so HTTP failures now use the envelope below. Real HTTP tests import AppModule and replace PrismaService before compilation; they verify global registration without connecting to a database. The shared DTO validation pipe (Phase 2) remains pending.
+
+Success envelopes are opt-in through apiSuccess; there is no global success interceptor. `GET /` still returns the existing `Hello World!` text. New test routes exist only in `test/http-boundary.spec.ts` and are excluded from production builds.
 
 See the [approved design](superpowers/specs/2026-10-16-api-error-handling-design.md) and [implementation plan](superpowers/plans/2026-10-16-api-error-handling.md).
 
@@ -44,7 +46,7 @@ Result:
 
 The business fields illustrate usage and do not introduce a new endpoint. Pass a second argument for a safe operation message, such as `apiSuccess(null, 'Completed.')`. Both `null` and `undefined` results become `data: null`; `0`, `false` and the empty string remain unchanged. The helper wraps only the data explicitly supplied; endpoint authors must choose public response DTOs and omit secrets.
 
-## Approved failure shape — global activation pending
+## Active HTTP failure shape
 
 Example with actual HTTP status 401:
 
@@ -114,7 +116,7 @@ For 5xx failures, Nest Logger receives only these fields:
 
 Categories are UNEXPECTED_EXCEPTION, HTTP_SERVER_ERROR (a valid native HTTP exception) or ADAPTER_ERROR (a recognized adapter error). Methods are limited to GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS; anything else becomes OTHER. Client errors are not logged by this filter. Diagnostics omit request URLs, headers, bodies, submitted values, constructor names, raw exception messages, causes and stack traces. Correlation and richer diagnostics belong to a later reviewed observability change.
 
-The filter formats errors; authentication, authorization, domain decisions and bootstrap/database failures remain with their existing owners. New public business codes require an approved catalog entry. Global registration and real HTTP integration checks belong to Phase 1C.
+The filter formats errors; authentication, authorization, domain decisions and bootstrap/database failures remain with their existing owners. New public business codes require an approved catalog entry. Phase 1C activates the filter globally and verifies it through real HTTP requests.
 
 ## Phase 1A verification
 
@@ -135,4 +137,17 @@ pnpm build
 git diff --check
 ```
 
-The filter tests use an adapter/context double to inspect actual output status, body, headers and diagnostics. They cover the catalog, owned/unowned validation, invalid statuses, strict adapter classification, safe 500 fallbacks, preservation of headers, already-sent responses and bounded diagnostics. They require no PostgreSQL or new HTTP endpoints. AppModule remains unchanged in this phase.
+The filter unit tests use an adapter/context double to inspect actual output status, body, headers and diagnostics. They cover the catalog, owned/unowned validation, invalid statuses, strict adapter classification, safe 500 fallbacks, preservation of headers, already-sent responses and bounded diagnostics. They require no PostgreSQL. AppModule was unchanged during Phase 1B; global activation is implemented in Phase 1C.
+
+## Phase 1C verification
+
+```sh
+pnpm exec vitest run src/common/http/api-response.spec.ts src/common/http/http-error.filter.spec.ts test/http-boundary.spec.ts
+pnpm check
+pnpm build
+git diff --check
+```
+
+The HTTP suite exercises actual AppModule registration and the Express adapter. It does not install a test-only filter. PrismaService is replaced with a harmless value before compilation; ConfigService also points to an unreachable loopback target as a safety fallback. No application or temporary database is needed for this suite.
+
+Checks cover core 400/401/403/404/409/500 statuses, preserved 413/429/503 statuses, a real unknown-route 404, unowned validation/code mismatch, safe unexpected 500 diagnostics, challenge/retry header preservation, replacement of stale content types, and unchanged successful root text. Fixture routes are not business endpoints or authentication implementations. Validation, additional bodyless/success compatibility tests and disposable Docker startup verification remain assigned to later phases.
