@@ -4,7 +4,7 @@ SELECT i, 'Synthetic participant ' || i, 'performance' || i || '@example.test', 
 FROM generate_series(1,800) i;
 INSERT INTO person(person_id,full_name) VALUES (801,'Synthetic staff');
 INSERT INTO member(member_id,person_id) VALUES (10000000,801);
-INSERT INTO committee(committee_id,committee_name,committee_code) VALUES (1,'Synthetic','SYNTHETIC');
+INSERT INTO committee(committee_name,committee_code) VALUES ('Synthetic','SYNTHETIC');
 INSERT INTO events(event_id,name,starts_at,ends_at,capacity,registration_deadline,status,created_by_member_id,committee_id,updated_at)
 SELECT i, 'Synthetic event ' || i,
   CASE WHEN i <= 100 THEN now() - interval '30 days' ELSE now() + interval '1 hour' END,
@@ -12,7 +12,7 @@ SELECT i, 'Synthetic event ' || i,
   400,
   CASE WHEN i <= 100 THEN now() - interval '31 days' ELSE now() END,
   CASE WHEN i < 100 THEN 'completed'::"EventStatus" ELSE 'published'::"EventStatus" END,
-  10000000,1,now()
+  10000000,(SELECT committee_id FROM committee WHERE committee_code='SYNTHETIC'),now()
 FROM generate_series(1,103) i;
 INSERT INTO event_questions(event_id,question_text,question_type,position)
 SELECT e, 'Synthetic question ' || q, 'text', q FROM generate_series(1,103) e CROSS JOIN generate_series(0,4) q;

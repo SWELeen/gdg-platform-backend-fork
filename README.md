@@ -6,7 +6,7 @@ This repository is separate from the frontend. It owns the NestJS API, server-si
 
 ## Status
 
-NestJS, Prisma/PostgreSQL, Docker startup, fifteen domain tables and versioned migrations are implemented. Startup applies committed migrations before NestJS starts. The people/membership migration requires a separate empty database; see [Database and Prisma](docs/database-prisma.md). Domain APIs, Supabase Auth integration and production deployment procedures are not implemented yet.
+NestJS, Prisma/PostgreSQL, Docker startup, sixteen domain tables and versioned migrations are implemented. Startup applies committed migrations before NestJS starts. The people/membership migration requires a separate empty database; see [Database and Prisma](docs/database-prisma.md). Domain APIs, Supabase Auth integration and production deployment procedures are not implemented yet.
 
 ## Approved technical direction
 
@@ -36,13 +36,13 @@ NestJS, Prisma/PostgreSQL, Docker startup, fifteen domain tables and versioned m
 
 Backend developers: start with the short [setup guide](SETUP.md), covering Docker, `gdg install`, local environment variables, and pgAdmin.
 
-The normal workflow is **setup → `gdg backend run` → verify migrations → optionally seed → inspect in pgAdmin → develop → `gdg backend stop`**. Docker startup installs the tables plus 3 roles, 32 skills and 30 permission definitions. Permission definitions grant no access; no role-permission links are installed. To add the five agreed demo members and their committee, role and skill links, run this separately from the backend folder after startup:
+The normal workflow is **setup → `gdg backend run` → verify migrations → optionally seed → inspect in pgAdmin → develop → `gdg backend stop`**. Docker startup installs the tables plus 3 roles, 32 skills and 30 permission definitions. Permission definitions grant no access; no global role-permission links are installed. It also creates DATA/PR reference committees and eight committee permission rules; API enforcement remains separate. To add eight demo members (the original five plus three fictional DATA examples) and their committee, role and skill links, run this separately from the backend folder after startup:
 
 ```bash
 docker compose exec -T backend pnpm seed:dev
 ```
 
-> **Optional local data:** Docker startup never runs this seed. Each developer chooses whether to add it to their own database. It creates no login accounts or permission grants and sends no data to Supabase. See the [step-by-step seed instructions and expected rows](SETUP.md#optional-add-the-local-demo-people) before running it.
+> **Optional local data:** Docker startup never runs this seed. Each developer chooses whether to add it to their own database. It creates no login accounts, preserves permission definitions/policy rows and sends no data to Supabase. DATA leadership examples match the committee rules; actual API authorization remains separate. See the [step-by-step seed instructions and expected rows](SETUP.md#optional-add-the-local-demo-people) before running it.
 
 If you only need PostgreSQL and pgAdmin, without starting the backend:
 

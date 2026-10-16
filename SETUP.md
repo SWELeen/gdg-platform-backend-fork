@@ -2,7 +2,7 @@
 
 Run NestJS, PostgreSQL, and pgAdmin on your computer. Each developer has a separate local database and data.
 
-> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles, 32 skills and 30 permission definitions. These definitions do not grant permissions to any role. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want the five agreed demo members and their relationships. This data stays in your local database; it is not shared through Supabase.
+> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles, 32 skills and 30 permission definitions. It also installs DATA/PR reference committees and eight committee permission rules. Global role_permission remains empty; API authorization is separate. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want eight demo members, including three fictional DATA positions and their relationships. This data stays in your local database; it is not shared through Supabase.
 
 ## 1. Install the tools
 
@@ -77,7 +77,7 @@ This starts the backend, database, and pgAdmin. Open [the backend](http://localh
 
 The browser version already includes the server connection. If you use the desktop pgAdmin app, register a server with host `127.0.0.1`, port `5432`, database `gdg_platform`, username `gdg_local`, and the value of `POSTGRES_PASSWORD` as the password.
 
-You should see fifteen project tables, plus Prisma’s `_prisma_migrations` history table. Refresh **Tables** if needed. Everyone gets the same structure from the committed migrations. Do not create or change tables manually in pgAdmin.
+You should see sixteen project tables, plus Prisma’s `_prisma_migrations` history table. Refresh **Tables** if needed. Everyone gets the same structure from the committed migrations. Do not create or change tables manually in pgAdmin.
 
 After pulling backend updates in your backend clone, run `gdg backend run` again to apply any new migrations. Startup does not reset your database. Teammates use `migrate deploy` through startup; only schema authors create new migrations. If your database already contains manually created project tables, stop and ask the schema owner before proceeding; do not reset or baseline it yourself.
 
@@ -87,7 +87,7 @@ To verify the migration, run this from the backend folder:
 docker compose exec -T backend pnpm exec prisma migrate status --config prisma7.config.ts
 ```
 
-Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER), the 32 approved skill definitions and the 30 approved permission definitions; other tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
+Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER), the 32 approved skill definitions and the 30 approved permission definitions, DATA/PR reference committees and eight committee permission rules; other tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
 
 ## Optional: Add the local demo people
 
@@ -108,17 +108,18 @@ On a fresh migrated database, the result is:
 
 | Table | Rows | What to inspect |
 | --- | --- | --- |
-| `person` | 5 | Names and personal emails |
-| `member` | 5 | Four current members; Mohmmad is alumni |
-| `committee` | 5 | Web and Cyber under Development; PM and PR independent |
-| `member_committee` | 8 | Committee memberships and positions |
+| `person` | 8 | Names and personal emails |
+| `member` | 8 | Seven current members; Mohmmad is alumni |
+| `committee` | 6 | DATA and PR reused from migrations; Web/Cyber under Development; PM independent |
+| `member_committee` | 11 | Committee memberships and positions |
 | `member_role` | 1 | Leen's `GROUP_LEADER` assignment |
-| `member_skill` | 15 | Three skill selections per member |
+| `member_skill` | 15 | Three selections per original demo member; DATA examples have none |
 | `role` / `skill` | 3 / 32 | Existing migration reference values, reused by the seed |
 | `permission` | 30 | Migration reference definitions, unchanged by the seed |
-| `role_permission` | 0 | No permissions granted to roles |
+| `role_permission` | 0 | No permissions granted to global roles |
+| `committee_permission` | 8 | DATA leadership and PR rules installed by migrations; seed leaves them unchanged |
 
-Existing unrelated data is kept, so totals can be larger on a database you already use. `permission`, `role_permission` and event tables are unchanged.
+Existing unrelated data is kept, so totals can be larger on a database you already use. `permission`, `role_permission`, `committee_permission` and event tables are unchanged by the optional seed.
 
 | Member | Committee positions | Club role |
 | --- | --- | --- |
@@ -127,8 +128,13 @@ Existing unrelated data is kept, so totals can be larger on a database you alrea
 | Abdullah Misar | Development Leader; Web Member | None |
 | Mohmmad Alamri | Cyber Member; PR Member | None |
 | Sara Alqahtani (fictional) | Web Co-Leader; PM Member | None |
+| Noura Demo (fictional) | DATA Leader | None |
+| Faisal Demo (fictional) | DATA Co-Leader | None |
+| Hala Demo (fictional) | DATA Member | None |
 
-These are database demo records. They do not create login accounts, passwords or permission grants, and do not enable dashboard/API features that have not been implemented.
+Noura, Faisal and Hala are fictional examples with example.test emails. They have no global roles, skill selections or Auth accounts. The seed reuses DATA and PR without changing their IDs or rules. A membership-to-policy join matches events.create/own for the DATA Leader and Co-Leader, matches no rule for the DATA Member, and matches the two PR registration rules for Mohmmad. This is a data relationship check; NestJS must still enforce authentication, scope and event ownership.
+
+These are database demo records. They do not create login accounts/passwords or modify permission policy rows, and do not enable dashboard/API features that have not been implemented.
 
 **Run once when you want the demo data.** Stopping/restarting Docker keeps it; pulling code does not add it automatically. Running the command again reuses compatible rows without duplicates or timestamp changes and restores missing expected links while keeping additional data. If you intentionally changed a demo member's position or details, review that change before rerunning: a conflict rolls back the entire seed.
 

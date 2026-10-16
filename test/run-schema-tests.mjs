@@ -51,7 +51,11 @@ const expectedTables = [
   'member_role',
   'member_skill',
   'skill',
+  'committee_permission',
 ].sort();
+const approvedCommitteePolicy = JSON.parse(
+  readFileSync('test/fixtures/approved-committee-permissions.json', 'utf8'),
+);
 const approvedPermissions = JSON.parse(
   readFileSync('test/fixtures/approved-permissions.json', 'utf8'),
 );
@@ -160,6 +164,21 @@ function domainRows(database) {
       `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text), '[]'::jsonb) FROM "${table.replaceAll('"', '""')}" r`,
     ),
   ]);
+}
+
+function committeePolicy(database) {
+  return JSON.parse(
+    sql(
+      database,
+      `SELECT jsonb_build_object(
+    'committees', (SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY committee_code),'[]'::jsonb) FROM (
+      SELECT c.committee_code,c.committee_name,p.committee_code AS parent_committee_code
+      FROM committee c LEFT JOIN committee p ON p.committee_id=c.parent_committee_id) r),
+    'permissions', (SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY committee_code,committee_role,code),'[]'::jsonb) FROM (
+      SELECT c.committee_code,cp.committee_role,cp.code,cp.applies_to,cp.include_sub_committees
+      FROM committee_permission cp LEFT JOIN committee c ON c.committee_id=cp.committee_id) r))`,
+    ),
+  );
 }
 
 try {
@@ -291,6 +310,30 @@ try {
         roles: [],
         skills: [1, 2, 10],
       },
+      {
+        name: 'Noura Demo',
+        email: 'data.leader@example.test',
+        type: 'current',
+        committees: { DATA: 'Leader' },
+        roles: [],
+        skills: [],
+      },
+      {
+        name: 'Faisal Demo',
+        email: 'data.coleader@example.test',
+        type: 'current',
+        committees: { DATA: 'Co-Leader' },
+        roles: [],
+        skills: [],
+      },
+      {
+        name: 'Hala Demo',
+        email: 'data.member@example.test',
+        type: 'current',
+        committees: { DATA: 'Member' },
+        roles: [],
+        skills: [],
+      },
     ]
       .map((row) => ({
         ...row,
@@ -331,6 +374,7 @@ try {
         'skill',
         'permission',
         'role_permission',
+        'committee_permission',
         'events',
       ].map((table) => [
         table,
@@ -338,16 +382,17 @@ try {
       ]),
     );
     assert.deepEqual(counts, {
-      person: 6,
-      member: 5,
-      committee: 5,
-      member_committee: 8,
+      person: 9,
+      member: 8,
+      committee: 6,
+      member_committee: 11,
       member_role: 1,
       member_skill: 15,
       role: 3,
       skill: 32,
       permission: 30,
       role_permission: 0,
+      committee_permission: 8,
       events: 0,
     });
     assert.deepEqual(
@@ -357,9 +402,15 @@ try {
           'SELECT jsonb_object_agg(c.committee_code,p.committee_code) FROM committee c LEFT JOIN committee p ON p.committee_id=c.parent_committee_id',
         ),
       ),
-      { DEV: null, WEB: 'DEV', CYBER: 'DEV', PM: null, PR: null },
+      { DATA: null, DEV: null, WEB: 'DEV', CYBER: 'DEV', PM: null, PR: null },
     );
-    for (const table of ['role', 'skill', 'permission', 'role_permission'])
+    for (const table of [
+      'role',
+      'skill',
+      'permission',
+      'role_permission',
+      'committee_permission',
+    ])
       assert.equal(
         domainRows(seedDatabase).find(([key]) => key === table)[1],
         initial.find(([key]) => key === table)[1],
@@ -383,6 +434,54 @@ try {
     sql(
       seedDatabase,
       "UPDATE person SET email_personal=' BABASET99@GMAIL.COM ' WHERE email_personal='babaset99@gmail.com'",
+    );
+    assert.deepEqual(
+      committeePolicy(seedDatabase).permissions,
+      approvedCommitteePolicy.permissions,
+    );
+    const matchedRules = JSON.parse(
+      sql(
+        seedDatabase,
+        `SELECT jsonb_agg(to_jsonb(r) ORDER BY lower(email),code) FROM (
+      SELECT p.email_personal AS email,c.committee_code,mc.role,cp.code,cp.applies_to
+      FROM person p JOIN member m USING(person_id) JOIN member_committee mc USING(member_id)
+      JOIN committee c ON c.committee_id=mc.committee_id
+      JOIN committee_permission cp ON cp.committee_id=mc.committee_id AND cp.committee_role=mc.role) r`,
+      ),
+    );
+    assert.deepEqual(
+      matchedRules,
+      [
+        {
+          email: 'data.coleader@example.test',
+          committee_code: 'DATA',
+          role: 'Co-Leader',
+          code: 'events.create',
+          applies_to: 'own',
+        },
+        {
+          email: 'data.leader@example.test',
+          committee_code: 'DATA',
+          role: 'Leader',
+          code: 'events.create',
+          applies_to: 'own',
+        },
+        {
+          email: 'MohmmadAlamri@gmail.com',
+          committee_code: 'PR',
+          role: 'Member',
+          code: 'registrants.view',
+          applies_to: 'all',
+        },
+        {
+          email: 'MohmmadAlamri@gmail.com',
+          committee_code: 'PR',
+          role: 'Member',
+          code: 'registrations.review',
+          applies_to: 'all',
+        },
+      ],
+      'Committee membership/position joins match only approved DATA leadership and PR rules; no DATA Member or unrelated-committee rule',
     );
     const normalized = domainRows(seedDatabase);
     seed(seedDatabase);
@@ -550,45 +649,59 @@ try {
     assert.match(repeat, /No pending migrations/);
     assertTables(database, expectedTables);
     assert.deepEqual(
-      domainRows(database).map(([table, rows]) => [
-        table,
-        JSON.parse(rows).sort((a, b) =>
-          String(a.role_code ?? a.skill_id ?? a.code ?? '').localeCompare(
-            String(b.role_code ?? b.skill_id ?? b.code ?? ''),
+      domainRows(database)
+        .filter(
+          ([table]) => !['committee', 'committee_permission'].includes(table),
+        )
+        .map(([table, rows]) => [
+          table,
+          JSON.parse(rows).sort((a, b) =>
+            String(a.role_code ?? a.skill_id ?? a.code ?? '').localeCompare(
+              String(b.role_code ?? b.skill_id ?? b.code ?? ''),
+            ),
           ),
-        ),
-      ]),
-      [...expectedTables].sort().map((table) => [
-        table,
-        table === 'role'
-          ? [
-              {
-                role_code: 'ADVISOR',
-                description: 'Club advisor',
-                is_privileged: true,
-              },
-              {
-                role_code: 'GROUP_LEADER',
-                description: 'Club (group) leader',
-                is_privileged: true,
-              },
-              {
-                role_code: 'GROUP_CO_LEADER',
-                description: 'Club (group) co-leader',
-                is_privileged: true,
-              },
-            ].sort((a, b) => a.role_code.localeCompare(b.role_code))
-          : table === 'skill'
-            ? [...approvedSkills].sort((a, b) =>
-                String(a.skill_id).localeCompare(String(b.skill_id)),
-              )
-            : table === 'permission'
-              ? [...approvedPermissions].sort((a, b) =>
-                  a.code.localeCompare(b.code),
+        ]),
+      [...expectedTables]
+        .filter(
+          (table) => !['committee', 'committee_permission'].includes(table),
+        )
+        .sort()
+        .map((table) => [
+          table,
+          table === 'role'
+            ? [
+                {
+                  role_code: 'ADVISOR',
+                  description: 'Club advisor',
+                  is_privileged: true,
+                },
+                {
+                  role_code: 'GROUP_LEADER',
+                  description: 'Club (group) leader',
+                  is_privileged: true,
+                },
+                {
+                  role_code: 'GROUP_CO_LEADER',
+                  description: 'Club (group) co-leader',
+                  is_privileged: true,
+                },
+              ].sort((a, b) => a.role_code.localeCompare(b.role_code))
+            : table === 'skill'
+              ? [...approvedSkills].sort((a, b) =>
+                  String(a.skill_id).localeCompare(String(b.skill_id)),
                 )
-              : [],
-      ]),
+              : table === 'permission'
+                ? [...approvedPermissions].sort((a, b) =>
+                    a.code.localeCompare(b.code),
+                  )
+                : [],
+        ]),
       'Tests must preserve approved seeds and clean up all committed fixtures',
+    );
+    assert.deepEqual(
+      committeePolicy(database),
+      approvedCommitteePolicy,
+      'Fresh replay must contain exactly approved committees and rules',
     );
     dumps.push(schemaDump(database));
   }
@@ -887,7 +1000,10 @@ try {
   sql(roleDatabase, 'DELETE FROM role_permissions'); // Runner-owned synthetic link only.
   const beforeRolePermissionRows = domainRows(roleDatabase);
   sql(roleDatabase, rolePermissionSQL);
-  assertTables(roleDatabase, expectedTables);
+  assertTables(
+    roleDatabase,
+    expectedTables.filter((table) => table !== 'committee_permission'),
+  );
   assert.equal(sql(roleDatabase, 'SELECT count(*) FROM role_permission'), '0');
   assert.deepEqual(
     domainRows(roleDatabase),
@@ -965,6 +1081,92 @@ try {
   );
   console.log(
     'PASS: permission reference migration inserts exactly the approved definitions, preserves unrelated records and role links, and rejects identical/conflicting codes atomically.',
+  );
+
+  const committeeSQL = readFileSync(
+    'prisma/migrations/20261016230000_committee_permissions/migration.sql',
+    'utf8',
+  );
+  sql(
+    roleDatabase,
+    "INSERT INTO committee(committee_code,committee_name) VALUES ('NAME_COLLISION','Data')",
+  );
+  let beforeCommitteeRows = domainRows(roleDatabase);
+  let beforeCommitteeSchema = schemaDump(roleDatabase);
+  assert.throws(
+    () => sql(roleDatabase, committeeSQL),
+    /committee_committee_name_key/,
+  );
+  assert.deepEqual(domainRows(roleDatabase), beforeCommitteeRows);
+  assert.equal(schemaDump(roleDatabase), beforeCommitteeSchema);
+  sql(
+    roleDatabase,
+    "DELETE FROM committee WHERE committee_code='NAME_COLLISION'",
+  ); // Runner-owned synthetic collision only.
+  sql(
+    roleDatabase,
+    "INSERT INTO committee(committee_id,committee_code,committee_name) VALUES (-201,'DATA','Data'),(-202,'PR','Public Relations'),(-203,'PRESERVED','Preserved committee')",
+  );
+  for (const committee of ['DATA', 'PR'])
+    for (const conflict of ['name', 'parent']) {
+      sql(
+        roleDatabase,
+        conflict === 'name'
+          ? `UPDATE committee SET committee_name='Conflicting ${committee}' WHERE committee_code='${committee}'`
+          : `UPDATE committee SET parent_committee_id=-203 WHERE committee_code='${committee}'`,
+      );
+      beforeCommitteeRows = domainRows(roleDatabase);
+      beforeCommitteeSchema = schemaDump(roleDatabase);
+      assert.throws(
+        () => sql(roleDatabase, committeeSQL),
+        /committee_permission_requires_matching_committees/,
+      );
+      assert.deepEqual(domainRows(roleDatabase), beforeCommitteeRows);
+      assert.equal(schemaDump(roleDatabase), beforeCommitteeSchema);
+      sql(
+        roleDatabase,
+        `UPDATE committee SET committee_name='${committee === 'DATA' ? 'Data' : 'Public Relations'}',parent_committee_id=NULL WHERE committee_code='${committee}'`,
+      );
+    }
+  const missingPermission = approvedPermissions.find(
+    (row) => row.code === 'events.create',
+  );
+  sql(roleDatabase, "DELETE FROM permission WHERE code='events.create'"); // Runner-owned missing-reference fixture only.
+  beforeCommitteeRows = domainRows(roleDatabase);
+  beforeCommitteeSchema = schemaDump(roleDatabase);
+  assert.throws(
+    () => sql(roleDatabase, committeeSQL),
+    /committee_permission_code_fkey/,
+  );
+  assert.deepEqual(domainRows(roleDatabase), beforeCommitteeRows);
+  assert.equal(schemaDump(roleDatabase), beforeCommitteeSchema);
+  sql(
+    roleDatabase,
+    `INSERT INTO permission SELECT * FROM jsonb_populate_record(NULL::permission,'${JSON.stringify(missingPermission).replaceAll("'", "''")}'::jsonb)`,
+  );
+  beforeCommitteeRows = domainRows(roleDatabase);
+  sql(roleDatabase, committeeSQL);
+  assertTables(roleDatabase, expectedTables);
+  assert.deepEqual(
+    domainRows(roleDatabase).filter(
+      ([table]) => table !== 'committee_permission',
+    ),
+    beforeCommitteeRows,
+    'Compatible committee IDs and all existing records/links must remain unchanged',
+  );
+  assert.deepEqual(
+    committeePolicy(roleDatabase).permissions,
+    approvedCommitteePolicy.permissions,
+  );
+  assert.equal(
+    sql(
+      roleDatabase,
+      'SELECT count(*) FROM committee_permission WHERE committee_id NOT IN (-201,-202)',
+    ),
+    '0',
+  );
+  console.log(
+    'PASS: committee permissions preserve compatible local IDs and all previous records, reject committee name/parent conflicts and missing permissions atomically, and insert exactly eight rules.',
   );
 
   function verifyFailure(source, history, database, expected) {
@@ -1130,6 +1332,14 @@ try {
     assert.equal(
       sql(database, 'SELECT count(*) FROM event_registrations'),
       '41300',
+    );
+    assert.equal(
+      sql(
+        database,
+        "SELECT count(*) FROM events e JOIN committee c USING(committee_id) WHERE c.committee_code='SYNTHETIC'",
+      ),
+      '103',
+      'Performance events must use their own generated committee ID',
     );
     const measurements = [];
     for (const [eventId, size] of [
