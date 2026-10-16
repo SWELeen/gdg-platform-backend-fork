@@ -30,7 +30,7 @@ Follow [Backend Local Setup](../SETUP.md) once, including the local `.env` and p
 1. Pull the reviewed backend changes using your team's Git process and keep your existing `.env`.
 2. Run `gdg backend run`. Startup applies pending committed migrations, then starts the backend at `http://localhost:3001`.
 3. Verify migration status using the command in the setup guide. A migration failure must be resolved before continuing; preserve existing data and ask the schema owner for help.
-4. **Optional:** from the backend folder, run `docker compose exec -T backend pnpm seed:dev` when you want the five demo members and their relationships. Follow the [seed walkthrough](../SETUP.md#optional-add-the-local-demo-people) for expected rows and conflict handling.
+4. **Optional:** from the backend folder, run `docker compose exec -T backend pnpm seed:dev` when you want the ten demo members and their relationships. Follow the [seed walkthrough](../SETUP.md#optional-add-the-local-demo-people) for expected rows and conflict handling.
 5. Develop with the source watcher, inspect local tables in pgAdmin, and run the checks relevant to your change. `gdg backend test` runs checks/application e2e inside the running container.
 6. Run `gdg backend stop` when finished. Data remains available next time.
 

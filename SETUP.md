@@ -87,7 +87,7 @@ To verify the migration, run this from the backend folder:
 docker compose exec -T backend pnpm exec prisma migrate status --config prisma7.config.ts
 ```
 
-Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER), the 32 approved skill definitions and the 30 approved permission definitions, DATA/PR reference committees and eight committee permission rules; other tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
+Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER), the 32 approved skill definitions and the 30 approved permission definitions, DATA/PR reference committees, eight committee permission rules and two role_permission links (GROUP_LEADER and GROUP_CO_LEADER each get members.manage); other project tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
 
 ## Optional: Add the local demo people
 
