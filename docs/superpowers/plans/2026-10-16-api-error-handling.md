@@ -14,7 +14,7 @@
 
 ## Global constraints
 
-- Contract approved; Phase 1A implemented and verified; the user authorized its commit on 2026-10-16. Phases 1B/1C/2/3 remain pending. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
+- Contract approved; Phase 1A committed as ee71e3a. Phase 1B implemented and verified; its commit was authorized by the user on 2026-10-16. Phases 1C/2/3 remain pending. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
 - Work on `feat/api-error-handling`, based on `9246fde`. At planning time database PR #4 is open against main at that same head. Recheck its state and the auth branch at execution time; do not merge/rebase just to start this task. Settle the database PR dependency before proposing a separate feature PR.
 - Preserve `docs/user-member-proposal.md`, the frontend's `package-lock.json`, ignored local settings and unrelated changes.
 - Every JSON envelope has exactly `success`, `message`, `data`, `error`. Success uses true/error=null; failure uses false/data=null/error={code,details}. Use application/json and actual HTTP status codes, not HTTP 200 for failures.
@@ -115,7 +115,7 @@ The last two functions form the internal bridge consumed by Phase 2. Use one pri
 
 **Interfaces:** Consume the Phase 1A types and validation metadata functions. Produce the HttpErrorFilter interface declared above for registration in Phase 1C.
 
-- [ ] **Write failing filter unit tests** using a fake HttpAdapterHost/ArgumentsHost and captured Nest Logger calls. Assert exact four outer keys, null data, false success, code/details and actual status for the cases below:
+- [x] **Write failing filter unit tests** using a fake HttpAdapterHost/ArgumentsHost and captured Nest Logger calls. Assert exact four outer keys, null data, false success, code/details and actual status for the cases below:
 
   | Case | Required assertion |
   | --- | --- |
@@ -132,11 +132,13 @@ The last two functions form the internal bridge consumed by Phase 2. Use one pri
   | Already-sent headers | No new status/header/body write or reply; end through adapter |
   | 5xx diagnostic event | Only fixed event/category, allowlisted method, status and public code; secret sentinel absent |
 
-- [ ] **Run RED:** `pnpm exec vitest run src/common/http/http-error.filter.spec.ts`. Record the actual missing-filter failure.
-- [ ] **Implement classification and formatting.** Follow the spec catalog and status/code pairings. VALIDATION_ERROR requires owned metadata and actual status 400. Check headers-sent before response mutation; otherwise explicitly set application/json through the adapter before reply. Never spread exception/getResponse() objects into output.
-- [ ] **Implement safe diagnostics with Nest Logger.** For 5xx, emit only event `http_request_failed`, category `UNEXPECTED_EXCEPTION`, `HTTP_SERVER_ERROR` or `ADAPTER_ERROR`, approved method, status and public code. Allow GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS; otherwise OTHER. No arbitrary constructor names, raw errors, causes, stack traces or request content.
-- [ ] **Run GREEN:** `pnpm exec vitest run src/common/http/api-response.spec.ts src/common/http/http-error.filter.spec.ts`, then `pnpm check` and `git diff --check`. Inspect the diff and captured diagnostics.
-- [ ] **Explain and commit gate:** show one mapped error example, how status/code/message differ, what is hidden, and actual checks. State explicitly that global activation is still pending. Wait for confirmation before committing. Suggested message: `feat: add safe HTTP error filter`.
+- [x] **Run RED:** `pnpm exec vitest run src/common/http/http-error.filter.spec.ts`. Record the actual missing-filter failure.
+- [x] **Implement classification and formatting.** Follow the spec catalog and status/code pairings. VALIDATION_ERROR requires owned metadata and actual status 400. Check headers-sent before response mutation; otherwise explicitly set application/json through the adapter before reply. Never spread exception/getResponse() objects into output.
+- [x] **Implement safe diagnostics with Nest Logger.** For 5xx, emit only event `http_request_failed`, category `UNEXPECTED_EXCEPTION`, `HTTP_SERVER_ERROR` or `ADAPTER_ERROR`, approved method, status and public code. Allow GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS; otherwise OTHER. No arbitrary constructor names, raw errors, causes, stack traces or request content.
+- [x] **Run GREEN:** `pnpm exec vitest run src/common/http/api-response.spec.ts src/common/http/http-error.filter.spec.ts`, then `pnpm check` and `git diff --check`. Inspect the diff and captured diagnostics.
+- [x] **Explain and commit gate:** show one mapped error example, how status/code/message differ, what is hidden, and actual checks. State explicitly that global activation is still pending. The user reviewed the results and authorized this commit on 2026-10-16. Commit message: `feat: add safe HTTP error filter`.
+
+**Verification result (2026-10-16):** RED failed on the missing http-error.filter.js module. GREEN passed 55 filter cases and all 15 Phase 1A cases (70 focused tests). `pnpm check` passed lint, TypeScript, 11 Node tests and 82 Vitest tests. `pnpm build`, changed-file Prettier and diff whitespace checks passed. Author review checked the status/code catalog, owned metadata, adapter signature, diagnostic allowlist and sent-header behavior against the spec. AppModule and Phase 1A code remain unchanged; no HTTP/DB/startup tests or commit occurred in this delivery. Global registration and real HTTP verification remain Phase 1C work. The user approved the Phase 1B commit after reviewing these results; Phase 1C explanation only is requested next.
 
 ### Phase 1C: Global Registration and HTTP Integration
 

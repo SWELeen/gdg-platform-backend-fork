@@ -187,4 +187,6 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Source: [Approved design](superpowers/specs/2026-10-16-api-error-handling-design.md); [implementation plan](superpowers/plans/2026-10-16-api-error-handling.md). This decision supersedes the earlier unapproved Problem Details proposal for this task.
 - After reviewing the split plan, the user authorized Phase 1A only: envelope types, success helper, owned validation metadata, tests and documentation, with results before commit. Global error-filter implementation/activation and shared validation remain pending. Commits, push, PR and deployment require separate authorization. No schema, migration, seed, frontend or authentication change is approved here.
 
-- After reviewing Phase 1A results, the user explicitly authorized its commit on 2026-10-16 and requested an explanation of Phase 1B before implementation. Phase 1B execution, push, PR and deployment remain unauthorized.
+- After reviewing Phase 1A results, the user explicitly authorized its commit on 2026-10-16 and requested an explanation of Phase 1B before implementation. The user subsequently authorized Phase 1B implementation and tests with results before commit. Phase 1C activation, further commits, push, PR and deployment require separate authorization.
+
+- After reviewing Phase 1B results, the user authorized its commit on 2026-10-16 and requested the Phase 1C explanation before implementation. No Phase 1C runtime work, push, PR or deployment is authorized by that request.

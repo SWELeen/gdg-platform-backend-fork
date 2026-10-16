@@ -1,6 +1,6 @@
 # API Error Handling and Response Contract — Design Proposal
 
-**Status:** Response Envelope contract approved by the user on 2026-10-16. The user reviewed the English plan and authorized Phase 1A only. Its shared types/helpers are implemented and verified; the user authorized their commit after reviewing the results. The global filter, registration and validation pipe remain unimplemented.
+**Status:** Response Envelope contract approved by the user on 2026-10-16. Phase 1A is committed as ee71e3a. The user then authorized Phase 1B implementation/tests with results before commit. Its filter is implemented and unit-tested, but is not registered in AppModule. The user approved the Phase 1B commit after reviewing its results. Global registration (1C) and the validation pipe (Phase 2) remain pending.
 **Owner scope:** Person 1: shared error handling and response conventions.
 **Baseline:** Backend `9246fde`; frontend `a00d03e`; inspected authentication branch snapshot `f107092`.
 **Working branch:** `feat/api-error-handling`, created from `9246fde`. It currently includes the database work in open PR #4; settle that dependency before preparing a separate implementation PR.

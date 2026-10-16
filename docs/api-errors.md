@@ -4,7 +4,7 @@
 
 Phase 1A implements the envelope types, success helper and internal validation-error metadata helpers in `src/common/http/api-response.ts`.
 
-The global error filter (Phase 1B), its AppModule registration (Phase 1C) and shared DTO validation pipe (Phase 2) are pending. The failure examples below describe the approved contract; current application-wide errors still use Nest's default format. No endpoint has been converted in Phase 1A. `GET /` still returns the existing `Hello World!` text.
+Phase 1B implements and unit-tests `HttpErrorFilter` in `src/common/http/http-error.filter.ts`. It is not registered in AppModule yet; global activation (Phase 1C) and the shared DTO validation pipe (Phase 2) are pending. The failure examples below describe the filter's output, not currently active application-wide behavior. Application-wide errors still use Nest's default format. No endpoint has been converted. `GET /` still returns the existing `Hello World!` text.
 
 See the [approved design](superpowers/specs/2026-10-16-api-error-handling-design.md) and [implementation plan](superpowers/plans/2026-10-16-api-error-handling.md).
 
@@ -75,7 +75,46 @@ Example DTO validation failure with actual HTTP status 400, once Phase 2 is enab
 
 `pointer` addresses the affected field; nested array examples include `/answers/0/value`. Public messages must not include submitted values, tokens, SQL, stack traces or raw exception contents. Validator messages must not interpolate `$value`.
 
-The internal `apiValidationError(details)` factory creates a native 400 `BadRequestException` with `errorCode: VALIDATION_ERROR`. `apiValidationDetails(exception)` retrieves only details marked by that factory; arbitrary response objects with matching code/details fields are not trusted. Details are stored as non-enumerable private metadata, outside the native exception response body. These helpers prepare the filter/pipe boundary; they do not activate validation or format HTTP errors by themselves.
+The internal `apiValidationError(details)` factory creates a native 400 `BadRequestException` with `errorCode: VALIDATION_ERROR`. `apiValidationDetails(exception)` retrieves only details marked by that factory; arbitrary response objects with matching code/details fields are not trusted. Details are stored as non-enumerable private metadata, outside the native exception response body. The filter accepts them only with status 400 and code VALIDATION_ERROR. These helpers prepare the filter/pipe boundary; they do not activate validation by themselves.
+
+## Error catalog
+
+| HTTP status | Code | Public message |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | The request is invalid. |
+| 400 | `VALIDATION_ERROR` | Some fields are invalid. |
+| 401 | `UNAUTHORIZED` | Authentication is required. |
+| 403 | `FORBIDDEN` | You do not have permission to perform this action. |
+| 404 | `NOT_FOUND` | The requested resource was not found. |
+| 409 | `CONFLICT` | The request conflicts with the current state. |
+| 500 | `INTERNAL_ERROR` | An unexpected error occurred. |
+| Other known 4xx/5xx | `HTTP_ERROR` | The request could not be completed. |
+
+Generic malformed requests use BAD_REQUEST. Field validation uses VALIDATION_ERROR only through the owned factory; the shared DTO pipe that will call it remains pending. Matching HTTP statuses can therefore share a general category while codes distinguish the reason.
+
+The filter accepts native Nest `HttpException` statuses only when they are integers from 400 through 599. The status determines the fixed catalog entry; unknown or mismatched supplied codes cannot override that entry. VALIDATION_ERROR additionally requires the owned metadata described above. Known statuses outside the core catalog retain their HTTP status, including 413, 429 and 503.
+
+Adapter errors must be Error instances with an integer statusCode from 400 through 599, an equal status and a boolean expose property. Even expose=true does not make raw text public. Objects carrying only statusCode/message are not trusted. Unknown thrown values and invalid/nonfailure exception statuses become safe 500 INTERNAL_ERROR responses. The filter does not infer domain errors from Prisma messages or codes.
+
+## Response safety and diagnostics
+
+The filter constructs a fresh four-key response; it never copies the exception's response body, raw message, cause or extra properties. It sets application/json on writable failures and preserves unrelated headers, including WWW-Authenticate and Retry-After. Fixture tests do not define authentication or retry policy. If headers were already sent, it ends through the adapter without setting status, replacing headers or sending another body.
+
+For 5xx failures, Nest Logger receives only these fields:
+
+```json
+{
+  "event": "http_request_failed",
+  "category": "UNEXPECTED_EXCEPTION",
+  "method": "GET",
+  "status": 500,
+  "code": "INTERNAL_ERROR"
+}
+```
+
+Categories are UNEXPECTED_EXCEPTION, HTTP_SERVER_ERROR (a valid native HTTP exception) or ADAPTER_ERROR (a recognized adapter error). Methods are limited to GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS; anything else becomes OTHER. Client errors are not logged by this filter. Diagnostics omit request URLs, headers, bodies, submitted values, constructor names, raw exception messages, causes and stack traces. Correlation and richer diagnostics belong to a later reviewed observability change.
+
+The filter formats errors; authentication, authorization, domain decisions and bootstrap/database failures remain with their existing owners. New public business codes require an approved catalog entry. Global registration and real HTTP integration checks belong to Phase 1C.
 
 ## Phase 1A verification
 
@@ -86,3 +125,14 @@ git diff --check
 ```
 
 The focused tests cover the exact success shape, default/custom messages, null/undefined normalization, falsy values, validation status/code and rejection of unowned metadata. These checks do not require PostgreSQL.
+
+## Phase 1B verification
+
+```sh
+pnpm exec vitest run src/common/http/api-response.spec.ts src/common/http/http-error.filter.spec.ts
+pnpm check
+pnpm build
+git diff --check
+```
+
+The filter tests use an adapter/context double to inspect actual output status, body, headers and diagnostics. They cover the catalog, owned/unowned validation, invalid statuses, strict adapter classification, safe 500 fallbacks, preservation of headers, already-sent responses and bounded diagnostics. They require no PostgreSQL or new HTTP endpoints. AppModule remains unchanged in this phase.
