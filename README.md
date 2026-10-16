@@ -36,7 +36,7 @@ NestJS, Prisma/PostgreSQL, Docker startup, sixteen domain tables and versioned m
 
 Backend developers: start with the short [setup guide](SETUP.md), covering Docker, `gdg install`, local environment variables, and pgAdmin.
 
-The normal workflow is **setup → `gdg backend run` → verify migrations → optionally seed → inspect in pgAdmin → develop → `gdg backend stop`**. Docker startup installs the tables plus 3 roles, 32 skills and 30 permission definitions. Permission definitions grant no access; no global role-permission links are installed. It also creates DATA/PR reference committees and eight committee permission rules; API enforcement remains separate. To add eight demo members (the original five plus three fictional DATA examples) and their committee, role and skill links, run this separately from the backend folder after startup:
+The normal workflow is **setup → `gdg backend run` → verify migrations → optionally seed → inspect in pgAdmin → develop → `gdg backend stop`**. Docker startup installs the tables plus 3 roles, 32 skills and 30 permission definitions. Permission definitions alone grant no access. Migrations install exactly two global policy links: GROUP_LEADER and GROUP_CO_LEADER each receive members.manage; ADVISOR receives none. It also creates DATA/PR reference committees and eight committee permission rules; API enforcement remains separate. To add eight demo members (the original five plus three fictional DATA examples) and their committee, role and skill links, run this separately from the backend folder after startup:
 
 ```bash
 docker compose exec -T backend pnpm seed:dev

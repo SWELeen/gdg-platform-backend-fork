@@ -8,6 +8,10 @@ Do not store password hashes in the local users table. The proposed schema links
 
 The proposal identifies these user roles: Member, Volunteer, Organizer, Employee/Staff, Admin, and later proposes Alumni. It gives examples of capabilities for Member, Volunteer, Organizer, and Admin.
 
+## Current local role policy
+
+The current schema and later approved decisions use GROUP_LEADER, GROUP_CO_LEADER and ADVISOR in role; committee positions are Leader, Co-Leader and Member in member_committee. The original proposal's role names above describe historical intent, not current stored codes. GROUP_LEADER and GROUP_CO_LEADER each have only members.manage as their initial role_permission link; ADVISOR has none. This permits management of members, committees and non-leader committee positions, not leadership appointments. is_privileged is not a permission bypass. DATA event creation/ownership and PR registration rules remain separate; these policy rows do not implement NestJS enforcement. See [Database and Prisma](database-prisma.md#approved-club-role-permissions).
+
 ## What is confirmed
 
 - A user’s role affects the pages and actions available to them.
@@ -32,8 +36,8 @@ The proposal identifies these user roles: Member, Volunteer, Organizer, Employee
 
 The following must be confirmed before coding the full auth system:
 
-- exact role set and whether Employee/Staff and Alumni are active in the first release;
-- permission matrix by role and resource;
+- any future role additions beyond the approved local registry;
+- additional permissions beyond the approved initial club and committee mappings;
 - account provisioning, deactivation, alumni transition, and role-change workflow;
 - Google OAuth restrictions, consent-screen settings, callback routes, and allowed email domains;
 - token transport/storage, expiry, refresh, logout, revocation, and session policy;

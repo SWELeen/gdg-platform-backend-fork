@@ -2,7 +2,7 @@
 
 Run NestJS, PostgreSQL, and pgAdmin on your computer. Each developer has a separate local database and data.
 
-> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles, 32 skills and 30 permission definitions. It also installs DATA/PR reference committees and eight committee permission rules. Global role_permission remains empty; API authorization is separate. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want eight demo members, including three fictional DATA positions and their relationships. This data stays in your local database; it is not shared through Supabase.
+> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles, 32 skills and 30 permission definitions. It also installs DATA/PR reference committees and eight committee permission rules. It installs two global role_permission links: GROUP_LEADER and GROUP_CO_LEADER each receive members.manage; ADVISOR receives none. API authorization is separate. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want eight demo members, including three fictional DATA positions and their relationships. This data stays in your local database; it is not shared through Supabase.
 
 ## 1. Install the tools
 
@@ -116,8 +116,10 @@ On a fresh migrated database, the result is:
 | `member_skill` | 15 | Three selections per original demo member; DATA examples have none |
 | `role` / `skill` | 3 / 32 | Existing migration reference values, reused by the seed |
 | `permission` | 30 | Migration reference definitions, unchanged by the seed |
-| `role_permission` | 0 | No permissions granted to global roles |
+| `role_permission` | 2 | Both club leadership roles have `members.manage`; ADVISOR has none |
 | `committee_permission` | 8 | DATA leadership and PR rules installed by migrations; seed leaves them unchanged |
+
+Leen's GROUP_LEADER assignment matches members.manage through role_permission. Committee leadership alone does not give a global role. These are policy rows, not working API authorization.
 
 Existing unrelated data is kept, so totals can be larger on a database you already use. `permission`, `role_permission`, `committee_permission` and event tables are unchanged by the optional seed.
 

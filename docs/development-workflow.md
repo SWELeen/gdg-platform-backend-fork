@@ -34,7 +34,7 @@ Follow [Backend Local Setup](../SETUP.md) once, including the local `.env` and p
 5. Develop with the source watcher, inspect local tables in pgAdmin, and run the checks relevant to your change. `gdg backend test` runs checks/application e2e inside the running container.
 6. Run `gdg backend stop` when finished. Data remains available next time.
 
-Migrations provide the structure and approved role/skill reference values for everyone. The optional seed provides local demo people; it never runs on startup and creates no Auth identities or permission grants. Restarting keeps existing demo rows without rerunning the seed. Each developer's database is independent; sharing code does not synchronize its rows.
+Migrations provide the structure, approved reference values, eight committee rules and two club role links (members.manage for GROUP_LEADER and GROUP_CO_LEADER; none for ADVISOR). The optional seed provides local demo people; it never runs on startup, creates no Auth identities and does not modify role_permission or committee_permission. Its Leen GROUP_LEADER assignment matches members.manage in the policy data; API enforcement remains separate. Restarting keeps existing demo rows without rerunning the seed. Each developer's database is independent; sharing code does not synchronize its rows.
 
 Teammates apply committed migrations through startup. Only schema authors create new migrations, following [Database and Prisma](database-prisma.md#schema-authors-only). For a host process instead of the Docker backend, use the [host development instructions](database-prisma.md#optional-host-development).
 

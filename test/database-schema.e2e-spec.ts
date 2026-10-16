@@ -50,6 +50,14 @@ const approvedCommitteePolicy = JSON.parse(
   ),
 );
 
+const approvedRolePermissions: { role_code: string; code: string }[] =
+  JSON.parse(
+    readFileSync(
+      new URL('./fixtures/approved-role-permissions.json', import.meta.url),
+      'utf8',
+    ),
+  );
+
 // Normal app e2e runs do not connect to a schema target unless explicitly supplied.
 describe.skipIf(!process.env.TEST_DATABASE_URL)(
   'PostgreSQL schema integrity',
@@ -238,11 +246,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       }, 'role_permission_role_code_fkey');
     });
 
-    it('starts with an empty two-column role-permission table and composite primary key', async () => {
-      const [count] = await db.$queryRaw<
-        { count: bigint }[]
-      >`SELECT count(*) FROM role_permission`;
-      expect(count.count).toBe(0n);
+    it('installs exactly the two approved role links with the existing composite primary key', async () => {
+      const rows = await db.$queryRaw`
+        SELECT role_code, code FROM role_permission ORDER BY role_code, code`;
+      expect(rows).toEqual(approvedRolePermissions);
       const columns = await db.$queryRaw<
         { column_name: string; is_nullable: string }[]
       >`
@@ -254,6 +261,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       const [key] = await db.$queryRaw<{ definition: string }[]>`
         SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid = 'role_permission'::regclass AND contype = 'p'`;
       expect(key.definition).toBe('PRIMARY KEY (role_code, code)');
+    });
+
+    it('resolves only members.manage for club leaders and leaves ADVISOR without permissions', async () => {
+      const roles = await db.role.findMany({
+        orderBy: { roleCode: 'asc' },
+        select: {
+          roleCode: true,
+          permissions: {
+            orderBy: { code: 'asc' },
+            select: { code: true, permission: { select: { scope: true } } },
+          },
+        },
+      });
+      expect(roles).toEqual([
+        { roleCode: 'ADVISOR', permissions: [] },
+        ...['GROUP_CO_LEADER', 'GROUP_LEADER'].map((roleCode) => ({
+          roleCode,
+          permissions: [
+            { code: 'members.manage', permission: { scope: 'global' } },
+          ],
+        })),
+      ]);
+      expect(await db.memberRole.count()).toBe(0);
     });
 
     it('supports many roles and permissions with composite-key lookup and unlinking', async () => {
@@ -298,7 +328,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         await tx.rolePermission.delete({
           where: { roleCode_code: { roleCode: 'ADVISOR', code: 'test.first' } },
         });
-        expect(await tx.rolePermission.count()).toBe(2);
+        expect(
+          await tx.rolePermission.count({
+            where: { code: { startsWith: 'test.' } },
+          }),
+        ).toBe(2);
         expect(
           await tx.role.findUnique({ where: { roleCode: 'ADVISOR' } }),
         ).not.toBeNull();
@@ -350,7 +384,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         FROM committee_permission cp LEFT JOIN committee c ON c.committee_id=cp.committee_id
         ORDER BY c.committee_code, cp.committee_role, cp.code`;
       expect(rows).toEqual(approvedCommitteePolicy.permissions);
-      expect(await db.rolePermission.count()).toBe(0);
+      expect(await db.rolePermission.count()).toBe(2);
       expect(await db.memberRole.count()).toBe(0);
     });
 
@@ -609,12 +643,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       });
     });
 
-    it('contains exactly the 30 approved permission definitions without role grants', async () => {
+    it('preserves exactly the 30 approved permission definitions', async () => {
       const rows = await db.$queryRaw`
         SELECT code, description, scope, grant_permission, is_sensitive
         FROM permission ORDER BY code`;
       expect(rows).toEqual(approvedPermissions);
-      expect(await db.rolePermission.count()).toBe(0);
+      expect(await db.rolePermission.count()).toBe(2);
     });
 
     it('resolves approved grant references through Prisma without role assignments', async () => {

@@ -6,7 +6,7 @@ For first-time setup, follow [Backend Local Setup](../SETUP.md). Docker provides
 
 The repository currently defines sixteen project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
 
-Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, global member-role assignments or sample events; the registry migrations insert the three approved role definitions, 32 approved skill definitions and 30 approved permission definitions. The committee migration also installs DATA/PR references and eight committee policy rules without adding people. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
+Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, global member-role assignments or sample events; the registry migrations insert the three approved role definitions, 32 approved skill definitions and 30 approved permission definitions. The committee migration also installs DATA/PR references and eight committee policy rules without adding people. The club-role migration installs members.manage for GROUP_LEADER and GROUP_CO_LEADER; ADVISOR has no initial links. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
 
 ## Fresh people/membership setup
 
@@ -64,7 +64,7 @@ These columns describe permissions; they do not enforce API access, validate a u
 
 This is a versioned reference-data migration, applied by normal migration startup, not the optional people seed. Its explicit transaction inserts all definitions or none. Any existing approved code, including an identical definition, fails with permission_pkey; existing metadata is never overwritten or silently accepted. Keep the database and records intact and inspect the collision with the schema owner before a reviewed recovery. Unrelated permission definitions, existing role_permission links and all other records are preserved. A repeat migrate deploy after success is a no-op; do not rerun migration SQL manually.
 
-The migration creates no role_permission or member_role assignments. On fresh setup role_permission remains empty. Scope, sensitivity and grant_permission describe future access rules; they do not implement authentication, temporary grants, committee/event checks or delegation. The 21 production role links are not imported. Supabase was used as a read-only reference; remote deployment and any role distribution require separate approval. There is no automatic down migration deleting reference records.
+The migration creates no role_permission or member_role assignments. That migration leaves role_permission unchanged; the later approved club-role migration below installs two links on fresh setup. Scope, sensitivity and grant_permission describe future access rules; they do not implement authentication, temporary grants, committee/event checks or delegation. The 21 production role links are not imported. Supabase was used as a read-only reference; remote deployment and further role distribution require separate approval. There is no automatic down migration deleting reference records.
 
 The disposable runner checks exact fresh metadata and Prisma grant relations, upgrade preservation with existing unrelated permissions/role links, atomic rejection of identical/conflicting codes and latest-migration rollback/recovery. `pnpm test:seed:local` also verifies that the optional people seed preserves these definitions and creates no permission links. Tests never target the configured application database.
 
@@ -74,7 +74,17 @@ The disposable runner checks exact fresh metadata and Prisma grant relations, up
 
 The migration locks the old role_permissions table and rejects any existing link with role_permission_requires_empty_link_table before renaming or dropping its surrogate ID. No link rows are copied, inferred or seeded. Other records, including existing permissions, role assignments, members and skill definitions, are preserved. Preserve a rejected database for review; do not delete records or bypass the guard.
 
-Prisma composite-key operations use roleCode_code. Unlinking a pair removes only the junction row; referenced roles and permissions cannot be deleted while links exist. This table describes assignments and does not implement API authorization or approve a permission distribution. Verification uses disposable PostgreSQL; there is no production deployment or automatic down migration.
+Prisma composite-key operations use roleCode_code. Unlinking a pair removes only the junction row; referenced roles and permissions cannot be deleted while links exist. This table describes assignments and does not implement API authorization. The separately approved initial distribution is documented below. Verification uses disposable PostgreSQL; there is no production deployment or automatic down migration.
+
+## Approved club-role permissions
+
+`20261016233000_club_role_permissions` adds exactly two rows to role_permission: GROUP_LEADER -> members.manage and GROUP_CO_LEADER -> members.manage. ADVISOR receives no initial permissions. `test/fixtures/approved-role-permissions.json` records this separately approved local policy; the broader production mapping is not imported.
+
+The explicit transaction inserts both pairs or none. Existing-pair collisions fail with role_permission_pkey, including an identical pair; missing role/permission references fail their foreign key. Do not delete existing links or manually rerun SQL to bypass a failure: preserve the database and review its policy before recovery. Unrelated links, existing member roles, committee rules, reference definitions and all other records remain unchanged. Normal migrate deploy applies it once; later deploys are a no-op. No schema/model changes, earlier migration edits, automatic down migration, member assignments or demo people are introduced.
+
+members.manage describes management of members, committees and non-leader committee positions. It does not authorize appointment of committee leadership. These rows add no event creation/editing, PR review, temporary-grant or account-suspension permissions. DATA leadership and event creator ownership, and PR registration rules, remain separate. is_privileged is metadata, not an automatic grant. NestJS must still implement authentication, active/date-valid membership checks and authorization with the authentication owner; this migration changes no API behavior.
+
+The optional seed preserves these links. Its existing Leen GROUP_LEADER assignment matches members.manage through person -> member -> member_role -> role_permission; other demo members gain no global policy from their committee positions. No additional assignments or login accounts are created. Disposable tests check the exact fresh pairs, empty ADVISOR permissions, Prisma navigation, upgrade preservation, duplicate/missing-reference rollback, repeat deploy and optional demo joins. Configured application databases and Supabase are untouched.
 
 ## Committee permission rules
 
@@ -118,7 +128,7 @@ Expect these sixteen project tables, plus `_prisma_migrations`:
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
 
-Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Permission contains the 30 approved definitions described above. Committee contains DATA and PR references; committee_permission contains eight approved rules. Other project tables, including role_permission and all memberships, are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
+Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Permission contains the 30 approved definitions described above. Committee contains DATA and PR references; committee_permission contains eight approved rules. Role_permission contains the two approved members.manage links for GROUP_LEADER and GROUP_CO_LEADER; ADVISOR has none. Other project tables, including all memberships, are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
 
 ## Optional development seed
 
