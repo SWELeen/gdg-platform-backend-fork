@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpException,
   type INestApplication,
   Logger,
@@ -50,7 +51,24 @@ class ValidationInputDto {
 
 @Controller('__test/http')
 class HttpBoundaryFixtures {
+  @Get('success')
+  success() {
+    return apiSuccess({ id: 1 }, 'Completed.');
+  }
+
+  @Get('absent/:kind')
+  absent(@Param('kind') kind: string) {
+    return apiSuccess(kind === 'null' ? null : undefined);
+  }
+
+  @Get('no-content')
+  @HttpCode(204)
+  noContent() {
+    return apiSuccess(null);
+  }
+
   @Post('validate')
+  @HttpCode(201)
   validate(@Body() body: ValidationInputDto) {
     return apiSuccess(body);
   }
@@ -287,6 +305,100 @@ describe('HTTP error boundary', () => {
     expect(response.text).toBe('Hello World!');
     expect(logs).toEqual([]);
   });
+
+  it('returns an explicit JSON success envelope with a public message', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/__test/http/success')
+      .expect(200)
+      .expect('Content-Type', /^application\/json/);
+
+    expect(response.body).toEqual({
+      success: true,
+      message: 'Completed.',
+      data: { id: 1 },
+      error: null,
+    });
+    expect(logs).toEqual([]);
+  });
+
+  it.each(['null', 'undefined'])(
+    'normalizes a successful %s result inside the JSON envelope',
+    async (kind) => {
+      const response = await request(app.getHttpServer())
+        .get(`/__test/http/absent/${kind}`)
+        .expect(200)
+        .expect('Content-Type', /^application\/json/);
+
+      expect(response.body).toEqual({
+        success: true,
+        message: 'OK',
+        data: null,
+        error: null,
+      });
+      expect(logs).toEqual([]);
+    },
+  );
+
+  it('preserves a bodyless 204 even when the handler returns an envelope', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/__test/http/no-content')
+      .expect(204);
+
+    expect(response.text).toBe('');
+    expect(response.body).toEqual({});
+    expect(response.headers['content-type']).toBeUndefined();
+    expect(logs).toEqual([]);
+  });
+
+  it.each([
+    { path: '/', status: 200, contentType: /^text\// },
+    {
+      path: '/__test/http/success',
+      status: 200,
+      contentType: /^application\/json/,
+    },
+    {
+      path: '/__test/http/headers',
+      status: 401,
+      contentType: /^application\/json/,
+    },
+    {
+      path: '/__test/http/unexpected',
+      status: 500,
+      contentType: /^application\/json/,
+    },
+  ])(
+    'preserves bodyless HEAD $status for $path',
+    async ({ path, status, contentType }) => {
+      const response = await request(app.getHttpServer())
+        .head(path)
+        .expect(status)
+        .expect('Content-Type', contentType);
+
+      expect(response.text).toBeUndefined();
+      expect(response.body).toEqual({});
+      if (status === 401) {
+        expect(response.headers['www-authenticate']).toBe('Bearer');
+        expect(response.headers['retry-after']).toBe('60');
+        expect(response.headers['x-existing']).toBe('keep');
+      }
+      expect(logs).toEqual(
+        status === 500
+          ? [
+              [
+                {
+                  event: 'http_request_failed',
+                  category: 'UNEXPECTED_EXCEPTION',
+                  method: 'HEAD',
+                  status: 500,
+                  code: 'INTERNAL_ERROR',
+                },
+              ],
+            ]
+          : [],
+      );
+    },
+  );
 
   it('accepts a valid DTO through the actual AppModule pipe registration', async () => {
     const body = {

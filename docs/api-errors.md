@@ -189,7 +189,7 @@ git diff --check
 
 The HTTP suite exercises actual AppModule registration and the Express adapter. It does not install a test-only filter. PrismaService is replaced with a harmless value before compilation; ConfigService also points to an unreachable loopback target as a safety fallback. No application or temporary database is needed for this suite.
 
-Checks cover core 400/401/403/404/409/500 statuses, preserved 413/429/503 statuses, a real unknown-route 404, unowned validation/code mismatch, safe unexpected 500 diagnostics, challenge/retry header preservation, replacement of stale content types, and unchanged successful root text. Fixture routes are not business endpoints or authentication implementations. Validation HTTP coverage is added in Phase 2C; additional bodyless/success compatibility tests and disposable Docker startup verification remain Phase 3 work.
+Checks cover core 400/401/403/404/409/500 statuses, preserved 413/429/503 statuses, a real unknown-route 404, unowned validation/code mismatch, safe unexpected 500 diagnostics, challenge/retry header preservation, replacement of stale content types, and unchanged successful root text. Fixture routes are not business endpoints or authentication implementations. Validation HTTP coverage was added in Phase 2C; Phase 3 adds the bodyless/success compatibility assertions and disposable Docker startup verification described below.
 
 ## Phase 2A verification
 
@@ -221,3 +221,21 @@ git diff --check
 ```
 
 The HTTP fixture now includes a decorated DTO POST handler and nested answer DTOs. Tests import actual AppModule globals, preserve the existing PrismaService/ConfigService overrides and never manually install a pipe. They verify valid 201 success, required/format/extra-field failures, nested/missing values, stable multiple-error ordering, submitted-value secrecy, safe array-root rejection, malformed/strict-root JSON, invalid URI encoding and actual oversized-body 413 responses. Existing HTTP error/root tests remain unchanged. Production builds exclude all fixture controllers and DTOs; no business endpoint or database changes are introduced.
+
+## Contributor workflow and compatibility
+
+1. For a new JSON operation, define its public response DTO and explicitly return `apiSuccess(result)` (or a safe custom message). Keep the operation's real HTTP status; an envelope does not turn a creation into 200 or a failure into success.
+2. Define request rules on decorated DTO classes. Nested DTOs require the appropriate validation and transformation metadata. Write fixed public validator messages: do not interpolate submitted values or return database/exception text. The converter copies constraint messages; it does not sanitize them.
+3. Throw the appropriate native HTTP exception for a catalogued failure. Generic exception response bodies are intentionally ignored. Add a domain/auth error code only after its catalog entry and consumer behavior are approved; current codes do not implement authentication or permissions.
+4. Document each frontend-facing operation and its DTO/status/error examples in Swagger/OpenAPI when that delivery is introduced. This task adds shared infrastructure and test fixtures, not a Swagger installation or business operation.
+5. Run the [HTTP verification workflow](testing.md#http-envelope-and-validation-checks). Test both the accepted request and the relevant rejection/compatibility cases.
+
+The frontend should branch on the actual HTTP status and stable `error.code`, map that code to an approved UI translation key, then associate `error.details` with fields through their JSON Pointers. Keep a generic fallback for unknown codes and handle empty-body/non-JSON responses before attempting JSON parsing. Public English messages are fallback display text, not translation keys; no frontend adapter is implemented here.
+
+A 200 JSON helper response and a 201 creation keep their statuses. Calling `apiSuccess(null)` or `apiSuccess(undefined)` yields a JSON envelope with `data: null` on a body-bearing response. It does not add a body to HTTP 204 or HEAD. Existing root text/readiness remains `Hello World!`; successful text, files, streams and redirects are outside automatic wrapping because no success interceptor is installed. HEAD failures keep the error status/headers and omit the JSON body. Never rely on an envelope being available on these bodyless responses.
+
+## Phase 3 verification
+
+The HTTP compatibility suite additionally covers an explicit 200 JSON success with a public custom message, null/undefined results, explicit 201, bodyless 204 and successful/failing HEAD requests (including retained challenge/retry headers and safe HEAD diagnostics). Existing root, parser, validation and sent-header safeguards remain covered. All fixture controllers/DTOs remain in test files excluded from production builds.
+
+Use the commands in [Backend Testing](testing.md#http-envelope-and-validation-checks). The separate `pnpm test:startup:local` runner creates its own PostgreSQL/container resources, migrates before HTTP readiness, preserves restart data and verifies failure on an incompatible schema. It must not be replaced by application e2e against a configured user database. Verification results are recorded in the [implementation plan](superpowers/plans/2026-10-16-api-error-handling.md#phase-3-compatibility-documentation-and-final-verification).

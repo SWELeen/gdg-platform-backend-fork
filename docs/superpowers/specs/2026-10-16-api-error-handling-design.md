@@ -1,6 +1,6 @@
 # API Error Handling and Response Contract — Design Proposal
 
-**Status:** Response Envelope contract approved by the user on 2026-10-16. Phases 1A/1B/1C/2A/2B are committed (ee71e3a/ff688e1/63c17a3/f0ab6a8/fef1444). Following the Phase 2C explanation, the user asked to complete the current task. Global DTO validation is now registered and verified through real HTTP requests with database access replaced. The user authorized the Phase 2C commit after reviewing its results. Final compatibility/startup/review handoff (Phase 3) remains pending.
+**Status:** Response Envelope contract approved by the user on 2026-10-16. Phases 1A/1B/1C/2A/2B/2C are committed (ee71e3a/ff688e1/63c17a3/f0ab6a8/fef1444/823e453). Global HTTP error formatting and decorated DTO validation are active and verified. Phase 3 compatibility, contributor documentation, isolated startup verification and independent read-only review are complete locally; the user reviewed the results and authorized its commit on 2026-10-16. No push, feature PR, merge or deployment is authorized. See the [plan's verification record](../plans/2026-10-16-api-error-handling.md#phase-3-compatibility-documentation-and-final-verification).
 **Owner scope:** Person 1: shared error handling and response conventions.
 **Baseline:** Backend `9246fde`; frontend `a00d03e`; inspected authentication branch snapshot `f107092`.
 **Working branch:** `feat/api-error-handling`, created from `9246fde`. It currently includes the database work in open PR #4; settle that dependency before preparing a separate implementation PR.
