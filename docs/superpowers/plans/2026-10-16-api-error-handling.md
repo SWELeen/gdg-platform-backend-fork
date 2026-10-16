@@ -14,7 +14,7 @@
 
 ## Global constraints
 
-- Contract approved; Phase 1A committed as ee71e3a. Phase 1B committed as ff688e1. Phase 1C committed as 63c17a3. Phase 2A committed as f0ab6a8. Phase 2B implemented and verified; the user authorized its commit on 2026-10-16. Phases 2C/3 remain pending; splitting Phase 2 changes the delivery sequence only, not the approved behavior. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
+- Contract approved; Phase 1A committed as ee71e3a. Phase 1B committed as ff688e1. Phase 1C committed as 63c17a3. Phase 2A committed as f0ab6a8. Phase 2B committed as fef1444. Phase 2C implemented and verified; the user authorized its commit on 2026-10-16. Phase 3 remains pending; splitting Phase 2 changes the delivery sequence only, not the approved behavior. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
 - Work on `feat/api-error-handling`, based on `9246fde`. At planning time database PR #4 is open against main at that same head. Recheck its state and the auth branch at execution time; do not merge/rebase just to start this task. Settle the database PR dependency before proposing a separate feature PR.
 - Preserve `docs/user-member-proposal.md`, the frontend's `package-lock.json`, ignored local settings and unrelated changes.
 - Every JSON envelope has exactly `success`, `message`, `data`, `error`. Success uses true/error=null; failure uses false/data=null/error={code,details}. Use application/json and actual HTTP status codes, not HTTP 200 for failures.
@@ -226,7 +226,7 @@ Consume ValidationError from installed class-validator and ApiErrorDetail/apiVal
 
 **Interfaces:** Consume ApiValidationPipe from 2B. Register `{ provide: APP_PIPE, useClass: ApiValidationPipe }` alongside the existing APP_FILTER; preserve current imports/providers and bootstrap settings. Never manually install a pipe in the test harness. Reuse actual AppModule imports and existing pre-compilation PrismaService/ConfigService overrides; no database connection.
 
-- [ ] **Write failing HTTP validation cases** with decorated test-only DTOs, a fixture POST handler returning apiSuccess, and Nest's real body parser:
+- [x] **Write failing HTTP validation cases** with decorated test-only DTOs, a fixture POST handler returning apiSuccess, and Nest's real body parser:
 
   | Case | Required assertion |
   | --- | --- |
@@ -240,12 +240,14 @@ Consume ValidationError from installed class-validator and ApiErrorDetail/apiVal
   | Malformed JSON / invalid URI encoding | 400 BAD_REQUEST with empty details, not VALIDATION_ERROR |
   | Oversized JSON | 413 HTTP_ERROR with empty details; use about 200,000 characters and leave production limits unchanged |
 
-- [ ] **Run RED:** `pnpm exec vitest run test/http-boundary.spec.ts`. Expect validly parsed but invalid DTO input to be accepted before APP_PIPE registration; earlier error/root tests and already-supported parser cases may pass. Record actual failures instead of expecting every new case to fail.
-- [ ] **Register APP_PIPE in AppModule.** Keep field conversions explicit in owning DTOs/pipes. Do not add production endpoints or change authentication/authorization. Update documentation to mark shared validation active while distinguishing approved framework behavior from each endpoint's domain rules.
-- [ ] **Run GREEN:** `pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts test/http-boundary.spec.ts`, then `pnpm check`, `pnpm build`, changed-file Prettier and `git diff --check`. Require zero failures and unchanged Phase 1 cases. Inspect responses/diagnostics for the sentinel and confirm production output excludes fixtures.
-- [ ] **Explain and commit gate:** show an actual HTTP validation result with pointer/message details, report checks and preserved root behavior. Wait for user confirmation before committing. Suggested message: `feat: enable global DTO validation`.
+- [x] **Run RED:** `pnpm exec vitest run test/http-boundary.spec.ts`. Expect validly parsed but invalid DTO input to be accepted before APP_PIPE registration; earlier error/root tests and already-supported parser cases may pass. Record actual failures instead of expecting every new case to fail.
+- [x] **Register APP_PIPE in AppModule.** Keep field conversions explicit in owning DTOs/pipes. Do not add production endpoints or change authentication/authorization. Update documentation to mark shared validation active while distinguishing approved framework behavior from each endpoint's domain rules.
+- [x] **Run GREEN:** `pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts test/http-boundary.spec.ts`, then `pnpm check`, `pnpm build`, changed-file Prettier and `git diff --check`. Require zero failures and unchanged Phase 1 cases. Inspect responses/diagnostics for the sentinel and confirm production output excludes fixtures.
+- [x] **Explain and commit gate:** show an actual HTTP validation result with pointer/message details, report checks and preserved root behavior. The user reviewed the results and authorized this commit on 2026-10-16. Commit message: `feat: enable global DTO validation`.
 
 Each delivery ends with tested working code, a scoped diff and an explanation before its separately confirmed commit. Stop after the requested delivery; do not begin the next one automatically. Docker startup verification remains in Phase 3. This split does not change schema, migrations, seeds, auth or domain requirements.
+
+**Verification result (2026-10-16):** Before registration, 8 invalid-request tests returned 201 instead of 400; 21 existing/happy/parser cases passed. After actual AppModule APP_PIPE registration, all 29 HTTP tests and 23 converter/pipe tests passed (52 focused cases). `pnpm check` passed lint, TypeScript, 11 Node tests and 134 Vitest tests. `pnpm build`, changed-file Prettier and diff checks passed. Author review confirmed actual global registration, test-only decorated DTOs, nested and stable field details, private-value omission, parser/DTO distinction, 413 preservation and unchanged root/error/header behavior. Existing pre-compilation database overrides remain in place. Production output excludes fixtures. No schema/database/startup changes, commit or push occurred; The user authorized this commit after reviewing the results; Phase 3 explanation only is requested next.
 
 ## Phase 3: Compatibility, Documentation and Final Verification
 

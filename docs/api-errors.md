@@ -6,7 +6,7 @@ Phase 1A implements the envelope types, success helper and internal validation-e
 
 Phase 1B implements and unit-tests `HttpErrorFilter` in `src/common/http/http-error.filter.ts`. Phase 1C registers it through APP_FILTER in AppModule, so HTTP failures now use the envelope below. Real HTTP tests import AppModule and replace PrismaService before compilation; they verify global registration without connecting to a database.
 
-Phase 2A implements the field-error converter in `src/common/http/api-validation.pipe.ts`. Phase 2B adds and directly tests the ApiValidationPipe class in the same file. Its APP_PIPE registration (2C) remains pending; application requests are not yet validated through this shared pipe.
+Phase 2A implements the field-error converter in `src/common/http/api-validation.pipe.ts`. Phase 2B adds and directly tests the ApiValidationPipe class in the same file. Phase 2C registers it through APP_PIPE in AppModule; requests with decorated DTO classes now use the shared validation policy and existing HTTP error filter.
 
 Success envelopes are opt-in through apiSuccess; there is no global success interceptor. `GET /` still returns the existing `Hello World!` text. New test routes exist only in `test/http-boundary.spec.ts` and are excluded from production builds.
 
@@ -63,7 +63,7 @@ Example with actual HTTP status 401:
 
 Use `error.code` for client logic and translation keys; do not parse English message text. `error.details` is always an array. Generic errors use `[]`; DTO validation uses public `{ pointer, message }` entries. The future frontend adapter must map codes to its UI translation keys rather than pass backend text into a translation-key prop.
 
-Example DTO validation failure with actual HTTP status 400, once Phase 2 is enabled:
+Example DTO validation failure with actual HTTP status 400:
 
 ```json
 {
@@ -97,9 +97,9 @@ These are JSON Pointer field addresses, not URL paths. Each property segment esc
 
 Details are sorted lexically by the encoded pointer, then by the original constraint key, independently of validator traversal/constraint insertion order. Constraint keys are used only for ordering and are omitted from public output. For example, isDefined precedes isEmail for the same field.
 
-The converter reads only property, constraints and children. It omits target, value and contexts, so submitted values and validation context metadata are not copied into details. Validators must supply public-safe constraint messages; the converter retains those messages. This function prepares details only; the pipe consumes them in Phase 2B and global registration remains Phase 2C.
+The converter reads only property, constraints and children. It omits target, value and contexts, so submitted values and validation context metadata are not copied into details. Validators must supply public-safe constraint messages; the converter retains those messages. The global pipe uses this converter through the owned validation exception factory.
 
-## Shared validation pipe — global registration pending
+## Active shared validation pipe
 
 ApiValidationPipe extends Nest's installed ValidationPipe with a zero-argument constructor and these settings:
 
@@ -112,9 +112,11 @@ ApiValidationPipe extends Nest's installed ValidationPipe with a zero-argument c
 
 Implicit type conversion is not enabled. For example, a numeric string fails an integer-only DTO rule rather than becoming a number automatically. Future DTOs/pipes define any intentional field conversions explicitly.
 
-The exception factory calls apiValidationError(toValidationDetails(errors)). Invalid DTO input therefore rejects with an owned native BadRequestException, status 400 and errorCode VALIDATION_ERROR, carrying the converted field details for the HTTP filter. Direct tests inspect ownership through apiValidationDetails. These tests do not register a global pipe or add production DTOs/routes.
+The exception factory calls apiValidationError(toValidationDetails(errors)). Invalid DTO input therefore rejects with an owned native BadRequestException, status 400 and errorCode VALIDATION_ERROR, carrying the converted field details for the HTTP filter. The global filter emits the four-key error envelope. Direct pipe tests inspect ownership through apiValidationDetails; HTTP tests exercise the actual AppModule registration. Fixtures remain test-only.
 
-Validation requires an actual decorated DTO class at the request boundary; TypeScript field/type declarations alone do not supply runtime validation rules. Native primitive/untyped handler arguments retain Nest's normal validation bypass behavior. Endpoint owners define their own rules and public-safe validator messages. The shared pipe has not been registered in AppModule yet.
+Validation requires an actual decorated DTO class at the request boundary; TypeScript field/type declarations alone do not supply runtime validation rules. Native primitive/untyped handler arguments retain Nest's normal validation bypass behavior. Endpoint owners define their own rules and public-safe validator messages. AppModule registers APP_PIPE with ApiValidationPipe; bootstrap does not install a second pipe.
+
+Malformed JSON, JSON roots rejected by the existing strict parser and invalid URI encoding use 400 BAD_REQUEST with empty details. Parsed DTO failures, including rejected array roots, use 400 VALIDATION_ERROR with field details. JSON bodies over the existing parser limit retain 413 HTTP_ERROR with empty details. Parser limits are unchanged. Valid fixture POST requests retain status 201 and explicitly use apiSuccess; the root text/readiness response remains unchanged.
 
 ## Error catalog
 
@@ -129,7 +131,7 @@ Validation requires an actual decorated DTO class at the request boundary; TypeS
 | 500 | `INTERNAL_ERROR` | An unexpected error occurred. |
 | Other known 4xx/5xx | `HTTP_ERROR` | The request could not be completed. |
 
-Generic malformed requests use BAD_REQUEST. Field validation uses VALIDATION_ERROR only through the owned factory; the shared DTO pipe calls it in direct tests, while global request validation remains pending. Matching HTTP statuses can therefore share a general category while codes distinguish the reason.
+Generic malformed requests use BAD_REQUEST. Field validation uses VALIDATION_ERROR only through the owned factory called by the global DTO pipe. Matching HTTP statuses can therefore share a general category while codes distinguish the reason.
 
 The filter accepts native Nest `HttpException` statuses only when they are integers from 400 through 599. The status determines the fixed catalog entry; unknown or mismatched supplied codes cannot override that entry. VALIDATION_ERROR additionally requires the owned metadata described above. Known statuses outside the core catalog retain their HTTP status, including 413, 429 and 503.
 
@@ -187,7 +189,7 @@ git diff --check
 
 The HTTP suite exercises actual AppModule registration and the Express adapter. It does not install a test-only filter. PrismaService is replaced with a harmless value before compilation; ConfigService also points to an unreachable loopback target as a safety fallback. No application or temporary database is needed for this suite.
 
-Checks cover core 400/401/403/404/409/500 statuses, preserved 413/429/503 statuses, a real unknown-route 404, unowned validation/code mismatch, safe unexpected 500 diagnostics, challenge/retry header preservation, replacement of stale content types, and unchanged successful root text. Fixture routes are not business endpoints or authentication implementations. Validation, additional bodyless/success compatibility tests and disposable Docker startup verification remain assigned to later phases.
+Checks cover core 400/401/403/404/409/500 statuses, preserved 413/429/503 statuses, a real unknown-route 404, unowned validation/code mismatch, safe unexpected 500 diagnostics, challenge/retry header preservation, replacement of stale content types, and unchanged successful root text. Fixture routes are not business endpoints or authentication implementations. Validation HTTP coverage is added in Phase 2C; additional bodyless/success compatibility tests and disposable Docker startup verification remain Phase 3 work.
 
 ## Phase 2A verification
 
@@ -208,3 +210,14 @@ git diff --check
 ```
 
 Direct pipe tests use test-only DTOs to verify valid plain output, missing required fields, invalid email format/type, extra-property rejection, unknown DTO rejection, preservation of primitive parameters and disabled implicit numeric conversion. Rejections retain owned 400 VALIDATION_ERROR details without submitted-value reflection. The Phase 2A converter and existing HTTP error tests remain in the suite. No database or APP_PIPE registration is used in this delivery.
+
+## Phase 2C verification
+
+```sh
+pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts test/http-boundary.spec.ts
+pnpm check
+pnpm build
+git diff --check
+```
+
+The HTTP fixture now includes a decorated DTO POST handler and nested answer DTOs. Tests import actual AppModule globals, preserve the existing PrismaService/ConfigService overrides and never manually install a pipe. They verify valid 201 success, required/format/extra-field failures, nested/missing values, stable multiple-error ordering, submitted-value secrecy, safe array-root rejection, malformed/strict-root JSON, invalid URI encoding and actual oversized-body 413 responses. Existing HTTP error/root tests remain unchanged. Production builds exclude all fixture controllers and DTOs; no business endpoint or database changes are introduced.

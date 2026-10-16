@@ -202,3 +202,7 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - The user subsequently authorized Phase 2B implementation/tests with results before commit: build the shared validation pipe using the reviewed settings and existing owned factory/converter, and verify direct test-only DTO validation. AppModule registration/global validation (2C), commits, push, PR and deployment remain separate steps.
 
 - After reviewing Phase 2B results, the user authorized its commit on 2026-10-16 and requested the Phase 2C explanation before implementation. Phase 2C execution, further commits, push, PR and deployment require separate authorization.
+
+- After the Phase 2C explanation and discussion of frontend/backend validation responsibilities, the user asked to complete the current task. This authorizes Phase 2C implementation/tests: register APP_PIPE with the reviewed ApiValidationPipe, verify decorated test-only DTO requests through the real AppModule without database access, and document the active validation policy. Standing results-before-commit approval remains in force; Phase 3, commit, push, PR and deployment remain separate steps.
+
+- After reviewing Phase 2C results, the user authorized its commit on 2026-10-16 and requested the Phase 3 explanation before implementation. Phase 3 execution, further commits, push, PR and deployment require separate authorization.

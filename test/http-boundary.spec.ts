@@ -1,25 +1,60 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   HttpException,
   type INestApplication,
   Logger,
   Param,
+  Post,
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsDefined,
+  IsEmail,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import type { Response } from 'express';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
+import { apiSuccess } from '../src/common/http/api-response.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 
 const secret = 'never-echo';
 
+class AnswerInputDto {
+  @IsDefined({ message: 'Value is required.' })
+  @IsString({ message: 'Value must be text.' })
+  value: string;
+}
+
+class ValidationInputDto {
+  @IsDefined({ message: 'Email is required.' })
+  @IsEmail({}, { message: 'Email must be valid.' })
+  email: string;
+
+  @IsOptional()
+  @IsArray({ message: 'Answers must be an array.' })
+  @ValidateNested({ each: true, message: 'Each answer must be an object.' })
+  @Type(() => AnswerInputDto)
+  answers?: AnswerInputDto[];
+}
+
 @Controller('__test/http')
 class HttpBoundaryFixtures {
+  @Post('validate')
+  validate(@Body() body: ValidationInputDto) {
+    return apiSuccess(body);
+  }
+
   @Get('status/:status')
   status(@Param('status') status: string): never {
     throw new HttpException(
@@ -250,6 +285,198 @@ describe('HTTP error boundary', () => {
       .expect('Content-Type', /^text\//);
 
     expect(response.text).toBe('Hello World!');
+    expect(logs).toEqual([]);
+  });
+
+  it('accepts a valid DTO through the actual AppModule pipe registration', async () => {
+    const body = {
+      email: 'member@example.com',
+      answers: [{ value: 'Public test answer.' }],
+    };
+    const response = await request(app.getHttpServer())
+      .post('/__test/http/validate')
+      .send(body)
+      .expect(201)
+      .expect('Content-Type', /^application\/json/);
+
+    expect(response.body).toEqual({
+      success: true,
+      message: 'OK',
+      data: body,
+      error: null,
+    });
+    expect(logs).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: 'missing required email',
+      body: {},
+      details: [
+        { pointer: '/email', message: 'Email is required.' },
+        { pointer: '/email', message: 'Email must be valid.' },
+      ],
+    },
+    {
+      name: 'invalid email',
+      body: { email: secret },
+      details: [{ pointer: '/email', message: 'Email must be valid.' }],
+    },
+    {
+      name: 'extra property',
+      body: { email: 'member@example.com', extra: secret },
+      details: [
+        { pointer: '/extra', message: 'property extra should not exist' },
+      ],
+    },
+    {
+      name: 'invalid nested value',
+      body: { email: 'member@example.com', answers: [{ value: 42 }] },
+      details: [
+        { pointer: '/answers/0/value', message: 'Value must be text.' },
+      ],
+    },
+    {
+      name: 'missing nested value',
+      body: { email: 'member@example.com', answers: [{}] },
+      details: [
+        { pointer: '/answers/0/value', message: 'Value is required.' },
+        { pointer: '/answers/0/value', message: 'Value must be text.' },
+      ],
+    },
+    {
+      name: 'wrong answers shape',
+      body: { email: 'member@example.com', answers: secret },
+      details: [
+        { pointer: '/answers', message: 'Answers must be an array.' },
+        { pointer: '/answers', message: 'Each answer must be an object.' },
+      ],
+    },
+  ])(
+    'rejects $name with HTTP validation details',
+    async ({ body, details }) => {
+      const response = await request(app.getHttpServer())
+        .post('/__test/http/validate')
+        .send(body)
+        .expect(400)
+        .expect('Content-Type', /^application\/json/);
+
+      expect(response.body).toEqual({
+        success: false,
+        message: 'Some fields are invalid.',
+        data: null,
+        error: { code: 'VALIDATION_ERROR', details },
+      });
+      expect(response.text).not.toContain(secret);
+      expect(logs).toEqual([]);
+    },
+  );
+
+  it('keeps all field failures in stable order without disclosing submitted values', async () => {
+    const bodies = [
+      { extra: secret, email: secret, answers: [{ value: 42 }, {}] },
+      { answers: [{ value: 42 }, {}], email: secret, extra: secret },
+    ];
+    for (const body of bodies) {
+      const response = await request(app.getHttpServer())
+        .post(`/__test/http/validate?token=${secret}`)
+        .set('Authorization', `Bearer ${secret}`)
+        .send(body)
+        .expect(400)
+        .expect('Content-Type', /^application\/json/);
+
+      expect(response.body).toEqual({
+        success: false,
+        message: 'Some fields are invalid.',
+        data: null,
+        error: {
+          code: 'VALIDATION_ERROR',
+          details: [
+            { pointer: '/answers/0/value', message: 'Value must be text.' },
+            { pointer: '/answers/1/value', message: 'Value is required.' },
+            { pointer: '/answers/1/value', message: 'Value must be text.' },
+            { pointer: '/email', message: 'Email must be valid.' },
+            { pointer: '/extra', message: 'property extra should not exist' },
+          ],
+        },
+      });
+      expect(response.text).not.toContain(secret);
+      expect(logs).toEqual([]);
+    }
+  });
+
+  it('rejects an array at the DTO root safely', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/__test/http/validate')
+      .send([secret])
+      .expect(400)
+      .expect('Content-Type', /^application\/json/);
+
+    expect(response.body).toEqual({
+      success: false,
+      message: 'Some fields are invalid.',
+      data: null,
+      error: { code: 'VALIDATION_ERROR', details: expect.any(Array) },
+    });
+    expect(response.body.error.details.length).toBeGreaterThan(0);
+    expect(response.text).not.toContain(secret);
+    expect(logs).toEqual([]);
+  });
+
+  it.each([
+    { name: 'malformed JSON', body: `{"email":"${secret}"` },
+    { name: 'JSON null root', body: 'null' },
+    { name: 'JSON string root', body: JSON.stringify(secret) },
+  ])(
+    'classifies $name as BAD_REQUEST rather than DTO validation',
+    async ({ body }) => {
+      const response = await request(app.getHttpServer())
+        .post('/__test/http/validate')
+        .set('Content-Type', 'application/json')
+        .send(body)
+        .expect(400)
+        .expect('Content-Type', /^application\/json/);
+
+      expect(response.body).toEqual({
+        success: false,
+        message: 'The request is invalid.',
+        data: null,
+        error: { code: 'BAD_REQUEST', details: [] },
+      });
+      expect(response.text).not.toContain(secret);
+      expect(logs).toEqual([]);
+    },
+  );
+
+  it('classifies invalid URI encoding as BAD_REQUEST', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/__test/http/status/%E0%A4%A')
+      .expect(400)
+      .expect('Content-Type', /^application\/json/);
+
+    expect(response.body).toEqual({
+      success: false,
+      message: 'The request is invalid.',
+      data: null,
+      error: { code: 'BAD_REQUEST', details: [] },
+    });
+    expect(logs).toEqual([]);
+  });
+
+  it('preserves HTTP 413 for JSON exceeding the existing body limit', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/__test/http/validate')
+      .send({ email: secret, padding: 'x'.repeat(200_000) })
+      .expect(413)
+      .expect('Content-Type', /^application\/json/);
+
+    expect(response.body).toEqual({
+      success: false,
+      message: 'The request could not be completed.',
+      data: null,
+      error: { code: 'HTTP_ERROR', details: [] },
+    });
+    expect(response.text).not.toContain(secret);
     expect(logs).toEqual([]);
   });
 });

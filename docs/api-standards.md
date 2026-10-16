@@ -6,7 +6,7 @@ Swagger/OpenAPI is the required, authoritative API contract between this NestJS 
 
 The specification delivery URL, versioning convention, documentation access policy, generated-client strategy, pagination convention, and publication process are **TBD**. They must be decided without weakening the contract-first rule.
 
-HTTP failures use the approved [response envelope and error catalog](api-errors.md), registered globally through AppModule. JSON success endpoints explicitly use apiSuccess; the existing root text remains unchanged. Shared DTO validation is pending; the validation-error shape is approved but its global pipe is not active yet.
+HTTP failures use the approved [response envelope and error catalog](api-errors.md), registered globally through AppModule. JSON success endpoints explicitly use apiSuccess; the existing root text remains unchanged. AppModule also registers shared DTO validation through APP_PIPE. Endpoint owners must supply actual decorated DTO classes and public-safe validator messages; TypeScript-only types do not create runtime validation rules. DTO failures return 400 VALIDATION_ERROR with pointer/message details, while malformed JSON remains BAD_REQUEST and oversized bodies retain HTTP 413.
 
 ## Contract requirements
 
