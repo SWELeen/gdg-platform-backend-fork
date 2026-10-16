@@ -10,11 +10,11 @@
 
 **Spec:** [Approved design](../specs/2026-10-16-api-error-handling-design.md).
 
-**Execution proposal:** Native implementation in this session, one independently tested delivery at a time (1A, 1B, 1C, then Phases 2 and 3), with independent read-only review before handoff. The components share a small interface, so separate implementation agents would add coordination without useful isolation. The user may choose a different execution method when reviewing this plan.
+**Execution proposal:** Native implementation in this session, one independently tested delivery at a time (1A, 1B, 1C, then 2A, 2B, 2C and Phase 3), with independent read-only review before handoff. The components share a small interface, so separate implementation agents would add coordination without useful isolation. The user may choose a different execution method when reviewing this plan.
 
 ## Global constraints
 
-- Contract approved; Phase 1A committed as ee71e3a. Phase 1B committed as ff688e1. Phase 1C implemented and verified; the user authorized its commit on 2026-10-16. Phases 2/3 remain pending. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
+- Contract approved; Phase 1A committed as ee71e3a. Phase 1B committed as ff688e1. Phase 1C committed as 63c17a3. Phase 2A implemented and verified; the user authorized its commit on 2026-10-16. Phases 2B/2C/3 remain pending; splitting Phase 2 changes the delivery sequence only, not the approved behavior. Present phase results before any separately authorized commit. Do not push, merge, update a PR or deploy as part of this plan without new authorization.
 - Work on `feat/api-error-handling`, based on `9246fde`. At planning time database PR #4 is open against main at that same head. Recheck its state and the auth branch at execution time; do not merge/rebase just to start this task. Settle the database PR dependency before proposing a separate feature PR.
 - Preserve `docs/user-member-proposal.md`, the frontend's `package-lock.json`, ignored local settings and unrelated changes.
 - Every JSON envelope has exactly `success`, `message`, `data`, `error`. Success uses true/error=null; failure uses false/data=null/error={code,details}. Use application/json and actual HTTP status codes, not HTTP 200 for failures.
@@ -30,8 +30,8 @@
 | --- | --- |
 | Create `src/common/http/api-response.ts` | Envelope types, success helper and owned validation-exception metadata |
 | Create `src/common/http/http-error.filter.ts` | Safe catalog, classification, HTTP error formatting and diagnostics |
-| Create `src/common/http/api-validation.pipe.ts` | Pipe configuration and nested field-error conversion |
-| Modify `src/app.module.ts` | APP_FILTER in Phase 1; APP_PIPE in Phase 2 |
+| Create `src/common/http/api-validation.pipe.ts` | Field-error conversion in 2A; pipe configuration in 2B |
+| Modify `src/app.module.ts` | APP_FILTER in 1C; APP_PIPE in 2C |
 | Create `src/common/http/api-response.spec.ts` | Helper and validation-metadata ownership tests |
 | Create `src/common/http/http-error.filter.spec.ts` | Filter adapter/fallback/logging edge cases |
 | Create `src/common/http/api-validation.pipe.spec.ts` | Validation conversion and JSON Pointer cases |
@@ -172,38 +172,78 @@ Each delivery ends with passing tests, a scoped diff and a user-visible explanat
 
 ## Phase 2: Shared DTO Validation and Field Details
 
-**Files:** api-validation.pipe.ts/spec.ts, AppModule, extend test/http-boundary.spec.ts and document validation in docs/api-errors.md.
+**Goal:** Validate decorated DTO inputs and return stable field addresses/messages through the existing owned validation factory and error filter. Deliver 2A, 2B and 2C separately, each with passing tests and user confirmation before commit.
 
-**Consumes:** ApiErrorDetail, apiValidationError and apiValidationDetails from Phase 1; do not create competing response types or validation exception classes.
-
-**Interfaces produced:**
+**Final interfaces in `src/common/http/api-validation.pipe.ts`:**
 
 ```ts
 export function toValidationDetails(errors: readonly ValidationError[]): ApiErrorDetail[];
 export class ApiValidationPipe extends ValidationPipe { constructor(); }
 ```
 
-Use ValidationError from the installed class-validator package. Configure whitelist=true, forbidNonWhitelisted=true, forbidUnknownValues=true, transform=false, validationError={target:false,value:false}. exceptionFactory calls the shared owned factory with converted details. Add `{ provide: APP_PIPE, useClass: ApiValidationPipe }` to AppModule; never install a separate pipe only in the test harness.
+Consume ValidationError from installed class-validator and ApiErrorDetail/apiValidationError from Phase 1A. Tests may use apiValidationDetails to inspect owned metadata. No competing envelope types, exception classes, HTTP modules or new dependencies. Keep both units in the existing planned file; do not create extra files merely to split commits.
 
-- [ ] **Write failing conversion tests.** Assert exact pointer/message pairs: email -> `/email`; answers child 0 child value -> `/answers/0/value`; property `a/b~c` -> `/a~1b~0c`; an empty property name -> `/`; a root error without a property -> empty pointer. Missing required fields still have addresses. Read only property/constraints/children; target, value and contexts must not appear. Sort by encoded pointer, then original constraint key, using deterministic lexical ordering. Return one detail per constraint.
-- [ ] **Write failing HTTP validation cases** with test-only decorated DTOs and Nest's real body parser:
+### Phase 2A: Field Error Conversion and JSON Pointers
+
+**Purpose:** Turn validator errors into public `{ pointer, message }` details. This delivery does not run request validation or change global HTTP behavior.
+
+**Files:** Create `src/common/http/api-validation.pipe.ts` containing only toValidationDetails initially; create `src/common/http/api-validation.pipe.spec.ts`; extend the field-details documentation in `docs/api-errors.md` and keep pipe/activation marked pending.
+
+**Interface:** Produce `toValidationDetails(errors: readonly ValidationError[]): ApiErrorDetail[]` for Phase 2B. Do not export/import ApiValidationPipe until it is implemented in 2B.
+
+- [x] **Write failing converter tests.** Use literal expected details, covering: no errors -> []; email -> `/email`; answers child 0 child value -> `/answers/0/value`; property `a/b~c` -> `/a~1b~0c`; empty property name -> `/`; root error without a property -> empty pointer. Include missing required fields, multiple constraints on one field, parent/child failures and children on nodes without constraints. Return one entry per constraint. Sentinel target/value/contexts must not appear in output.
+- [x] **Write deterministic-order cases.** Reverse input nodes and constraint insertion order; assert identical output sorted by encoded pointer and then original constraint key. For one `/email` node with constraints isEmail=`Email must be valid.` and isDefined=`Email is required.`, the required-message entry comes first. Use deterministic lexical comparisons, not locale-dependent sorting.
+- [x] **Run RED:** `pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts`. Expect the missing converter; record the observed failure.
+- [x] **Implement toValidationDetails.** Traverse property/constraints/children only. Distinguish an absent property from an empty property string. Escape each path segment (`~` -> `~0`, then `/` -> `~1`) before joining; sort as specified and return only pointer/message pairs. Do not alter the input error objects or include target/value/contexts.
+- [x] **Run GREEN:** repeat the focused command, then `pnpm check`, changed-file Prettier and `git diff --check`. Require zero failures, including existing Phase 1 tests. Inspect the scoped diff and examples.
+- [x] **Explain and commit gate:** show a simple and nested pointer example and actual checks. State that request validation is not active. The user reviewed the results and authorized this commit on 2026-10-16. Commit message: `feat: add validation field error conversion`.
+
+**Verification result (2026-10-16):** RED failed on the missing api-validation.pipe.js module. After implementation all 15 converter tests passed. `pnpm check` passed lint, TypeScript, 11 Node tests and 112 Vitest tests, including the unchanged global HTTP error suite. Changed-file Prettier and diff checks passed. Author review checked segment escaping, empty versus absent property, recursive traversal, global pointer/constraint-key ordering, metadata omission and input preservation. No pipe class, AppModule/HTTP behavior change, database connection, build/startup run, commit or push occurred. The user authorized this commit after reviewing the results; only a Phase 2B explanation is requested next.
+
+### Phase 2B: Shared Validation Pipe in Isolation
+
+**Purpose:** Build the reusable validation pipe and prove its behavior directly, before global activation.
+
+**Files:** Extend `src/common/http/api-validation.pipe.ts` and its spec; update `docs/api-errors.md`. Do not modify AppModule or the HTTP fixture yet.
+
+**Interfaces:** Consume toValidationDetails from 2A and apiValidationError from 1A. Produce `ApiValidationPipe extends ValidationPipe` with a zero-argument constructor for Phase 2C.
+
+**Options:** whitelist=true, forbidNonWhitelisted=true, forbidUnknownValues=true, transform=false, validationError={target:false,value:false}. exceptionFactory returns apiValidationError(toValidationDetails(errors)). Do not enable global implicit conversion. DTO validator messages must be public-safe and must not interpolate `$value`.
+
+- [ ] **Write failing pipe tests** using small decorated test-only DTOs and direct calls to `pipe.transform(value, { type: 'body', metatype: TestDto })`. Cover valid input, missing required fields, invalid email format, unexpected properties and submitted-value secrecy. Valid input retains its submitted values; do not assert object identity or automatic primitive conversion. Rejections must be owned native BadRequestExceptions with status 400, code VALIDATION_ERROR and expected pointer/message details, inspected using apiValidationDetails.
+- [ ] **Run RED:** `pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts`. Expect the missing pipe class; record the observed failure.
+- [ ] **Implement ApiValidationPipe** using the exact options/factory above and installed Nest ValidationPipe. Reuse the converter; do not introduce real domain DTOs, business rules or a filter import cycle.
+- [ ] **Run GREEN:** repeat the focused command, then `pnpm check`, changed-file Prettier and `git diff --check`. Require the converter tests and existing Phase 1 suite to remain green.
+- [ ] **Explain and commit gate:** show how an invalid test DTO becomes owned field details and report actual checks. State that AppModule still has no APP_PIPE registration. Wait for user confirmation before committing. Suggested message: `feat: add shared DTO validation pipe`.
+
+### Phase 2C: Global Validation and HTTP Integration
+
+**Purpose:** Activate the pipe and verify real request rejection through the existing global error filter.
+
+**Files:** Modify `src/app.module.ts`; extend `test/http-boundary.spec.ts`; update `docs/api-errors.md` and the active validation status in `docs/api-standards.md`. Test-only DTOs/controllers remain excluded from production builds.
+
+**Interfaces:** Consume ApiValidationPipe from 2B. Register `{ provide: APP_PIPE, useClass: ApiValidationPipe }` alongside the existing APP_FILTER; preserve current imports/providers and bootstrap settings. Never manually install a pipe in the test harness. Reuse actual AppModule imports and existing pre-compilation PrismaService/ConfigService overrides; no database connection.
+
+- [ ] **Write failing HTTP validation cases** with decorated test-only DTOs, a fixture POST handler returning apiSuccess, and Nest's real body parser:
 
   | Case | Required assertion |
   | --- | --- |
-  | Valid DTO body | Handler executes and returns the approved success helper result |
-  | Missing required field / invalid format | 400 VALIDATION_ERROR, safe message and exact field pointer |
-  | Extra property | 400 VALIDATION_ERROR; property is rejected, not silently accepted |
-  | Nested DTO/array failures | Stable pointer to the affected array entry and field |
-  | Multiple failures / reordered input keys | All expected details, with identical deterministic ordering |
+  | Valid DTO body | Handler returns the approved success envelope |
+  | Missing required field / invalid format | 400 VALIDATION_ERROR, safe public message and exact pointer |
+  | Extra property | 400 VALIDATION_ERROR; rejected rather than silently accepted |
+  | Nested DTO/array failures | Stable pointer such as `/answers/0/value` |
+  | Multiple failures / reordered input keys | All expected details with identical deterministic ordering |
   | Secret-bearing submitted values | No target/value/body echo in response or diagnostics |
   | Wrong root shape | Safe 400 without crashing; distinguish parser rejection from DTO validation |
-  | Malformed JSON / invalid URI encoding | 400 BAD_REQUEST and empty details, not VALIDATION_ERROR |
-  | JSON body exceeding the existing limit | 413 HTTP_ERROR, empty details, no body echo; use about 200,000 characters, not a changed production limit |
+  | Malformed JSON / invalid URI encoding | 400 BAD_REQUEST with empty details, not VALIDATION_ERROR |
+  | Oversized JSON | 413 HTTP_ERROR with empty details; use about 200,000 characters and leave production limits unchanged |
 
-- [ ] **Run RED checks:** `pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts test/http-boundary.spec.ts`. Expect missing pipe/converter or validation requests incorrectly accepted. Record the actual failure.
-- [ ] **Implement toValidationDetails, ApiValidationPipe and APP_PIPE registration.** Escape each JSON Pointer segment (`~` -> `~0`, then `/` -> `~1`) before joining. Keep primitive conversions explicit in future DTOs/pipes; do not enable global implicit conversion or introduce real request-field rules here.
-- [ ] **Run GREEN checks:** repeat the Phase 2 focused command, then `pnpm check`. Require zero failures and unchanged Phase 1 cases. Inspect responses and captured diagnostics for the sentinel value.
-- [ ] **Review/commit gate.** Report Phase 2 results and actual checks before any separately confirmed commit.
+- [ ] **Run RED:** `pnpm exec vitest run test/http-boundary.spec.ts`. Expect validly parsed but invalid DTO input to be accepted before APP_PIPE registration; earlier error/root tests and already-supported parser cases may pass. Record actual failures instead of expecting every new case to fail.
+- [ ] **Register APP_PIPE in AppModule.** Keep field conversions explicit in owning DTOs/pipes. Do not add production endpoints or change authentication/authorization. Update documentation to mark shared validation active while distinguishing approved framework behavior from each endpoint's domain rules.
+- [ ] **Run GREEN:** `pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts test/http-boundary.spec.ts`, then `pnpm check`, `pnpm build`, changed-file Prettier and `git diff --check`. Require zero failures and unchanged Phase 1 cases. Inspect responses/diagnostics for the sentinel and confirm production output excludes fixtures.
+- [ ] **Explain and commit gate:** show an actual HTTP validation result with pointer/message details, report checks and preserved root behavior. Wait for user confirmation before committing. Suggested message: `feat: enable global DTO validation`.
+
+Each delivery ends with tested working code, a scoped diff and an explanation before its separately confirmed commit. Stop after the requested delivery; do not begin the next one automatically. Docker startup verification remains in Phase 3. This split does not change schema, migrations, seeds, auth or domain requirements.
 
 ## Phase 3: Compatibility, Documentation and Final Verification
 
@@ -221,6 +261,6 @@ Use ValidationError from the installed class-validator package. Configure whitel
 
 ## Plan self-review and planning verification
 
-Checked contract coverage, cross-phase interfaces, review-focus cases, scope and proportions. Phase 1 is split into three independently testable deliveries: the response contract (1A), the filter (1B), then real global registration (1C). Existing scope and interfaces are unchanged. The private validation bridge is established in Phase 1A so the filter never imports a not-yet-created Phase 2 pipe. Global registration is exercised through real AppModule imports; database access is explicitly overridden. Existing scripts and test filename patterns already run the new tests, so package/config changes are unnecessary.
+Checked contract coverage, cross-phase interfaces, review-focus cases, scope and proportions. Phase 1 is split into the response contract (1A), the filter (1B), then real global registration (1C). Phase 2 is split into the converter (2A), isolated pipe (2B), then real global validation (2C). Each has its own test cycle and commit confirmation. Existing scope and final interfaces are unchanged; converter and pipe share the originally planned file, and no new wrapper is introduced. The private validation bridge is established in Phase 1A so the filter never imports a not-yet-created Phase 2 pipe. Global registration is exercised through real AppModule imports; database access is explicitly overridden. Existing scripts and test filename patterns already run the new tests, so package/config changes are unnecessary.
 
 The runtime files, application tests and installed Nest adapter/exception/validation interfaces were inspected. The database PR was rechecked as open at 9246fde; a read-only fetch confirmed the auth branch snapshot remains f107092. Both remain integration inputs to recheck before execution. No implementation tests were run while writing this plan. Planning verification is limited to document consistency, links, examples, commands, Git state and preservation checks.

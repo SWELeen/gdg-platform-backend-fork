@@ -4,7 +4,9 @@
 
 Phase 1A implements the envelope types, success helper and internal validation-error metadata helpers in `src/common/http/api-response.ts`.
 
-Phase 1B implements and unit-tests `HttpErrorFilter` in `src/common/http/http-error.filter.ts`. Phase 1C registers it through APP_FILTER in AppModule, so HTTP failures now use the envelope below. Real HTTP tests import AppModule and replace PrismaService before compilation; they verify global registration without connecting to a database. The shared DTO validation pipe (Phase 2) remains pending.
+Phase 1B implements and unit-tests `HttpErrorFilter` in `src/common/http/http-error.filter.ts`. Phase 1C registers it through APP_FILTER in AppModule, so HTTP failures now use the envelope below. Real HTTP tests import AppModule and replace PrismaService before compilation; they verify global registration without connecting to a database.
+
+Phase 2A implements the field-error converter in `src/common/http/api-validation.pipe.ts`. That file currently exports only toValidationDetails. The ApiValidationPipe class (2B) and its APP_PIPE registration (2C) remain pending; requests are not yet validated through this shared pipe.
 
 Success envelopes are opt-in through apiSuccess; there is no global success interceptor. `GET /` still returns the existing `Hello World!` text. New test routes exist only in `test/http-boundary.spec.ts` and are excluded from production builds.
 
@@ -79,6 +81,24 @@ Example DTO validation failure with actual HTTP status 400, once Phase 2 is enab
 
 The internal `apiValidationError(details)` factory creates a native 400 `BadRequestException` with `errorCode: VALIDATION_ERROR`. `apiValidationDetails(exception)` retrieves only details marked by that factory; arbitrary response objects with matching code/details fields are not trusted. Details are stored as non-enumerable private metadata, outside the native exception response body. The filter accepts them only with status 400 and code VALIDATION_ERROR. These helpers prepare the filter/pipe boundary; they do not activate validation by themselves.
 
+## Field-error conversion
+
+`toValidationDetails(errors)` accepts a readonly list of class-validator ValidationError nodes and returns only public pointer/message entries. It visits nested children, retains parent failures and emits one detail per failed constraint. Input errors are left unchanged.
+
+| Error location | Public pointer |
+| --- | --- |
+| email field, including a missing required value | `/email` |
+| value in the first answers entry | `/answers/0/value` |
+| property named a/b~c | `/a~1b~0c` |
+| property with an empty name | `/` |
+| request-root error without a property | Empty string |
+
+These are JSON Pointer field addresses, not URL paths. Each property segment escapes tilde as ~0 and slash as ~1. An empty pointer identifies the whole input; `/` identifies an empty property name. A pointer to a missing required field still tells the frontend where to display the error.
+
+Details are sorted lexically by the encoded pointer, then by the original constraint key, independently of validator traversal/constraint insertion order. Constraint keys are used only for ordering and are omitted from public output. For example, isDefined precedes isEmail for the same field.
+
+The converter reads only property, constraints and children. It omits target, value and contexts, so submitted values and validation context metadata are not copied into details. Validators must supply public-safe constraint messages; the converter retains those messages. This function prepares details only; the pipe and its global registration are separate deliveries.
+
 ## Error catalog
 
 | HTTP status | Code | Public message |
@@ -151,3 +171,13 @@ git diff --check
 The HTTP suite exercises actual AppModule registration and the Express adapter. It does not install a test-only filter. PrismaService is replaced with a harmless value before compilation; ConfigService also points to an unreachable loopback target as a safety fallback. No application or temporary database is needed for this suite.
 
 Checks cover core 400/401/403/404/409/500 statuses, preserved 413/429/503 statuses, a real unknown-route 404, unowned validation/code mismatch, safe unexpected 500 diagnostics, challenge/retry header preservation, replacement of stale content types, and unchanged successful root text. Fixture routes are not business endpoints or authentication implementations. Validation, additional bodyless/success compatibility tests and disposable Docker startup verification remain assigned to later phases.
+
+## Phase 2A verification
+
+```sh
+pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts
+pnpm check
+git diff --check
+```
+
+Converter tests cover empty input, missing required values, nested arrays, pointer escaping, empty versus absent properties, parent/child failures, multiple constraints, deterministic ordering, private metadata omission and input preservation. No database or global validation setup is needed for these tests.

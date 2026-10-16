@@ -194,3 +194,7 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - The user subsequently authorized Phase 1C implementation/tests with results before commit: register the tested filter through APP_FILTER in AppModule, verify real HTTP behavior with PrismaService replaced before compilation, and document the active error contract. DTO validation, final compatibility/startup verification and any commit/push/PR/deployment remain separate steps.
 
 - After reviewing Phase 1C results and global filter registration, the user authorized its commit on 2026-10-16 and requested the Phase 2 explanation. Phase 2 execution, further commits, push, PR and deployment require separate authorization.
+
+- The user reviewed the Phase 2 split and authorized 2A implementation/tests with results before commit: convert class-validator errors into pointer/message details with stable ordering, private metadata omission and input preservation. Shared pipe construction (2B), global validation (2C), commits, push, PR and deployment remain separate steps.
+
+- After reviewing Phase 2A results, the user authorized its commit on 2026-10-16 and requested the Phase 2B explanation before implementation. Phase 2B execution, further commits, push, PR and deployment require separate authorization.
