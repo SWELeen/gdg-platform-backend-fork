@@ -1,5 +1,10 @@
-import { ValidationError } from 'class-validator';
-import { toValidationDetails } from './api-validation.pipe.js';
+import { BadRequestException } from '@nestjs/common';
+import { IsDefined, IsEmail, IsInt, ValidationError } from 'class-validator';
+import { apiValidationDetails } from './api-response.js';
+import {
+  ApiValidationPipe,
+  toValidationDetails,
+} from './api-validation.pipe.js';
 
 describe('toValidationDetails', () => {
   it('returns no details for an empty error list', () => {
@@ -201,4 +206,107 @@ describe('toValidationDetails', () => {
     toValidationDetails(Object.freeze(errors));
     expect(errors).toEqual(original);
   });
+});
+
+class EmailTestDto {
+  @IsDefined({ message: 'Email is required.' })
+  @IsEmail({}, { message: 'Email must be valid.' })
+  email: string;
+}
+
+class CountTestDto {
+  @IsInt({ message: 'Count must be an integer.' })
+  count: number;
+}
+
+class UndecoratedTestDto {}
+
+describe('ApiValidationPipe', () => {
+  const secret = 'never-public-submitted-value';
+
+  it('accepts valid DTO input as plain data with unchanged values', async () => {
+    const result: unknown = await new ApiValidationPipe().transform(
+      { email: 'member@example.com' },
+      { type: 'body', metatype: EmailTestDto },
+    );
+    expect(result).toEqual({ email: 'member@example.com' });
+    expect(result).not.toBeInstanceOf(EmailTestDto);
+  });
+
+  it('leaves primitive parameter conversion to the owning endpoint', async () => {
+    await expect(
+      new ApiValidationPipe().transform('7', {
+        type: 'param',
+        metatype: Number,
+        data: 'id',
+      }),
+    ).resolves.toBe('7');
+  });
+
+  it.each([
+    {
+      name: 'missing required field',
+      input: {},
+      metatype: EmailTestDto,
+      details: [
+        { pointer: '/email', message: 'Email is required.' },
+        { pointer: '/email', message: 'Email must be valid.' },
+      ],
+    },
+    {
+      name: 'invalid email format',
+      input: { email: secret },
+      metatype: EmailTestDto,
+      details: [{ pointer: '/email', message: 'Email must be valid.' }],
+    },
+    {
+      name: 'unexpected property',
+      input: { email: 'member@example.com', extra: secret },
+      metatype: EmailTestDto,
+      details: [
+        { pointer: '/extra', message: 'property extra should not exist' },
+      ],
+    },
+    {
+      name: 'wrong email type',
+      input: { email: 42 },
+      metatype: EmailTestDto,
+      details: [{ pointer: '/email', message: 'Email must be valid.' }],
+    },
+    {
+      name: 'numeric string without implicit conversion',
+      input: { count: '7' },
+      metatype: CountTestDto,
+      details: [{ pointer: '/count', message: 'Count must be an integer.' }],
+    },
+    {
+      name: 'unknown DTO without validation decorators',
+      input: { submitted: secret },
+      metatype: UndecoratedTestDto,
+      details: [
+        {
+          pointer: '',
+          message: 'an unknown value was passed to the validate function',
+        },
+      ],
+    },
+  ])(
+    'rejects $name with owned safe validation details',
+    async ({ input, metatype, details }) => {
+      const exception: unknown = await new ApiValidationPipe()
+        .transform(input, { type: 'body', metatype })
+        .catch((error: unknown) => error);
+
+      expect(exception).toBeInstanceOf(BadRequestException);
+      expect((exception as BadRequestException).getStatus()).toBe(400);
+      expect(exception).toMatchObject({ errorCode: 'VALIDATION_ERROR' });
+      expect(apiValidationDetails(exception)).toEqual(details);
+      expect(
+        JSON.stringify({
+          response: (exception as BadRequestException).getResponse(),
+          details: apiValidationDetails(exception),
+        }),
+      ).not.toContain(secret);
+    },
+  );
 });

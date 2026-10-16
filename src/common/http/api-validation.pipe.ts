@@ -1,5 +1,21 @@
+import { Injectable, ValidationPipe } from '@nestjs/common';
 import type { ValidationError } from 'class-validator';
-import type { ApiErrorDetail } from './api-response.js';
+import { type ApiErrorDetail, apiValidationError } from './api-response.js';
+
+@Injectable()
+export class ApiValidationPipe extends ValidationPipe {
+  constructor() {
+    super({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      forbidUnknownValues: true,
+      transform: false,
+      validationError: { target: false, value: false },
+      exceptionFactory: (errors) =>
+        apiValidationError(toValidationDetails(errors)),
+    });
+  }
+}
 
 export function toValidationDetails(
   errors: readonly ValidationError[],

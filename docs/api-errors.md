@@ -6,7 +6,7 @@ Phase 1A implements the envelope types, success helper and internal validation-e
 
 Phase 1B implements and unit-tests `HttpErrorFilter` in `src/common/http/http-error.filter.ts`. Phase 1C registers it through APP_FILTER in AppModule, so HTTP failures now use the envelope below. Real HTTP tests import AppModule and replace PrismaService before compilation; they verify global registration without connecting to a database.
 
-Phase 2A implements the field-error converter in `src/common/http/api-validation.pipe.ts`. That file currently exports only toValidationDetails. The ApiValidationPipe class (2B) and its APP_PIPE registration (2C) remain pending; requests are not yet validated through this shared pipe.
+Phase 2A implements the field-error converter in `src/common/http/api-validation.pipe.ts`. Phase 2B adds and directly tests the ApiValidationPipe class in the same file. Its APP_PIPE registration (2C) remains pending; application requests are not yet validated through this shared pipe.
 
 Success envelopes are opt-in through apiSuccess; there is no global success interceptor. `GET /` still returns the existing `Hello World!` text. New test routes exist only in `test/http-boundary.spec.ts` and are excluded from production builds.
 
@@ -97,7 +97,24 @@ These are JSON Pointer field addresses, not URL paths. Each property segment esc
 
 Details are sorted lexically by the encoded pointer, then by the original constraint key, independently of validator traversal/constraint insertion order. Constraint keys are used only for ordering and are omitted from public output. For example, isDefined precedes isEmail for the same field.
 
-The converter reads only property, constraints and children. It omits target, value and contexts, so submitted values and validation context metadata are not copied into details. Validators must supply public-safe constraint messages; the converter retains those messages. This function prepares details only; the pipe and its global registration are separate deliveries.
+The converter reads only property, constraints and children. It omits target, value and contexts, so submitted values and validation context metadata are not copied into details. Validators must supply public-safe constraint messages; the converter retains those messages. This function prepares details only; the pipe consumes them in Phase 2B and global registration remains Phase 2C.
+
+## Shared validation pipe — global registration pending
+
+ApiValidationPipe extends Nest's installed ValidationPipe with a zero-argument constructor and these settings:
+
+| Setting | Behavior |
+| --- | --- |
+| whitelist=true, forbidNonWhitelisted=true | Reject properties without validation decorators rather than silently accepting/removing them |
+| forbidUnknownValues=true | Reject DTO objects that have no recognized validation metadata |
+| transform=false | Return validated DTO bodies as plain data; leave primitive parameter conversion to the owning endpoint |
+| validationError={target:false,value:false} | Exclude the original target and submitted value from validator error nodes |
+
+Implicit type conversion is not enabled. For example, a numeric string fails an integer-only DTO rule rather than becoming a number automatically. Future DTOs/pipes define any intentional field conversions explicitly.
+
+The exception factory calls apiValidationError(toValidationDetails(errors)). Invalid DTO input therefore rejects with an owned native BadRequestException, status 400 and errorCode VALIDATION_ERROR, carrying the converted field details for the HTTP filter. Direct tests inspect ownership through apiValidationDetails. These tests do not register a global pipe or add production DTOs/routes.
+
+Validation requires an actual decorated DTO class at the request boundary; TypeScript field/type declarations alone do not supply runtime validation rules. Native primitive/untyped handler arguments retain Nest's normal validation bypass behavior. Endpoint owners define their own rules and public-safe validator messages. The shared pipe has not been registered in AppModule yet.
 
 ## Error catalog
 
@@ -112,7 +129,7 @@ The converter reads only property, constraints and children. It omits target, va
 | 500 | `INTERNAL_ERROR` | An unexpected error occurred. |
 | Other known 4xx/5xx | `HTTP_ERROR` | The request could not be completed. |
 
-Generic malformed requests use BAD_REQUEST. Field validation uses VALIDATION_ERROR only through the owned factory; the shared DTO pipe that will call it remains pending. Matching HTTP statuses can therefore share a general category while codes distinguish the reason.
+Generic malformed requests use BAD_REQUEST. Field validation uses VALIDATION_ERROR only through the owned factory; the shared DTO pipe calls it in direct tests, while global request validation remains pending. Matching HTTP statuses can therefore share a general category while codes distinguish the reason.
 
 The filter accepts native Nest `HttpException` statuses only when they are integers from 400 through 599. The status determines the fixed catalog entry; unknown or mismatched supplied codes cannot override that entry. VALIDATION_ERROR additionally requires the owned metadata described above. Known statuses outside the core catalog retain their HTTP status, including 413, 429 and 503.
 
@@ -181,3 +198,13 @@ git diff --check
 ```
 
 Converter tests cover empty input, missing required values, nested arrays, pointer escaping, empty versus absent properties, parent/child failures, multiple constraints, deterministic ordering, private metadata omission and input preservation. No database or global validation setup is needed for these tests.
+
+## Phase 2B verification
+
+```sh
+pnpm exec vitest run src/common/http/api-validation.pipe.spec.ts
+pnpm check
+git diff --check
+```
+
+Direct pipe tests use test-only DTOs to verify valid plain output, missing required fields, invalid email format/type, extra-property rejection, unknown DTO rejection, preservation of primitive parameters and disabled implicit numeric conversion. Rejections retain owned 400 VALIDATION_ERROR details without submitted-value reflection. The Phase 2A converter and existing HTTP error tests remain in the suite. No database or APP_PIPE registration is used in this delivery.

@@ -198,3 +198,7 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - The user reviewed the Phase 2 split and authorized 2A implementation/tests with results before commit: convert class-validator errors into pointer/message details with stable ordering, private metadata omission and input preservation. Shared pipe construction (2B), global validation (2C), commits, push, PR and deployment remain separate steps.
 
 - After reviewing Phase 2A results, the user authorized its commit on 2026-10-16 and requested the Phase 2B explanation before implementation. Phase 2B execution, further commits, push, PR and deployment require separate authorization.
+
+- The user subsequently authorized Phase 2B implementation/tests with results before commit: build the shared validation pipe using the reviewed settings and existing owned factory/converter, and verify direct test-only DTO validation. AppModule registration/global validation (2C), commits, push, PR and deployment remain separate steps.
+
+- After reviewing Phase 2B results, the user authorized its commit on 2026-10-16 and requested the Phase 2C explanation before implementation. Phase 2C execution, further commits, push, PR and deployment require separate authorization.

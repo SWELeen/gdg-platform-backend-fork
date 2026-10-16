@@ -1,6 +1,6 @@
 # API Error Handling and Response Contract — Design Proposal
 
-**Status:** Response Envelope contract approved by the user on 2026-10-16. Phase 1 is committed (1A ee71e3a, 1B ff688e1, 1C 63c17a3). The user reviewed the split Phase 2 plan and authorized 2A implementation/tests with results before commit. The field-error converter is implemented and verified; the user authorized its commit after reviewing the results. ApiValidationPipe (2B), global validation (2C) and final compatibility/startup handoff (Phase 3) remain pending.
+**Status:** Response Envelope contract approved by the user on 2026-10-16. Phases 1A/1B/1C/2A are committed (ee71e3a/ff688e1/63c17a3/f0ab6a8). The user authorized 2B implementation/tests with results before commit. ApiValidationPipe is implemented and verified directly with test-only DTOs; the user authorized its commit after reviewing the results. Global validation (2C) and final compatibility/startup handoff (Phase 3) remain pending.
 **Owner scope:** Person 1: shared error handling and response conventions.
 **Baseline:** Backend `9246fde`; frontend `a00d03e`; inspected authentication branch snapshot `f107092`.
 **Working branch:** `feat/api-error-handling`, created from `9246fde`. It currently includes the database work in open PR #4; settle that dependency before preparing a separate implementation PR.
