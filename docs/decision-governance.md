@@ -178,3 +178,37 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Separate from migrations and Docker startup. Local loopback/Compose-db targets only, non-production mode, one transaction, generated IDs, compatible-row reuse and conflict rejection. Preserve unrelated records, optional details and additional links; never reset/delete or overwrite conflicts.
 - No Supabase data transfer, Auth accounts, password seeding, outgoing messages, permission definitions/distribution, event fixtures or automatic startup seeding. These demo records do not implement login/authorization.
 - Commit requires separate user confirmation after verification results. Push, PR and deployment remain unauthorized.
+
+## 2026-10-16 Shared HTTP response envelope approval
+
+- Owner/approver: project user explicitly approved the displayed response shape and requested an English implementation plan with phases and tests before execution.
+- Contract: JSON API responses use success/message/data/error. Success has success=true and error=null; failure has success=false, data=null and error={code,details}. Details is always an array; only DTO validation adds pointer/message entries. Real HTTP statuses remain authoritative.
+- Public error messages come from the reviewed catalog; no raw exception/SQL/token/input values are exposed. Existing root text/readiness behavior and bodyless responses are preserved. Authentication/authorization decisions remain with their owner.
+- Source: [Approved design](superpowers/specs/2026-10-16-api-error-handling-design.md); [implementation plan](superpowers/plans/2026-10-16-api-error-handling.md). This decision supersedes the earlier unapproved Problem Details proposal for this task.
+- After reviewing the split plan, the user authorized Phase 1A only: envelope types, success helper, owned validation metadata, tests and documentation, with results before commit. Global error-filter implementation/activation and shared validation remain pending. Commits, push, PR and deployment require separate authorization. No schema, migration, seed, frontend or authentication change is approved here.
+
+- After reviewing Phase 1A results, the user explicitly authorized its commit on 2026-10-16 and requested an explanation of Phase 1B before implementation. The user subsequently authorized Phase 1B implementation and tests with results before commit. Phase 1C activation, further commits, push, PR and deployment require separate authorization.
+
+- After reviewing Phase 1B results, the user authorized its commit on 2026-10-16 and requested the Phase 1C explanation before implementation. That commit/explanation request did not authorize Phase 1C runtime work, push, PR or deployment.
+
+- The user subsequently authorized Phase 1C implementation/tests with results before commit: register the tested filter through APP_FILTER in AppModule, verify real HTTP behavior with PrismaService replaced before compilation, and document the active error contract. DTO validation, final compatibility/startup verification and any commit/push/PR/deployment remain separate steps.
+
+- After reviewing Phase 1C results and global filter registration, the user authorized its commit on 2026-10-16 and requested the Phase 2 explanation. Phase 2 execution, further commits, push, PR and deployment require separate authorization.
+
+- The user reviewed the Phase 2 split and authorized 2A implementation/tests with results before commit: convert class-validator errors into pointer/message details with stable ordering, private metadata omission and input preservation. Shared pipe construction (2B), global validation (2C), commits, push, PR and deployment remain separate steps.
+
+- After reviewing Phase 2A results, the user authorized its commit on 2026-10-16 and requested the Phase 2B explanation before implementation. Phase 2B execution, further commits, push, PR and deployment require separate authorization.
+
+- The user subsequently authorized Phase 2B implementation/tests with results before commit: build the shared validation pipe using the reviewed settings and existing owned factory/converter, and verify direct test-only DTO validation. AppModule registration/global validation (2C), commits, push, PR and deployment remain separate steps.
+
+- After reviewing Phase 2B results, the user authorized its commit on 2026-10-16 and requested the Phase 2C explanation before implementation. Phase 2C execution, further commits, push, PR and deployment require separate authorization.
+
+- After the Phase 2C explanation and discussion of frontend/backend validation responsibilities, the user asked to complete the current task. This authorizes Phase 2C implementation/tests: register APP_PIPE with the reviewed ApiValidationPipe, verify decorated test-only DTO requests through the real AppModule without database access, and document the active validation policy. Standing results-before-commit approval remains in force; Phase 3, commit, push, PR and deployment remain separate steps.
+
+- After reviewing Phase 2C results, the user authorized its commit on 2026-10-16 and requested the Phase 3 explanation before implementation. Phase 3 execution, further commits, push, PR and deployment require separate authorization.
+
+- The user subsequently authorized Phase 3 implementation, tests and review, with results before commit: complete success/status/bodyless HTTP compatibility assertions, contributor documentation, a disposable Docker startup regression and an independent read-only review of the HTTP feature. This delivery introduces no runtime component, business endpoint, authentication policy, Swagger installation or database change. Commit, push, PR, merge and deployment remain separately authorized actions.
+
+- Phase 3 verification completed locally on 2026-10-16: 130 focused HTTP tests, 153 unit/helper tests via pnpm check, build/format/diff checks and one isolated Docker startup regression passed. The startup runner verified two clean schema replays, preservation/recovery guards, schema/application e2e, readiness after migrations, restart data preservation and fail-closed incompatible-schema startup; its temporary resources were removed. Independent read-only review found no actionable issues. See the [verification record](superpowers/plans/2026-10-16-api-error-handling.md#phase-3-compatibility-documentation-and-final-verification). The existing database PR #4 remains open/unmerged; integration is separate. Results are ready for user review before any Phase 3 commit.
+
+- After reviewing Phase 3 results, the user authorized its commit on 2026-10-16 and requested the next-step explanation and a comparison against the supplied backend team assignments (Person 1). This does not authorize the next implementation phase, push, PR, merge or deployment.

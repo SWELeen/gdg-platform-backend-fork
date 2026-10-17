@@ -4,7 +4,9 @@
 
 Swagger/OpenAPI is the required, authoritative API contract between this NestJS backend and the separate Next.js frontend. The backend must publish and maintain a machine-readable specification and interactive documentation that represent implemented behavior.
 
-The specification delivery URL, versioning convention, documentation access policy, generated-client strategy, error envelope, pagination convention, and publication process are **TBD**. They must be decided without weakening the contract-first rule.
+The specification delivery URL, versioning convention, documentation access policy, generated-client strategy, pagination convention, and publication process are **TBD**. They must be decided without weakening the contract-first rule.
+
+HTTP failures use the approved [response envelope and error catalog](api-errors.md), registered globally through AppModule. JSON success endpoints explicitly use apiSuccess; the existing root text remains unchanged. AppModule also registers shared DTO validation through APP_PIPE. Endpoint owners must supply actual decorated DTO classes and public-safe validator messages; TypeScript-only types do not create runtime validation rules. DTO failures return 400 VALIDATION_ERROR with pointer/message details, while malformed JSON remains BAD_REQUEST and oversized bodies retain HTTP 413. HTTP 204 and HEAD remain bodyless; existing text/readiness and other non-JSON responses retain their transport behavior. See the [contributor workflow](api-errors.md#contributor-workflow-and-compatibility) and [HTTP checks](testing.md#http-envelope-and-validation-checks).
 
 ## Contract requirements
 
@@ -35,7 +37,6 @@ Before an endpoint is available to the frontend, document:
 - API prefix and URL structure;
 - API versioning approach;
 - Swagger/OpenAPI path and authentication access;
-- standard error format;
 - pagination/filter/sort format;
 - request-id, logging, rate-limit, upload, caching, and idempotency policies;
 - generated client or shared-contract approach.
