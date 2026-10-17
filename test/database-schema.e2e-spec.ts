@@ -43,6 +43,13 @@ const approvedPermissions: {
   ),
 );
 
+const approvedCommitteePolicy = JSON.parse(
+  readFileSync(
+    new URL('./fixtures/approved-committee-permissions.json', import.meta.url),
+    'utf8',
+  ),
+);
+
 // Normal app e2e runs do not connect to a schema target unless explicitly supplied.
 describe.skipIf(!process.env.TEST_DATABASE_URL)(
   'PostgreSQL schema integrity',
@@ -327,6 +334,279 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       await invalid(async (tx) => {
         await tx.$executeRaw`INSERT INTO role_permission(role_code, code) VALUES ('ADVISOR', NULL)`;
       }, 'code');
+    });
+
+    it('installs the approved DATA and PR reference committees without memberships', async () => {
+      const rows = await db.$queryRaw`
+        SELECT c.committee_code, c.committee_name, p.committee_code AS parent_committee_code
+        FROM committee c LEFT JOIN committee p ON p.committee_id=c.parent_committee_id ORDER BY c.committee_code`;
+      expect(rows).toEqual(approvedCommitteePolicy.committees);
+      expect(await db.memberCommittee.count()).toBe(0);
+    });
+
+    it('installs exactly the eight approved committee permission rules', async () => {
+      const rows = await db.$queryRaw`
+        SELECT c.committee_code, cp.committee_role, cp.code, cp.applies_to, cp.include_sub_committees
+        FROM committee_permission cp LEFT JOIN committee c ON c.committee_id=cp.committee_id
+        ORDER BY c.committee_code, cp.committee_role, cp.code`;
+      expect(rows).toEqual(approvedCommitteePolicy.permissions);
+      expect(await db.rolePermission.count()).toBe(0);
+      expect(await db.memberRole.count()).toBe(0);
+    });
+
+    it('defines exactly the approved six committee permission columns', async () => {
+      const rows = await db.$queryRaw<
+        { column_name: string; is_nullable: string }[]
+      >`
+        SELECT column_name, is_nullable FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='committee_permission' ORDER BY ordinal_position`;
+      expect(rows).toEqual([
+        { column_name: 'id', is_nullable: 'NO' },
+        { column_name: 'committee_id', is_nullable: 'YES' },
+        { column_name: 'committee_role', is_nullable: 'NO' },
+        { column_name: 'code', is_nullable: 'NO' },
+        { column_name: 'applies_to', is_nullable: 'NO' },
+        { column_name: 'include_sub_committees', is_nullable: 'NO' },
+      ]);
+    });
+
+    it('supports generated/explicit policy IDs, optional committees and Prisma relations', async () => {
+      await valid(async (tx, f) => {
+        const rule = await tx.committeePermission.create({
+          data: {
+            committeeId: f.committee.committeeId,
+            committeeRole: 'Member',
+            code: 'attendance.record',
+            appliesTo: 'own',
+          },
+          include: { committee: true, permission: true },
+        });
+        expect(rule.id).toBeGreaterThan(0);
+        expect(rule.includeSubCommittees).toBe(false);
+        expect(rule.committee?.committeeCode).toBe(f.committee.committeeCode);
+        expect(rule.permission.code).toBe('attendance.record');
+        const template = await tx.committeePermission.create({
+          data: {
+            id: -100,
+            committeeRole: 'Leader',
+            code: 'attendance.record',
+            appliesTo: 'own',
+            includeSubCommittees: true,
+          },
+        });
+        expect(template.committeeId).toBeNull();
+        expect(template.includeSubCommittees).toBe(true);
+        const committee = await tx.committee.findUniqueOrThrow({
+          where: { committeeId: f.committee.committeeId },
+          include: { permissions: true },
+        });
+        expect(committee.permissions.map((r) => r.id)).toEqual([rule.id]);
+        const permission = await tx.permission.findUniqueOrThrow({
+          where: { code: 'attendance.record' },
+          include: { committees: true },
+        });
+        expect(permission.committees).toHaveLength(2);
+      });
+    });
+
+    it.each(['Leader', 'Co-Leader', 'Member'])(
+      'supports committee permission position %s',
+      async (role) => {
+        await valid(async (tx, f) => {
+          await tx.committeePermission.create({
+            data: {
+              committeeId: f.committee.committeeId,
+              committeeRole: role,
+              code: 'attendance.record',
+              appliesTo: 'all',
+            },
+          });
+        });
+      },
+    );
+
+    it.each(['leader', 'ADVISOR', ''])(
+      'rejects invalid committee permission position %j',
+      async (role) => {
+        await invalid(async (tx, f) => {
+          await tx.$executeRaw`INSERT INTO committee_permission(committee_id,committee_role,code,applies_to) VALUES (${f.committee.committeeId},${role},'attendance.record','own')`;
+        }, 'committee_permission_committee_role_check');
+      },
+    );
+
+    it.each(['invalid', '', 'OWN'])(
+      'rejects invalid committee permission scope %j',
+      async (scope) => {
+        await invalid(async (tx, f) => {
+          await tx.$executeRaw`INSERT INTO committee_permission(committee_id,committee_role,code,applies_to) VALUES (${f.committee.committeeId},'Member','attendance.record',${scope})`;
+        }, 'committee_permission_applies_to_check');
+      },
+    );
+
+    it('rejects NULL committee rules with all scope', async () => {
+      await invalid(async (tx) => {
+        await tx.$executeRaw`INSERT INTO committee_permission(committee_role,code,applies_to) VALUES ('Member','attendance.record','all')`;
+      }, 'committee_permission_check');
+    });
+
+    it.each(['committee_role', 'code', 'applies_to', 'include_sub_committees'])(
+      'requires committee permission %s',
+      async (field) => {
+        await invalid(async (tx, f) => {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO committee_permission(committee_id,committee_role,code,applies_to) VALUES ($1,'Member','attendance.record','own')`,
+            f.committee.committeeId,
+          );
+          await tx.$executeRawUnsafe(
+            `UPDATE committee_permission SET "${field}"=NULL WHERE committee_id=$1`,
+            f.committee.committeeId,
+          );
+        }, field);
+      },
+    );
+
+    it.each([false, true])(
+      'rejects duplicate rules including NULL committee=%s',
+      async (nullable) => {
+        await invalid(async (tx, f) => {
+          const data = {
+            committeeId: nullable ? null : f.committee.committeeId,
+            committeeRole: 'Member',
+            code: 'attendance.record',
+            appliesTo: 'own',
+          };
+          await tx.committeePermission.create({ data });
+          await tx.committeePermission.create({
+            data: { ...data, includeSubCommittees: true },
+          });
+        }, 'uq_committee_permission');
+      },
+    );
+
+    it('allows distinct scopes but rejects duplicates on update', async () => {
+      await invalid(async (tx, f) => {
+        const data = {
+          committeeId: f.committee.committeeId,
+          committeeRole: 'Member',
+          code: 'attendance.record',
+        };
+        await tx.committeePermission.create({
+          data: { ...data, appliesTo: 'own' },
+        });
+        const other = await tx.committeePermission.create({
+          data: { ...data, appliesTo: 'all' },
+        });
+        await tx.committeePermission.update({
+          where: { id: other.id },
+          data: { appliesTo: 'own' },
+        });
+      }, 'uq_committee_permission');
+    });
+
+    it.each(['committee', 'permission'])(
+      'rejects a missing policy %s reference',
+      async (target) => {
+        await invalid(
+          async (tx, f) => {
+            await tx.committeePermission.create({
+              data: {
+                committeeId:
+                  target === 'committee' ? -999 : f.committee.committeeId,
+                committeeRole: 'Member',
+                code:
+                  target === 'permission'
+                    ? 'test.missing'
+                    : 'attendance.record',
+                appliesTo: 'own',
+              },
+            });
+          },
+          target === 'committee'
+            ? 'committee_permission_committee_id_fkey'
+            : 'committee_permission_code_fkey',
+        );
+      },
+    );
+
+    it.each(['committee', 'permission'])(
+      'restricts deletion and code/id changes for referenced %s',
+      async (target) => {
+        for (const operation of ['delete', 'update'])
+          await invalid(
+            async (tx, f) => {
+              const permission = await tx.permission.create({
+                data: {
+                  code: 'test.policy',
+                  description: 'Synthetic policy',
+                  scope: 'committee',
+                },
+              });
+              await tx.committeePermission.create({
+                data: {
+                  committeeId: f.committee.committeeId,
+                  committeeRole: 'Member',
+                  code: permission.code,
+                  appliesTo: 'own',
+                },
+              });
+              if (target === 'committee') {
+                const empty = await tx.committee.create({
+                  data: {
+                    committeeCode: 'POLICY_FK',
+                    committeeName: 'Policy FK',
+                  },
+                });
+                await tx.committeePermission.updateMany({
+                  where: { code: permission.code },
+                  data: { committeeId: empty.committeeId },
+                });
+                if (operation === 'delete')
+                  await tx.committee.delete({
+                    where: { committeeId: empty.committeeId },
+                  });
+                else
+                  await tx.committee.update({
+                    where: { committeeId: empty.committeeId },
+                    data: { committeeId: -999 },
+                  });
+              } else if (operation === 'delete')
+                await tx.permission.delete({
+                  where: { code: permission.code },
+                });
+              else
+                await tx.permission.update({
+                  where: { code: permission.code },
+                  data: { code: 'test.renamed' },
+                });
+            },
+            target === 'committee'
+              ? 'committee_permission_committee_id_fkey'
+              : 'committee_permission_code_fkey',
+          );
+      },
+    );
+
+    it('creates the performance fixture committee without colliding with reference IDs', async () => {
+      const performanceSQL = readFileSync(
+        new URL('./schema-performance.sql', import.meta.url),
+        'utf8',
+      );
+      const committeeInsert = performanceSQL.match(
+        /INSERT INTO committee\([\s\S]*?;/,
+      )?.[0];
+      expect(committeeInsert).toBeDefined();
+      await valid(async (tx) => {
+        await tx.$executeRawUnsafe(committeeInsert!);
+        const synthetic = await tx.committee.findUniqueOrThrow({
+          where: { committeeCode: 'SYNTHETIC' },
+        });
+        expect(synthetic.committeeName).toBe('Synthetic');
+        expect(
+          await tx.committee.count({
+            where: { committeeCode: { in: ['DATA', 'PR'] } },
+          }),
+        ).toBe(2);
+      });
     });
 
     it('contains exactly the 30 approved permission definitions without role grants', async () => {
@@ -960,6 +1240,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
             identity_generation: 'BY DEFAULT',
           },
           {
+            table_name: 'committee_permission',
+            column_name: 'id',
+            identity_generation: 'BY DEFAULT',
+          },
+          {
             table_name: 'member',
             column_name: 'member_id',
             identity_generation: 'BY DEFAULT',
@@ -1142,6 +1427,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         'blacklist_resolution_check',
         'committee_code_check',
         'committee_parent_not_self_check',
+        'committee_permission_applies_to_check',
+        'committee_permission_check',
+        'committee_permission_committee_role_check',
         'event_questions_options_check',
         'event_questions_position_check',
         'events_capacity_check',

@@ -20,6 +20,7 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('gdg.optional-local-development-seed'));
 
     FOR r IN SELECT * FROM (VALUES
+        ('DATA', 'Data', NULL::TEXT),
         ('DEV', 'Development', NULL::TEXT),
         ('PM', 'Project Management', NULL::TEXT),
         ('PR', 'Public Relations', NULL::TEXT),
@@ -61,7 +62,13 @@ BEGIN
          ARRAY['Critical Thinking & Decision Making', 'Quality Assurance & Attention to Detail', 'Research & Analysis'], NULL::TEXT),
         ('Sara Alqahtani', 'sara.alqahtani@example.test', 'current',
          ARRAY['WEB', 'PM'], ARRAY['Co-Leader', 'Member'],
-         ARRAY['Time Management & Organization', 'Project Planning & Scheduling', 'Effective Communication Skills'], NULL::TEXT)
+         ARRAY['Time Management & Organization', 'Project Planning & Scheduling', 'Effective Communication Skills'], NULL::TEXT),
+        ('Noura Demo', 'data.leader@example.test', 'current',
+         ARRAY['DATA'], ARRAY['Leader'], ARRAY[]::TEXT[], NULL::TEXT),
+        ('Faisal Demo', 'data.coleader@example.test', 'current',
+         ARRAY['DATA'], ARRAY['Co-Leader'], ARRAY[]::TEXT[], NULL::TEXT),
+        ('Hala Demo', 'data.member@example.test', 'current',
+         ARRAY['DATA'], ARRAY['Member'], ARRAY[]::TEXT[], NULL::TEXT)
     ) AS fixture(full_name, email, member_type, committees, positions, skills, global_role)
     LOOP
         SELECT * INTO existing_person FROM person

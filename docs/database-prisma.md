@@ -4,9 +4,9 @@
 
 For first-time setup, follow [Backend Local Setup](../SETUP.md). Docker provides PostgreSQL, pgAdmin, Node.js and pnpm; teammates do not need host Node.js/pnpm for the Docker workflow below.
 
-The repository currently defines fifteen project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
+The repository currently defines sixteen project tables and twelve registration statuses. `prisma/schema.prisma` defines the models; `prisma/migrations/` contains the versioned SQL, including PostgreSQL checks that Prisma models cannot express. `prisma7.config.ts` points Prisma to both paths. Keep all three in sync when changing the database. Never edit a migration that has already been applied or shared.
 
-Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, permission assignments or sample events; the registry migrations insert the three approved role definitions, 32 approved skill definitions and 30 approved permission definitions. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
+Each developer has a separate local database and data. The same committed migrations produce the same structure; they do not copy another developer's records or create Supabase accounts, global member-role assignments or sample events; the registry migrations insert the three approved role definitions, 32 approved skill definitions and 30 approved permission definitions. The committee migration also installs DATA/PR references and eight committee policy rules without adding people. Connecting to the official database later requires a separately reviewed deployment/data-transfer procedure.
 
 ## Fresh people/membership setup
 
@@ -76,6 +76,16 @@ The migration locks the old role_permissions table and rejects any existing link
 
 Prisma composite-key operations use roleCode_code. Unlinking a pair removes only the junction row; referenced roles and permissions cannot be deleted while links exist. This table describes assignments and does not implement API authorization or approve a permission distribution. Verification uses disposable PostgreSQL; there is no production deployment or automatic down migration.
 
+## Committee permission rules
+
+`20261016230000_committee_permissions` creates committee_permission with six columns: id integer BY DEFAULT identity PK; nullable committee_id; required text committee_role, code and applies_to; include_sub_committees boolean NOT NULL DEFAULT false. Committee and permission FKs restrict deletion and use update NO ACTION. Positions are Leader/Co-Leader/Member, scope is own/all, and a NULL committee is valid only with own. The unique expression index uses COALESCE(committee_id,0), committee_role, code and applies_to, including NULL-template uniqueness; changing include_sub_committees does not create a distinct rule. Normal committee/position lookup and permission-code indexes complement it. Prisma exposes CommitteePermission and reverse Committee.permissions/Permission.committees relations; SQL remains authoritative for expression uniqueness and CHECKs.
+
+The migration inserts exactly eight explicitly scoped rules from test/fixtures/approved-committee-permissions.json: DATA Leader/Co-Leader get events.create/own; PR Leader/Co-Leader/Member each get registrants.view/all and registrations.review/all. All eight disable sub-committee inclusion; none uses a NULL committee. DATA is code DATA/name Data and PR is code PR/name Public Relations, both roots. Both references must exist without the optional seed, so the migration creates either missing committee and reuses compatible existing IDs by code. It never copies production IDs or modifies existing committee definitions. A code with a different name/parent fails with committee_permission_requires_matching_committees; a competing committee name or missing permission also fails. The explicit transaction rolls back the table/reference rows/rules on failure. Other records, memberships, role assignments and permission definitions remain unchanged. No automatic down migration deletes these records.
+
+These rows describe access policy, not an implemented authorization engine. NestJS must authenticate active members and compare the position on the matching member_committee row. own limits the target committee and its events; it does not replace creator-ownership checks. The approved PR workflow crosses creating committees without a per-event assignment step. all must apply only to the corresponding permission; PR registration access does not authorize event editing. role_permission remains for separately approved club-wide policies and receives no rows here. No APIs, Supabase functions/RLS or official deployment are implemented by this migration.
+
+The user also approved three optional fictional DATA examples: Noura Demo (Leader), Faisal Demo (Co-Leader) and Hala Demo (Member), with example.test emails, no global roles and no additional skills. They extend the original five-person graph without changing existing people. The seed reuses references and preserves the eight policy rows. Disposable tests verify exact metadata, identity/defaults, required fields, role/scope/NULL checks, expression uniqueness, restrictive FKs, Prisma relations, compatible IDs, conflict/missing-reference rollback, clean/no-op replay and optional membership-to-policy joins. No live API allow/deny behavior is claimed.
+
 ## Apply migrations — teammates
 
 Run these commands from the backend clone after pulling the team's merged updates. Preserve your existing `.env`.
@@ -99,22 +109,22 @@ The services should be healthy and Prisma should report that the database schema
 
 In pgAdmin, expand **GDG Local PostgreSQL → Databases → gdg_platform → Schemas → public → Tables** and refresh **Tables**. Use your `POSTGRES_DB` value if you changed the default database name.
 
-Expect these fifteen project tables, plus `_prisma_migrations`:
+Expect these sixteen project tables, plus `_prisma_migrations`:
 
 | Area | Tables |
 | --- | --- |
 | People and access registries | `person`, `role`, `skill`, `permission`, `role_permission` |
-| Group membership | `member`, `committee`, `member_committee`, `member_role`, `member_skill` |
+| Group membership | `member`, `committee`, `member_committee`, `member_role`, `member_skill`, `committee_permission` |
 | Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
 | Attendance incidents | `registration_blacklist_entries` |
 
-Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Permission contains the 30 approved definitions described above. Other project tables, including role_permission, are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
+Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Permission contains the 30 approved definitions described above. Committee contains DATA and PR references; committee_permission contains eight approved rules. Other project tables, including role_permission and all memberships, are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
 
 ## Optional development seed
 
 > **Optional and local only:** Docker startup never invokes the seed. For the complete beginner workflow, expected rows, pgAdmin inspection and conflict handling, follow [Add the local demo people](../SETUP.md#optional-add-the-local-demo-people).
 
-Migrations install the three approved roles, 32 skill definitions and 30 permission definitions; the demo graph is a separate opt-in command, not migration history. After migrations finish:
+Migrations install the three approved roles, 32 skill definitions and 30 permission definitions; DATA/PR references and eight committee rules are also installed. The demo graph is a separate opt-in command, not migration history. After migrations finish:
 
 ```bash
 docker compose exec -T backend pnpm seed:dev
@@ -126,7 +136,7 @@ Successful execution prints `Local development seed completed.`. The command run
 
 The fixture is in prisma/seed-development.sql and is launched by scripts/seed-development.mjs through the installed Prisma CLI. No dependencies, Prisma config hooks or Compose startup changes are required. Only PostgreSQL URLs on localhost, 127.0.0.1, ::1 or the Compose db hostname are accepted, with an optional single schema=public query parameter. NODE_ENV=production, remote hosts and unexpected connection options are rejected before Prisma runs; credentials and database output are not printed. An explicitly supplied DATABASE_URL takes precedence over env files; dotenv override mode is disabled in the launcher and removed from the child environment so Prisma uses the checked target.
 
-On a fresh migrated database it adds 5 person, 5 member, 5 committee, 8 member_committee, 1 member_role and 15 member_skill rows. The person/member IDs are generated, not fixed. The 3 role and 32 skill definitions are reused; permission, role_permission and event tables remain unchanged. Names, supplied personal emails and relationships follow the approved [local seed plan](superpowers/plans/2026-10-15-optional-local-development-seed.md). Sara is fictional. Four members are current; Mohmmad is alumni. Leen stays current and holds GROUP_LEADER without a committee assignment. All have is_active=true; auth_user_id and unspecified optional fields remain NULL when created. No Auth identities, passwords, messages or login functionality are created.
+On a fresh migrated database it adds 8 person, 8 member, 4 additional committee, 11 member_committee, 1 member_role and 15 member_skill rows. DATA/PR are reused, yielding 6 committees total. The person/member IDs are generated, not fixed. The 3 role and 32 skill definitions are reused; permission, role_permission, committee_permission and event tables remain unchanged by the seed. The original names, supplied personal emails and relationships follow the approved [local seed plan](superpowers/plans/2026-10-15-optional-local-development-seed.md); the three DATA extensions follow the [committee plan](superpowers/plans/2026-10-16-committee-permissions.md). Sara and the three DATA examples are fictional. Seven members are current; Mohmmad is alumni. Leen stays current and holds GROUP_LEADER without a committee assignment. All have is_active=true; auth_user_id and unspecified optional fields remain NULL when created. No Auth identities, passwords, messages or login functionality are created.
 
 The whole graph is transactional and concurrent seed invocations serialize on one advisory transaction lock. Personal email matching uses lower(btrim(email_personal)); committee code and exact skill names resolve existing IDs. Compatible existing rows are reused without updates. Re-running leaves rows/timestamps unchanged and restores missing expected links while preserving additional links. Existing optional details are not erased. A missing registry definition or conflicting name/type/active state/auth link/committee parent/position/open-role metadata fails atomically; the command never overwrites those records or deletes rows to force success.
 
@@ -153,6 +163,7 @@ Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. K
 | permission_registry_requires_empty_permission_tables | Preserve old permissions/role links for review; do not delete rows or bypass the guard. |
 | role_permission_requires_empty_link_table | Preserve existing role links for review; do not delete rows or bypass the guard. |
 | permission_pkey during permission-reference migration | Preserve existing definitions and links; inspect the duplicate code and failed migration state before any reviewed recovery. Do not overwrite/delete the existing definition or skip the migration. |
+| committee_permission_requires_matching_committees | Preserve DATA/PR definitions and memberships; inspect the differing name/parent before a reviewed recovery. No definitions are overwritten. |
 | P3009 / a previous migration failed | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back. |
 | Backend is healthy but tables are missing in pgAdmin | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above. |
 

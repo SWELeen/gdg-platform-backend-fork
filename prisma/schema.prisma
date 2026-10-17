@@ -85,9 +85,10 @@ model Permission {
   grantPermission String? @map("grant_permission") @db.Text
   isSensitive     Boolean @default(false) @map("is_sensitive")
 
-  grant  Permission?      @relation("PermissionGrantRequirement", fields: [grantPermission], references: [code], onDelete: NoAction, onUpdate: NoAction)
-  grants Permission[]     @relation("PermissionGrantRequirement")
-  roles  RolePermission[]
+  grant      Permission?           @relation("PermissionGrantRequirement", fields: [grantPermission], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  grants     Permission[]          @relation("PermissionGrantRequirement")
+  roles      RolePermission[]
+  committees CommitteePermission[]
 
   @@map("permission")
 }
@@ -174,13 +175,31 @@ model Committee {
   committeeCode     String @unique @map("committee_code") @db.VarChar(20)
   parentCommitteeId Int?   @map("parent_committee_id")
 
-  parent   Committee?        @relation("CommitteeHierarchy", fields: [parentCommitteeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
-  children Committee[]       @relation("CommitteeHierarchy")
-  members  MemberCommittee[]
-  events   Event[]
+  parent      Committee?            @relation("CommitteeHierarchy", fields: [parentCommitteeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
+  children    Committee[]           @relation("CommitteeHierarchy")
+  members     MemberCommittee[]
+  events      Event[]
+  permissions CommitteePermission[]
 
   @@index([parentCommitteeId])
   @@map("committee")
+}
+
+model CommitteePermission {
+  id                   Int     @id @default(autoincrement())
+  committeeId          Int?    @map("committee_id")
+  committeeRole        String  @map("committee_role") @db.Text
+  code                 String  @db.Text
+  appliesTo            String  @map("applies_to") @db.Text
+  includeSubCommittees Boolean @default(false) @map("include_sub_committees")
+
+  committee  Committee? @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
+  permission Permission @relation(fields: [code], references: [code], onDelete: Restrict, onUpdate: NoAction)
+
+  // SQL enforces role/scope checks and COALESCE(committee_id, 0) uniqueness.
+  @@index([committeeId, committeeRole], map: "committee_permission_committee_role_idx")
+  @@index([code], map: "committee_permission_code_idx")
+  @@map("committee_permission")
 }
 
 model MemberCommittee {

@@ -1,0 +1,72 @@
+{
+  "committees": [
+    {
+      "committee_code": "DATA",
+      "committee_name": "Data",
+      "parent_committee_code": null
+    },
+    {
+      "committee_code": "PR",
+      "committee_name": "Public Relations",
+      "parent_committee_code": null
+    }
+  ],
+  "permissions": [
+    {
+      "committee_code": "DATA",
+      "committee_role": "Co-Leader",
+      "code": "events.create",
+      "applies_to": "own",
+      "include_sub_committees": false
+    },
+    {
+      "committee_code": "DATA",
+      "committee_role": "Leader",
+      "code": "events.create",
+      "applies_to": "own",
+      "include_sub_committees": false
+    },
+    {
+      "committee_code": "PR",
+      "committee_role": "Co-Leader",
+      "code": "registrants.view",
+      "applies_to": "all",
+      "include_sub_committees": false
+    },
+    {
+      "committee_code": "PR",
+      "committee_role": "Co-Leader",
+      "code": "registrations.review",
+      "applies_to": "all",
+      "include_sub_committees": false
+    },
+    {
+      "committee_code": "PR",
+      "committee_role": "Leader",
+      "code": "registrants.view",
+      "applies_to": "all",
+      "include_sub_committees": false
+    },
+    {
+      "committee_code": "PR",
+      "committee_role": "Leader",
+      "code": "registrations.review",
+      "applies_to": "all",
+      "include_sub_committees": false
+    },
+    {
+      "committee_code": "PR",
+      "committee_role": "Member",
+      "code": "registrants.view",
+      "applies_to": "all",
+      "include_sub_committees": false
+    },
+    {
+      "committee_code": "PR",
+      "committee_role": "Member",
+      "code": "registrations.review",
+      "applies_to": "all",
+      "include_sub_committees": false
+    }
+  ]
+}
