@@ -2,7 +2,7 @@
 
 Run NestJS, PostgreSQL, and pgAdmin on your computer. Each developer has a separate local database and data.
 
-> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles and 32 skills. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want the five agreed demo members and their relationships. This data stays in your local database; it is not shared through Supabase.
+> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles, 32 skills and 30 permission definitions. These definitions do not grant permissions to any role. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want the five agreed demo members and their relationships. This data stays in your local database; it is not shared through Supabase.
 
 ## 1. Install the tools
 
@@ -87,7 +87,7 @@ To verify the migration, run this from the backend folder:
 docker compose exec -T backend pnpm exec prisma migrate status --config prisma7.config.ts
 ```
 
-Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER) and the 32 approved skill definitions; other tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
+Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER), the 32 approved skill definitions and the 30 approved permission definitions; other tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
 
 ## Optional: Add the local demo people
 
@@ -115,6 +115,8 @@ On a fresh migrated database, the result is:
 | `member_role` | 1 | Leen's `GROUP_LEADER` assignment |
 | `member_skill` | 15 | Three skill selections per member |
 | `role` / `skill` | 3 / 32 | Existing migration reference values, reused by the seed |
+| `permission` | 30 | Migration reference definitions, unchanged by the seed |
+| `role_permission` | 0 | No permissions granted to roles |
 
 Existing unrelated data is kept, so totals can be larger on a database you already use. `permission`, `role_permission` and event tables are unchanged.
 

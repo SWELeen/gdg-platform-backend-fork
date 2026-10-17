@@ -52,6 +52,9 @@ const expectedTables = [
   'member_skill',
   'skill',
 ].sort();
+const approvedPermissions = JSON.parse(
+  readFileSync('test/fixtures/approved-permissions.json', 'utf8'),
+);
 const approvedSkills = JSON.parse(
   readFileSync('test/fixtures/approved-skills.json', 'utf8'),
 );
@@ -343,7 +346,7 @@ try {
       member_skill: 15,
       role: 3,
       skill: 32,
-      permission: 0,
+      permission: 30,
       role_permission: 0,
       events: 0,
     });
@@ -356,7 +359,7 @@ try {
       ),
       { DEV: null, WEB: 'DEV', CYBER: 'DEV', PM: null, PR: null },
     );
-    for (const table of ['role', 'skill'])
+    for (const table of ['role', 'skill', 'permission', 'role_permission'])
       assert.equal(
         domainRows(seedDatabase).find(([key]) => key === table)[1],
         initial.find(([key]) => key === table)[1],
@@ -550,8 +553,8 @@ try {
       domainRows(database).map(([table, rows]) => [
         table,
         JSON.parse(rows).sort((a, b) =>
-          String(a.role_code ?? a.skill_id ?? '').localeCompare(
-            String(b.role_code ?? b.skill_id ?? ''),
+          String(a.role_code ?? a.skill_id ?? a.code ?? '').localeCompare(
+            String(b.role_code ?? b.skill_id ?? b.code ?? ''),
           ),
         ),
       ]),
@@ -579,7 +582,11 @@ try {
             ? [...approvedSkills].sort((a, b) =>
                 String(a.skill_id).localeCompare(String(b.skill_id)),
               )
-            : [],
+            : table === 'permission'
+              ? [...approvedPermissions].sort((a, b) =>
+                  a.code.localeCompare(b.code),
+                )
+              : [],
       ]),
       'Tests must preserve approved seeds and clean up all committed fixtures',
     );
@@ -893,6 +900,71 @@ try {
   );
   console.log(
     'PASS: role-permission migration rejects populated legacy links and preserves all other records without seeding assignments.',
+  );
+
+  const permissionReferenceSQL = readFileSync(
+    'prisma/migrations/20261016220000_permission_reference_values/migration.sql',
+    'utf8',
+  );
+  sql(
+    roleDatabase,
+    "INSERT INTO role_permission(role_code, code) VALUES ('ADVISOR', 'test.preserved')",
+  );
+  const beforeReferenceSchema = schemaDump(roleDatabase);
+  const collision = approvedPermissions.at(-1);
+  for (const description of [
+    collision.description,
+    'Existing local definition',
+  ]) {
+    const row = JSON.stringify({ ...collision, description }).replaceAll(
+      "'",
+      "''",
+    );
+    sql(
+      roleDatabase,
+      `INSERT INTO permission SELECT * FROM jsonb_populate_record(NULL::permission, '${row}'::jsonb)`,
+    );
+    const beforeRows = domainRows(roleDatabase);
+    assert.throws(
+      () => sql(roleDatabase, permissionReferenceSQL),
+      /permission_pkey/,
+    );
+    assert.equal(schemaDump(roleDatabase), beforeReferenceSchema);
+    assert.deepEqual(
+      domainRows(roleDatabase),
+      beforeRows,
+      'A colliding permission definition must roll back the whole migration',
+    );
+    sql(roleDatabase, `DELETE FROM permission WHERE code='${collision.code}'`); // Runner-owned collision fixture only.
+  }
+  const beforeReferenceRows = domainRows(roleDatabase);
+  sql(roleDatabase, permissionReferenceSQL);
+  assert.equal(
+    schemaDump(roleDatabase),
+    beforeReferenceSchema,
+    'Reference insertion must not change schema',
+  );
+  assert.deepEqual(
+    domainRows(roleDatabase).filter(([table]) => table !== 'permission'),
+    beforeReferenceRows.filter(([table]) => table !== 'permission'),
+    'Reference insertion must preserve all other records and existing role links',
+  );
+  assert.deepEqual(
+    JSON.parse(
+      sql(
+        roleDatabase,
+        'SELECT jsonb_agg(to_jsonb(p) ORDER BY code) FROM permission p',
+      ),
+    ),
+    [
+      ...JSON.parse(
+        beforeReferenceRows.find(([table]) => table === 'permission')[1],
+      ),
+      ...approvedPermissions,
+    ].sort((a, b) => a.code.localeCompare(b.code)),
+  );
+  console.log(
+    'PASS: permission reference migration inserts exactly the approved definitions, preserves unrelated records and role links, and rejects identical/conflicting codes atomically.',
   );
 
   function verifyFailure(source, history, database, expected) {
