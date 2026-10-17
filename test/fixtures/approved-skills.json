@@ -1,0 +1,130 @@
+[
+  {
+    "skill_id": 1,
+    "skill_name": "Time Management & Organization"
+  },
+  {
+    "skill_id": 2,
+    "skill_name": "Project Planning & Scheduling"
+  },
+  {
+    "skill_id": 3,
+    "skill_name": "Team Leadership & Task Distribution"
+  },
+  {
+    "skill_id": 4,
+    "skill_name": "Critical Thinking & Decision Making"
+  },
+  {
+    "skill_id": 5,
+    "skill_name": "Reporting & Progress Tracking"
+  },
+  {
+    "skill_id": 6,
+    "skill_name": "Quality Assurance & Attention to Detail"
+  },
+  {
+    "skill_id": 7,
+    "skill_name": "Negotiation & Relationship Management"
+  },
+  {
+    "skill_id": 8,
+    "skill_name": "Using Management Tools (Trello, Notion, ClickUp)"
+  },
+  {
+    "skill_id": 9,
+    "skill_name": "Preparing Official Letters & Correspondence"
+  },
+  {
+    "skill_id": 10,
+    "skill_name": "Effective Communication Skills"
+  },
+  {
+    "skill_id": 11,
+    "skill_name": "Researching Speakers / Sponsors"
+  },
+  {
+    "skill_id": 12,
+    "skill_name": "Relationship Building, Negotiation & Persuasion"
+  },
+  {
+    "skill_id": 13,
+    "skill_name": "Coordination & Follow-up"
+  },
+  {
+    "skill_id": 14,
+    "skill_name": "Email & Electronic Correspondence Management"
+  },
+  {
+    "skill_id": 15,
+    "skill_name": "Public Speaking"
+  },
+  {
+    "skill_id": 16,
+    "skill_name": "Using Google Workspace Tools (Docs, Sheets, Forms)"
+  },
+  {
+    "skill_id": 17,
+    "skill_name": "Advertising Poster Design"
+  },
+  {
+    "skill_id": 18,
+    "skill_name": "Print Design"
+  },
+  {
+    "skill_id": 19,
+    "skill_name": "Proficiency in Design Tools (Canva, Photoshop, Illustrator)"
+  },
+  {
+    "skill_id": 20,
+    "skill_name": "Motion Graphics"
+  },
+  {
+    "skill_id": 21,
+    "skill_name": "Photography"
+  },
+  {
+    "skill_id": 22,
+    "skill_name": "Videography"
+  },
+  {
+    "skill_id": 23,
+    "skill_name": "Video Editing & Production"
+  },
+  {
+    "skill_id": 24,
+    "skill_name": "Creative Idea Generation"
+  },
+  {
+    "skill_id": 25,
+    "skill_name": "Presentation Template Design"
+  },
+  {
+    "skill_id": 26,
+    "skill_name": "Visual Harmony & Color Selection"
+  },
+  {
+    "skill_id": 27,
+    "skill_name": "Creative Writing & Editing"
+  },
+  {
+    "skill_id": 28,
+    "skill_name": "Research & Analysis"
+  },
+  {
+    "skill_id": 29,
+    "skill_name": "Proofreading"
+  },
+  {
+    "skill_id": 30,
+    "skill_name": "Organizing & Structuring Ideas"
+  },
+  {
+    "skill_id": 31,
+    "skill_name": "Storytelling"
+  },
+  {
+    "skill_id": 32,
+    "skill_name": "Presentation & Marketing Content Preparation"
+  }
+]
