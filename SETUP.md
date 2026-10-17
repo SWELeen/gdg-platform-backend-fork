@@ -2,7 +2,7 @@
 
 Run NestJS, PostgreSQL, and pgAdmin on your computer. Each developer has a separate local database and data.
 
-> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles, 32 skills and 30 permission definitions. It also installs DATA/PR reference committees and eight committee permission rules. Global role_permission remains empty; API authorization is separate. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want eight demo members, including three fictional DATA positions and their relationships. This data stays in your local database; it is not shared through Supabase.
+> **Demo data is optional.** Starting Docker applies migrations and installs the 3 roles, 32 skills and 30 permission definitions. It also installs DATA/PR reference committees and eight committee permission rules. It installs two global role_permission links: GROUP_LEADER and GROUP_CO_LEADER each receive members.manage; ADVISOR receives none. API authorization is separate. It does **not** add demo people. After setup, run the [optional seed step](#optional-add-the-local-demo-people) if you want ten demo members, including three fictional DATA positions and examples of all three club roles. This data stays in your local database; it is not shared through Supabase.
 
 ## 1. Install the tools
 
@@ -87,7 +87,7 @@ To verify the migration, run this from the backend folder:
 docker compose exec -T backend pnpm exec prisma migrate status --config prisma7.config.ts
 ```
 
-Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER), the 32 approved skill definitions and the 30 approved permission definitions, DATA/PR reference committees and eight committee permission rules; other tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
+Prisma should report that the database schema is up to date. Fresh setup inserts the three approved role definitions (ADVISOR, GROUP_LEADER, GROUP_CO_LEADER), the 32 approved skill definitions and the 30 approved permission definitions, DATA/PR reference committees, eight committee permission rules and two role_permission links (GROUP_LEADER and GROUP_CO_LEADER each get members.manage); other project tables are empty. Setup does not create accounts, member-role assignments or sample events. For errors or schema changes, see [Database and Prisma](docs/database-prisma.md).
 
 ## Optional: Add the local demo people
 
@@ -108,16 +108,18 @@ On a fresh migrated database, the result is:
 
 | Table | Rows | What to inspect |
 | --- | --- | --- |
-| `person` | 8 | Names and personal emails |
-| `member` | 8 | Seven current members; Mohmmad is alumni |
+| `person` | 10 | Names and personal emails |
+| `member` | 10 | Nine current members; Mohmmad is alumni |
 | `committee` | 6 | DATA and PR reused from migrations; Web/Cyber under Development; PM independent |
 | `member_committee` | 11 | Committee memberships and positions |
-| `member_role` | 1 | Leen's `GROUP_LEADER` assignment |
-| `member_skill` | 15 | Three selections per original demo member; DATA examples have none |
+| `member_role` | 3 | Leen: GROUP_LEADER; Omar: GROUP_CO_LEADER; Rania: ADVISOR |
+| `member_skill` | 15 | Three selections per original demo member; the five later examples have none |
 | `role` / `skill` | 3 / 32 | Existing migration reference values, reused by the seed |
 | `permission` | 30 | Migration reference definitions, unchanged by the seed |
-| `role_permission` | 0 | No permissions granted to global roles |
+| `role_permission` | 2 | Both club leadership roles have `members.manage`; ADVISOR has none |
 | `committee_permission` | 8 | DATA leadership and PR rules installed by migrations; seed leaves them unchanged |
+
+Leen's GROUP_LEADER and Omar's GROUP_CO_LEADER assignments match members.manage through role_permission. Rania's ADVISOR assignment has no permissions. Committee leadership alone does not give a global role. These are policy rows, not working API authorization.
 
 Existing unrelated data is kept, so totals can be larger on a database you already use. `permission`, `role_permission`, `committee_permission` and event tables are unchanged by the optional seed.
 
@@ -131,8 +133,12 @@ Existing unrelated data is kept, so totals can be larger on a database you alrea
 | Noura Demo (fictional) | DATA Leader | None |
 | Faisal Demo (fictional) | DATA Co-Leader | None |
 | Hala Demo (fictional) | DATA Member | None |
+| Omar Demo (fictional) | None | `GROUP_CO_LEADER` |
+| Rania Demo (fictional) | None | `ADVISOR` |
 
 Noura, Faisal and Hala are fictional examples with example.test emails. They have no global roles, skill selections or Auth accounts. The seed reuses DATA and PR without changing their IDs or rules. A membership-to-policy join matches events.create/own for the DATA Leader and Co-Leader, matches no rule for the DATA Member, and matches the two PR registration rules for Mohmmad. This is a data relationship check; NestJS must still enforce authentication, scope and event ownership.
+
+Omar Demo (club.coleader@example.test) and Rania Demo (club.advisor@example.test) are fictional current members without committees, skills or Auth accounts. They cover GROUP_CO_LEADER and ADVISOR respectively. If you previously ran the eight-member seed, run the same optional command again: compatible existing rows are reused, and only missing demo records/links are added. No reset is needed.
 
 These are database demo records. They do not create login accounts/passwords or modify permission policy rows, and do not enable dashboard/API features that have not been implemented.
 

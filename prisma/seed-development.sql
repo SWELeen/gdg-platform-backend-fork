@@ -68,7 +68,11 @@ BEGIN
         ('Faisal Demo', 'data.coleader@example.test', 'current',
          ARRAY['DATA'], ARRAY['Co-Leader'], ARRAY[]::TEXT[], NULL::TEXT),
         ('Hala Demo', 'data.member@example.test', 'current',
-         ARRAY['DATA'], ARRAY['Member'], ARRAY[]::TEXT[], NULL::TEXT)
+         ARRAY['DATA'], ARRAY['Member'], ARRAY[]::TEXT[], NULL::TEXT),
+        ('Omar Demo', 'club.coleader@example.test', 'current',
+         ARRAY[]::TEXT[], ARRAY[]::TEXT[], ARRAY[]::TEXT[], 'GROUP_CO_LEADER'),
+        ('Rania Demo', 'club.advisor@example.test', 'current',
+         ARRAY[]::TEXT[], ARRAY[]::TEXT[], ARRAY[]::TEXT[], 'ADVISOR')
     ) AS fixture(full_name, email, member_type, committees, positions, skills, global_role)
     LOOP
         SELECT * INTO existing_person FROM person

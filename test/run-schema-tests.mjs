@@ -56,6 +56,9 @@ const expectedTables = [
 const approvedCommitteePolicy = JSON.parse(
   readFileSync('test/fixtures/approved-committee-permissions.json', 'utf8'),
 );
+const approvedRolePermissions = JSON.parse(
+  readFileSync('test/fixtures/approved-role-permissions.json', 'utf8'),
+);
 const approvedPermissions = JSON.parse(
   readFileSync('test/fixtures/approved-permissions.json', 'utf8'),
 );
@@ -334,6 +337,22 @@ try {
         roles: [],
         skills: [],
       },
+      {
+        name: 'Omar Demo',
+        email: 'club.coleader@example.test',
+        type: 'current',
+        committees: {},
+        roles: ['GROUP_CO_LEADER'],
+        skills: [],
+      },
+      {
+        name: 'Rania Demo',
+        email: 'club.advisor@example.test',
+        type: 'current',
+        committees: {},
+        roles: ['ADVISOR'],
+        skills: [],
+      },
     ]
       .map((row) => ({
         ...row,
@@ -382,16 +401,16 @@ try {
       ]),
     );
     assert.deepEqual(counts, {
-      person: 9,
-      member: 8,
+      person: 11,
+      member: 10,
       committee: 6,
       member_committee: 11,
-      member_role: 1,
+      member_role: 3,
       member_skill: 15,
       role: 3,
       skill: 32,
       permission: 30,
-      role_permission: 0,
+      role_permission: 2,
       committee_permission: 8,
       events: 0,
     });
@@ -494,6 +513,39 @@ try {
       seedDatabase,
       "UPDATE person SET email_personal='babaset99@gmail.com' WHERE email_personal=' BABASET99@GMAIL.COM '",
     );
+    assert.deepEqual(
+      JSON.parse(
+        sql(
+          seedDatabase,
+          `SELECT jsonb_agg(to_jsonb(r) ORDER BY lower(email),role_code) FROM (
+        SELECT p.email_personal AS email, mr.role_code,
+          COALESCE(jsonb_agg(rp.code ORDER BY rp.code) FILTER (WHERE rp.code IS NOT NULL), '[]'::jsonb) AS permissions
+        FROM person p JOIN member m USING(person_id) JOIN member_role mr USING(member_id)
+        LEFT JOIN role_permission rp USING(role_code)
+        GROUP BY p.email_personal, mr.role_code) r`,
+        ),
+      ),
+      [
+        {
+          email: 'LeenAlghamdi@gmail.com',
+          role_code: 'GROUP_LEADER',
+          permissions: ['members.manage'],
+        },
+        {
+          email: 'club.advisor@example.test',
+          role_code: 'ADVISOR',
+          permissions: [],
+        },
+        {
+          email: 'club.coleader@example.test',
+          role_code: 'GROUP_CO_LEADER',
+          permissions: ['members.manage'],
+        },
+      ].sort((a, b) =>
+        a.email.toLowerCase().localeCompare(b.email.toLowerCase()),
+      ),
+      'Only the club leader and co-leader match members.manage; the advisor has no permissions and committee leadership adds no global role',
+    );
     const first = domainRows(seedDatabase);
     seed(seedDatabase);
     assert.deepEqual(
@@ -571,11 +623,53 @@ try {
       );
       sql(seedDatabase, restore);
     }
+    // Reconstruct the prior eight-person fixture only on this runner-owned database.
+    sql(
+      seedDatabase,
+      `
+      DELETE FROM member_role WHERE member_id IN (
+        SELECT m.member_id FROM member m JOIN person p USING(person_id)
+        WHERE p.email_personal IN ('club.coleader@example.test','club.advisor@example.test'));
+      DELETE FROM member WHERE person_id IN (
+        SELECT person_id FROM person WHERE email_personal IN ('club.coleader@example.test','club.advisor@example.test'));
+      DELETE FROM person WHERE email_personal IN ('club.coleader@example.test','club.advisor@example.test');
+    `,
+    );
+    const priorSeed = domainRows(seedDatabase);
+    assert.equal(sql(seedDatabase, 'SELECT count(*) FROM member'), '8');
+    seed(seedDatabase);
+    const upgradedSeed = new Map(domainRows(seedDatabase));
+    for (const [table, rows] of priorSeed) {
+      const retained = new Set(
+        JSON.parse(upgradedSeed.get(table)).map((row) => JSON.stringify(row)),
+      );
+      for (const row of JSON.parse(rows))
+        assert(
+          retained.has(JSON.stringify(row)),
+          `Extending the old seed must preserve existing ${table} rows and timestamps`,
+        );
+    }
+    assert.equal(sql(seedDatabase, 'SELECT count(*) FROM member'), '10');
+    assert.equal(sql(seedDatabase, 'SELECT count(*) FROM member_role'), '3');
+    const upgradedRows = domainRows(seedDatabase);
+    seed(seedDatabase);
+    assert.deepEqual(domainRows(seedDatabase), upgradedRows);
+
     for (const [suffix, change, code] of [
       [
         'role',
-        "DELETE FROM role WHERE role_code='GROUP_LEADER'",
+        "DELETE FROM role_permission WHERE role_code='GROUP_LEADER'; DELETE FROM role WHERE role_code='GROUP_LEADER'",
         'development_seed_missing_role',
+      ],
+      ...['GROUP_CO_LEADER', 'ADVISOR'].map((roleCode) => [
+        `role_${roleCode.toLowerCase()}`,
+        `DELETE FROM role_permission WHERE role_code='${roleCode}'; DELETE FROM role WHERE role_code='${roleCode}'`,
+        'development_seed_missing_role',
+      ]),
+      [
+        'advisor_conflict',
+        "INSERT INTO person(full_name,email_personal) VALUES ('Existing conflicting advisor','club.advisor@example.test')",
+        'development_seed_conflict_person',
       ],
       [
         'skill',
@@ -600,7 +694,7 @@ try {
       );
     }
     console.log(
-      'PASS: optional seed exact graph, defaults, repeat/no-op, missing-link repair, unrelated data, conflict rejection and atomic rollback.',
+      'PASS: optional seed exact graph, all three club roles/permission joins, eight-to-ten-member upgrade preservation, defaults, repeat/no-op, missing-link repair, unrelated data, conflict rejection and atomic rollback.',
     );
   }
 
@@ -694,7 +788,9 @@ try {
                 ? [...approvedPermissions].sort((a, b) =>
                     a.code.localeCompare(b.code),
                   )
-                : [],
+                : table === 'role_permission'
+                  ? approvedRolePermissions
+                  : [],
         ]),
       'Tests must preserve approved seeds and clean up all committed fixtures',
     );
@@ -1167,6 +1263,87 @@ try {
   );
   console.log(
     'PASS: committee permissions preserve compatible local IDs and all previous records, reject committee name/parent conflicts and missing permissions atomically, and insert exactly eight rules.',
+  );
+
+  const clubRoleSQL = readFileSync(
+    'prisma/migrations/20261016233000_club_role_permissions/migration.sql',
+    'utf8',
+  );
+  const beforeClubSchema = schemaDump(roleDatabase);
+  // All collision/missing-reference fixtures belong only to this disposable database.
+  for (const roleCode of ['GROUP_LEADER', 'GROUP_CO_LEADER']) {
+    sql(
+      roleDatabase,
+      `INSERT INTO role_permission(role_code,code) VALUES ('${roleCode}','members.manage')`,
+    );
+    const before = domainRows(roleDatabase);
+    assert.throws(() => sql(roleDatabase, clubRoleSQL), /role_permission_pkey/);
+    assert.deepEqual(
+      domainRows(roleDatabase),
+      before,
+      'A duplicate pair must roll back both grants',
+    );
+    assert.equal(schemaDump(roleDatabase), beforeClubSchema);
+    sql(
+      roleDatabase,
+      `DELETE FROM role_permission WHERE role_code='${roleCode}' AND code='members.manage'`,
+    );
+  }
+  for (const roleCode of ['GROUP_LEADER', 'GROUP_CO_LEADER']) {
+    const role = sql(
+      roleDatabase,
+      `SELECT to_jsonb(r) FROM role r WHERE role_code='${roleCode}'`,
+    );
+    sql(roleDatabase, `DELETE FROM role WHERE role_code='${roleCode}'`);
+    const before = domainRows(roleDatabase);
+    assert.throws(
+      () => sql(roleDatabase, clubRoleSQL),
+      /role_permission_role_code_fkey/,
+    );
+    assert.deepEqual(domainRows(roleDatabase), before);
+    sql(
+      roleDatabase,
+      `INSERT INTO role SELECT * FROM jsonb_populate_record(NULL::role,'${role.replaceAll("'", "''")}'::jsonb)`,
+    );
+  }
+  const managePermission = sql(
+    roleDatabase,
+    "SELECT to_jsonb(p) FROM permission p WHERE code='members.manage'",
+  );
+  sql(roleDatabase, "DELETE FROM permission WHERE code='members.manage'");
+  const beforeMissingPermission = domainRows(roleDatabase);
+  assert.throws(
+    () => sql(roleDatabase, clubRoleSQL),
+    /role_permission_code_fkey/,
+  );
+  assert.deepEqual(domainRows(roleDatabase), beforeMissingPermission);
+  sql(
+    roleDatabase,
+    `INSERT INTO permission SELECT * FROM jsonb_populate_record(NULL::permission,'${managePermission.replaceAll("'", "''")}'::jsonb)`,
+  );
+  const beforeClubRows = domainRows(roleDatabase);
+  sql(roleDatabase, clubRoleSQL);
+  assert.equal(schemaDump(roleDatabase), beforeClubSchema);
+  assert.deepEqual(
+    domainRows(roleDatabase).filter(([table]) => table !== 'role_permission'),
+    beforeClubRows.filter(([table]) => table !== 'role_permission'),
+    'Club policy insertion must preserve all other data, including committee rules and member roles',
+  );
+  assert.deepEqual(
+    JSON.parse(
+      sql(
+        roleDatabase,
+        'SELECT jsonb_agg(to_jsonb(r) ORDER BY role_code,code) FROM role_permission r',
+      ),
+    ),
+    [
+      { role_code: 'ADVISOR', code: 'test.preserved' },
+      ...approvedRolePermissions,
+    ],
+    'Insert only two approved pairs and retain unrelated local policy',
+  );
+  console.log(
+    'PASS: club role migration inserts only two approved links, preserves schema/all other records/existing links, and rejects duplicate pairs and missing references atomically.',
   );
 
   function verifyFailure(source, history, database, expected) {

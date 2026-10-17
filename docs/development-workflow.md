@@ -30,11 +30,11 @@ Follow [Backend Local Setup](../SETUP.md) once, including the local `.env` and p
 1. Pull the reviewed backend changes using your team's Git process and keep your existing `.env`.
 2. Run `gdg backend run`. Startup applies pending committed migrations, then starts the backend at `http://localhost:3001`.
 3. Verify migration status using the command in the setup guide. A migration failure must be resolved before continuing; preserve existing data and ask the schema owner for help.
-4. **Optional:** from the backend folder, run `docker compose exec -T backend pnpm seed:dev` when you want the five demo members and their relationships. Follow the [seed walkthrough](../SETUP.md#optional-add-the-local-demo-people) for expected rows and conflict handling.
+4. **Optional:** from the backend folder, run `docker compose exec -T backend pnpm seed:dev` when you want the ten demo members and their relationships. Follow the [seed walkthrough](../SETUP.md#optional-add-the-local-demo-people) for expected rows and conflict handling.
 5. Develop with the source watcher, inspect local tables in pgAdmin, and run the checks relevant to your change. `gdg backend test` runs checks/application e2e inside the running container.
 6. Run `gdg backend stop` when finished. Data remains available next time.
 
-Migrations provide the structure and approved role/skill reference values for everyone. The optional seed provides local demo people; it never runs on startup and creates no Auth identities or permission grants. Restarting keeps existing demo rows without rerunning the seed. Each developer's database is independent; sharing code does not synchronize its rows.
+Migrations provide the structure, approved reference values, eight committee rules and two club role links (members.manage for GROUP_LEADER and GROUP_CO_LEADER; none for ADVISOR). The optional seed provides local demo people; it never runs on startup, creates no Auth identities and does not modify role_permission or committee_permission. Leen's GROUP_LEADER and Omar's GROUP_CO_LEADER assignments match members.manage in the policy data; Rania's ADVISOR assignment has none. The ten-person fixture covers all three club roles; API enforcement remains separate. Restarting keeps existing demo rows without rerunning the seed. Each developer's database is independent; sharing code does not synchronize its rows.
 
 Teammates apply committed migrations through startup. Only schema authors create new migrations, following [Database and Prisma](database-prisma.md#schema-authors-only). For a host process instead of the Docker backend, use the [host development instructions](database-prisma.md#optional-host-development).
 

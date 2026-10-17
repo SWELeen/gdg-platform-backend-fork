@@ -50,6 +50,10 @@ The disposable seed checks verify exact people and relationships, reference-valu
 
 For adding data and inspecting it in pgAdmin, follow the [setup walkthrough](../SETUP.md#optional-add-the-local-demo-people). Demo records do not provide login accounts or implement authorization.
 
+## Club-role permission checks
+
+Run `node test/run-schema-tests.mjs --seed` to verify the two approved members.manage links, ADVISOR with no initial permissions, Prisma role/permission navigation, existing-data preservation, duplicate/missing-reference rollback and migration replay/recovery on disposable PostgreSQL. The optional-seed check also follows Leen's and Omar's member_role links to members.manage, verifies Rania's ADVISOR has no permissions and proves committee leadership creates no global assignment. It checks extension of the prior eight-member fixture to ten members without changing existing rows/timestamps, repeat execution, missing roles and atomic rollback on a conflicting advisor. It preserves the eight DATA/PR rules. These checks verify policy data; they do not exercise an implemented API authorization guard.
+
 ## Minimum verification expectation
 
 For every change, run the relevant checks that the actual repository exposes and report only those actually run. Where relevant, verify:
