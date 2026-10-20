@@ -8,7 +8,10 @@ export class AuthService {
 
   // who's logged in + what the frontend needs to pick their pages
   async me(user: RequestUser) {
-    const today = new Date(new Date().toISOString().slice(0, 10));
+    // role dates are saudi calendar days
+    const today = new Date(
+      new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
+    );
 
     const person = await this.prisma.person.findUniqueOrThrow({
       where: { personId: user.personId },

@@ -1,8 +1,4 @@
-import {
-  type ExecutionContext,
-  ForbiddenException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import type { ExecutionContext } from '@nestjs/common';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { AuthGuard, type RequestUser } from './auth.guard.js';
 import type { TokenVerifierService } from './token-verifier.service.js';
@@ -79,45 +75,34 @@ describe('AuthGuard', () => {
   it.each([
     ['is not a bearer token', 'Basic abc123'],
     ['has no token after Bearer', 'Bearer '],
-  ])('rejects a header that %s', async (_, header) => {
-    const { context } = requestWith(header);
+  ])('treats a header that %s as a visitor', async (_, header) => {
+    const { request, context } = requestWith(header);
 
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      UnauthorizedException,
-    );
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request.user).toBeUndefined();
     expect(verify).not.toHaveBeenCalled();
   });
 
-  it('rejects a token the verifier does not trust', async () => {
+  it('treats a token the verifier does not trust as a visitor', async () => {
     verify.mockResolvedValue(null);
-    const { context } = requestWith('Bearer bad-token');
+    const { request, context } = requestWith('Bearer bad-token');
 
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      UnauthorizedException,
-    );
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request.user).toBeUndefined();
     expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('rejects a supabase account not linked to any person', async () => {
-    findUnique.mockResolvedValue(null);
-    const { context } = requestWith('Bearer good-token');
-
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      UnauthorizedException,
-    );
-  });
-
-  it('forbids a deactivated person', async () => {
-    findUnique.mockResolvedValue({
-      personId: 6,
-      isActive: false,
-      member: null,
-    });
+  it.each([
+    ['not linked to any person', null],
+    [
+      'linked to a deactivated person',
+      { personId: 6, isActive: false, member: null },
+    ],
+  ])('treats a supabase account %s as a visitor', async (_, person) => {
+    findUnique.mockResolvedValue(person);
     const { request, context } = requestWith('Bearer good-token');
 
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      ForbiddenException,
-    );
+    await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request.user).toBeUndefined();
   });
 

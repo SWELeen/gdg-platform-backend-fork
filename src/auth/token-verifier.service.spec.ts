@@ -100,6 +100,13 @@ describe('TokenVerifierService', () => {
     await expect(makeVerifier().verify(await buildToken())).resolves.toBeNull();
   });
 
+  it('trusts no token when SUPABASE_URL is not set', async () => {
+    const verifier = new TokenVerifierService(new ConfigService({}));
+
+    await expect(verifier.verify(await makeToken())).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('throws when the signing keys cannot be reached', async () => {
     vi.stubGlobal(
       'fetch',

@@ -1,10 +1,8 @@
 import {
   type CanActivate,
   type ExecutionContext,
-  ForbiddenException,
   Inject,
   Injectable,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TokenVerifierService } from './token-verifier.service.js';
@@ -21,7 +19,7 @@ interface AuthRequest {
   user?: RequestUser;
 }
 
-// runs before every route. no token = visitor, routes that need a login reject them
+// runs before every route, only works out who's calling. never blocks, routes that need a login check request.user
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -33,12 +31,11 @@ export class AuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthRequest>();
     const header = request.headers.authorization;
-    if (header === undefined) return true;
+    const token = header && /^Bearer\s+(\S+)$/i.exec(header)?.[1];
+    if (!token) return true;
 
-    const token = /^Bearer\s+(\S+)$/i.exec(header)?.[1];
-    if (!token) throw new UnauthorizedException();
     const identity = await this.verifier.verify(token);
-    if (!identity) throw new UnauthorizedException();
+    if (!identity) return true;
 
     const person = await this.prisma.person.findUnique({
       where: { authUserId: identity.authUserId },
@@ -48,9 +45,8 @@ export class AuthGuard implements CanActivate {
         member: { select: { memberId: true, isActive: true } },
       },
     });
-    // valid token but no person is linked to this supabase account
-    if (!person) throw new UnauthorizedException();
-    if (!person.isActive) throw new ForbiddenException();
+    // no linked person or deactivated = visitor
+    if (!person?.isActive) return true;
 
     request.user = {
       personId: person.personId,
