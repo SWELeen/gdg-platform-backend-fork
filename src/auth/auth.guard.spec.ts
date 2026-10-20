@@ -41,7 +41,11 @@ describe('AuthGuard', () => {
     expect(verify).not.toHaveBeenCalled();
   });
 
-  it('sets personId and memberId for an active member', async () => {
+  it('sets personId, memberId and email for an active member', async () => {
+    verify.mockResolvedValue({
+      authUserId: AUTH_USER_ID,
+      email: 'noura@example.test',
+    });
     findUnique.mockResolvedValue({
       personId: 6,
       isActive: true,
@@ -54,7 +58,11 @@ describe('AuthGuard', () => {
     expect(findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { authUserId: AUTH_USER_ID } }),
     );
-    expect(request.user).toEqual({ personId: 6, memberId: 10000005 });
+    expect(request.user).toEqual({
+      personId: 6,
+      memberId: 10000005,
+      email: 'noura@example.test',
+    });
   });
 
   it.each([

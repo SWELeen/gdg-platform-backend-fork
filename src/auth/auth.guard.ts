@@ -13,6 +13,7 @@ export interface RequestUser {
   personId: number;
   // null if they aren't an active member
   memberId: number | null;
+  email?: string;
 }
 
 interface AuthRequest {
@@ -20,7 +21,7 @@ interface AuthRequest {
   user?: RequestUser;
 }
 
-// runs before every route. no token just means a visitor, routes that need a login turn those away themselves
+// runs before every route. no token = visitor, routes that need a login reject them
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -47,13 +48,14 @@ export class AuthGuard implements CanActivate {
         member: { select: { memberId: true, isActive: true } },
       },
     });
-    // the token's fine but nobody here is linked to that supabase account
+    // valid token but no person is linked to this supabase account
     if (!person) throw new UnauthorizedException();
     if (!person.isActive) throw new ForbiddenException();
 
     request.user = {
       personId: person.personId,
       memberId: person.member?.isActive ? person.member.memberId : null,
+      email: identity.email,
     };
     return true;
   }
