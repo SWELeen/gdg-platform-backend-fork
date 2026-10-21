@@ -11,6 +11,7 @@ import type { PrismaService } from '../prisma/prisma.service.js';
 import { AuthController } from './auth.controller.js';
 import type { RequestUser } from './auth.guard.js';
 import { AuthService } from './auth.service.js';
+import { CheckEmailDto } from './check-email.dto.js';
 import { LoginDto } from './login.dto.js';
 import { SignupDto } from './signup.dto.js';
 
@@ -130,6 +131,57 @@ describe('POST /auth/login', () => {
         metatype: LoginDto,
       }),
     ).resolves.toEqual(body);
+  });
+});
+
+describe('POST /auth/check-email', () => {
+  const body = { email: 'Noura@Example.test' };
+
+  it.each([
+    { found: null, nextStep: 'SIGNUP_REQUIRED' },
+    {
+      found: { personId: 6, authUserId: null },
+      nextStep: 'PASSWORD_SETUP_REQUIRED',
+    },
+    {
+      found: { personId: 6, authUserId: 'linked-auth-user' },
+      nextStep: 'PASSWORD_REQUIRED',
+    },
+  ])('answers $nextStep', async ({ found, nextStep }) => {
+    findFirst.mockReset().mockResolvedValue(found);
+
+    const response = await controller.checkEmail(body);
+
+    expect(response.data).toEqual({ nextStep });
+  });
+
+  it('looks in both email columns, ignoring letter case', async () => {
+    findFirst.mockReset().mockResolvedValue(null);
+
+    await controller.checkEmail(body);
+
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { emailPersonal: { equals: body.email, mode: 'insensitive' } },
+            { emailUniversity: { equals: body.email, mode: 'insensitive' } },
+          ],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    { name: 'missing email', input: {} },
+    { name: 'invalid email', input: { email: 'nope' } },
+  ])('rejects a body with $name', async ({ input }) => {
+    await expect(
+      new ApiValidationPipe().transform(input, {
+        type: 'body',
+        metatype: CheckEmailDto,
+      }),
+    ).rejects.toThrow(BadRequestException);
   });
 });
 

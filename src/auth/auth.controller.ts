@@ -11,6 +11,7 @@ import {
 import { apiSuccess } from '../common/http/api-response.js';
 import type { RequestUser } from './auth.guard.js';
 import { AuthService } from './auth.service.js';
+import { CheckEmailDto } from './check-email.dto.js';
 import { LoginDto } from './login.dto.js';
 import { SignupDto } from './signup.dto.js';
 
@@ -22,6 +23,12 @@ export class AuthController {
   @HttpCode(200)
   async login(@Body() body: LoginDto) {
     return apiSuccess(await this.auth.login(body));
+  }
+
+  @Post('auth/check-email')
+  @HttpCode(200)
+  async checkEmail(@Body() body: CheckEmailDto) {
+    return apiSuccess(await this.auth.checkEmail(body));
   }
 
   @Post('auth/signup')

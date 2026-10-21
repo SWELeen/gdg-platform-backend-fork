@@ -31,6 +31,8 @@ The guard never rejects a request. No token, a bad or expired token, an unlinked
 
 **`POST /auth/login`**: body `{ email, password }`. Supabase checks the password; nothing is stored locally. Returns `accessToken`, `refreshToken` and `expiresAt` (Unix seconds). A wrong email or password gets the same 401, so it doesn't reveal which emails exist. Other Supabase failures (including its rate limit) return 500. Login doesn't check the local `person`: an unlinked or deactivated account still gets tokens, but the guard treats it as a visitor, so `/me` and protected routes return 401.
 
+**`POST /auth/check-email`**: body `{ email }`. Always 200 with `{ nextStep }`, which tells the frontend the next screen: `PASSWORD_REQUIRED` (a `person` with this email is linked to a Supabase account → password box), `PASSWORD_SETUP_REQUIRED` (a `person` exists but isn't linked yet → setup link), `SIGNUP_REQUIRED` (no `person` → signup). Looks in `email_personal` and `email_university`, ignoring letter case. Doesn't check `is_active`; a deactivated person can log in but the guard treats them as a visitor.
+
 **`POST /auth/signup`**: body `{ fullName, email, password }` (password 8-72 characters; the frontend checks "confirm password"). If any `person` already has the email in `email_personal` or `email_university`, or Supabase already has the account, returns 409 `EMAIL_ALREADY_EXISTS`. Otherwise creates the Supabase account and a `person` row (`full_name`, the email in `email_personal`, linked `auth_user_id`) and returns 201 with the same tokens as login. It never creates a `member` row or role. If saving the `person` fails, the new Supabase account is deleted again; if that delete fails too, the account id is logged so it can be removed in the Supabase dashboard. Requires "Confirm email" to be off in Supabase; otherwise signup returns 500 and saves no `person`.
 
 **Testing as a demo person locally**: put a Supabase test user's id in that person's `auth_user_id`, log in as the test user with `POST /auth/login`, and send the returned `accessToken` as `Authorization: Bearer <token>`.
@@ -79,5 +81,8 @@ The following must be confirmed before coding the full auth system:
 - who sets up Swagger/OpenAPI for the project;
 - signup email verification: with "Confirm email" off, anyone can sign up with an email they don't own, which blocks the real owner and sends them our registration emails; decide whether signup must verify the email first;
 - optional signup fields from the Backend Workflow form (phone, university/student ID, college/major): not collected until the team says they're required;
+- check-email reveals whether an email is registered (part of the email-first login flow); confirm that's acceptable;
+- `SIGNUP_REQUIRED` is a proposed name; the task list only names `PASSWORD_REQUIRED` and `PASSWORD_SETUP_REQUIRED`;
+- which email column existing members log in with (`email_personal` or `email_university`); check-email and signup look in both for now;
 - login error code: plain `UNAUTHORIZED` for now; `INVALID_CREDENTIALS` would need adding to the shared error filter's domain codes;
 - Supabase limits sign-ins per IP, and every login reaches Supabase from the backend's one IP, so all users share that limit; raise it or find another fix before launch.

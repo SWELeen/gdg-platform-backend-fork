@@ -15,6 +15,7 @@ import {
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { RequestUser } from './auth.guard.js';
+import type { CheckEmailDto } from './check-email.dto.js';
 import type { LoginDto } from './login.dto.js';
 import type { SignupDto } from './signup.dto.js';
 
@@ -61,19 +62,19 @@ export class AuthService {
     return tokens(data.session);
   }
 
+  // tells the frontend which screen comes after the email box
+  async checkEmail({ email }: CheckEmailDto) {
+    const person = await this.findPersonByEmail(email);
+
+    if (!person) return { nextStep: 'SIGNUP_REQUIRED' };
+    if (!person.authUserId) return { nextStep: 'PASSWORD_SETUP_REQUIRED' };
+    return { nextStep: 'PASSWORD_REQUIRED' };
+  }
+
   // supabase account + person row, no member row or role
   async signup({ fullName, email, password }: SignupDto) {
     // existing members who haven't activated yet count too
-    const existing = await this.prisma.person.findFirst({
-      where: {
-        OR: [
-          { emailPersonal: { equals: email, mode: 'insensitive' } },
-          { emailUniversity: { equals: email, mode: 'insensitive' } },
-        ],
-      },
-      select: { personId: true },
-    });
-    if (existing) throw emailAlreadyExists();
+    if (await this.findPersonByEmail(email)) throw emailAlreadyExists();
 
     const { data, error } = await this.client().auth.signUp({
       email,
@@ -170,6 +171,19 @@ export class AuthService {
         })) ?? [],
       roles: [...new Set(member?.roleAssignments.map((r) => r.roleCode))],
     };
+  }
+
+  // either email column, any letter case
+  private findPersonByEmail(email: string) {
+    return this.prisma.person.findFirst({
+      where: {
+        OR: [
+          { emailPersonal: { equals: email, mode: 'insensitive' } },
+          { emailUniversity: { equals: email, mode: 'insensitive' } },
+        ],
+      },
+      select: { personId: true, authUserId: true },
+    });
   }
 
   private async deleteAccount(authUserId: string) {
