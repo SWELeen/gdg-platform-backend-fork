@@ -1,10 +1,38 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { RequestUser } from './auth.guard.js';
+import type { LoginDto } from './login.dto.js';
 
 @Injectable()
 export class AuthService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  private supabase?: SupabaseClient;
+
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ConfigService) private readonly config: ConfigService,
+  ) {}
+
+  // supabase checks the password, we just hand back the session
+  async login({ email, password }: LoginDto) {
+    const { data, error } = await this.client().auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    // same answer for wrong email + wrong password
+    if (error?.code === 'invalid_credentials') {
+      throw new UnauthorizedException();
+    }
+    if (error) throw error;
+
+    return {
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      expiresAt: data.session.expires_at,
+    };
+  }
 
   // who's logged in + what the frontend needs to pick their pages
   async me(user: RequestUser) {
@@ -58,5 +86,16 @@ export class AuthService {
         })) ?? [],
       roles: [...new Set(member?.roleAssignments.map((r) => r.roleCode))],
     };
+  }
+
+  // made on first use so the app still starts without the supabase env vars
+  private client() {
+    this.supabase ??= createClient(
+      this.config.getOrThrow<string>('SUPABASE_URL'),
+      this.config.getOrThrow<string>('SUPABASE_PUBLISHABLE_KEY'),
+      // the server keeps no session of its own
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+    return this.supabase;
   }
 }

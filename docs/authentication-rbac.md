@@ -15,7 +15,8 @@ Code lives in `src/auth/`.
 **Environment** (`.env`, see `.env.example`):
 
 - `SUPABASE_URL`: the Supabase project that issues login tokens. Without it the app still runs, logs a warning, and nobody can log in.
-- `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY`: for the upcoming login/signup endpoints. The secret key is a full admin key; keep it in `.env` only.
+- `SUPABASE_PUBLISHABLE_KEY`: used by `POST /auth/login`. Without it (or `SUPABASE_URL`) the app starts, but login fails with 500.
+- `SUPABASE_SECRET_KEY`: for the upcoming signup/setup endpoints. It is a full admin key; keep it in `.env` only.
 
 **How a request is identified** (`AuthGuard`, runs before every route):
 
@@ -28,7 +29,9 @@ The guard never rejects a request. No token, a bad or expired token, an unlinked
 
 **`GET /me`**: 401 without a login. Otherwise returns `personId`, `memberId`, `fullName`, `email`, `committees` (`code`, `name`, `position`) and `roles` (club roles current today, Saudi date). Inactive members get empty `committees` and `roles`.
 
-**Testing as a demo person locally**: put a Supabase test user's id in that person's `auth_user_id`, log in as the test user, and send its token.
+**`POST /auth/login`**: body `{ email, password }`. Supabase checks the password; nothing is stored locally. Returns `accessToken`, `refreshToken` and `expiresAt` (Unix seconds). A wrong email or password gets the same 401, so it doesn't reveal which emails exist. Other Supabase failures (including its rate limit) return 500. Login doesn't check the local `person`: an unlinked or deactivated account still gets tokens, but the guard treats it as a visitor, so `/me` and protected routes return 401.
+
+**Testing as a demo person locally**: put a Supabase test user's id in that person's `auth_user_id`, log in as the test user with `POST /auth/login`, and send the returned `accessToken` as `Authorization: Bearer <token>`.
 
 ## Current local role policy
 
@@ -71,4 +74,6 @@ The following must be confirmed before coding the full auth system:
 - first login for existing members: proposed email invite link instead of choosing a password directly (Backend Workflow section 4), so knowing a member's email isn't enough to claim the account; pending team confirmation;
 - signup: proposed Supabase account + `person` row only, no `member` row or role, matching the schema (Backend Workflow section 5 says role MEMBER); pending team confirmation;
 - one shared Supabase project for development, so every backend trusts the same logins;
-- who sets up Swagger/OpenAPI for the project.
+- who sets up Swagger/OpenAPI for the project;
+- login error code: plain `UNAUTHORIZED` for now; `INVALID_CREDENTIALS` would need adding to the shared error filter's domain codes;
+- Supabase limits sign-ins per IP, and every login reaches Supabase from the backend's one IP, so all users share that limit; raise it or find another fix before launch.
