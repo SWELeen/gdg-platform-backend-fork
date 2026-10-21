@@ -67,6 +67,7 @@ describe('TokenVerifierService', () => {
     await expect(makeVerifier().verify(token)).resolves.toEqual({
       authUserId: USER_ID,
       email: 'user@example.com',
+      fromEmailLink: false,
     });
     expect(fetch).toHaveBeenCalledWith(
       `${ISSUER}/.well-known/jwks.json`,
@@ -80,6 +81,19 @@ describe('TokenVerifierService', () => {
     await expect(makeVerifier().verify(token)).resolves.toEqual({
       authUserId: USER_ID,
       email: undefined,
+      fromEmailLink: false,
+    });
+  });
+
+  it.each([
+    [[{ method: 'otp', timestamp: 1 }], true],
+    [[{ method: 'password', timestamp: 1 }], false],
+    ['not-a-list', false],
+  ])('works out if amr %j came from an email link', async (amr, expected) => {
+    const token = await makeToken({ payload: { amr } });
+
+    await expect(makeVerifier().verify(token)).resolves.toMatchObject({
+      fromEmailLink: expected,
     });
   });
 

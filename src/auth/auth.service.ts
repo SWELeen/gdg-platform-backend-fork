@@ -1,13 +1,18 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  type AuthError,
   createClient,
   type Session,
   type SupabaseClient,
@@ -17,6 +22,10 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import type { RequestUser } from './auth.guard.js';
 import type { CheckEmailDto } from './check-email.dto.js';
 import type { LoginDto } from './login.dto.js';
+import type {
+  RequestSetupLinkDto,
+  SetupPasswordDto,
+} from './setup-password.dto.js';
 import type { SignupDto } from './signup.dto.js';
 
 const UNIQUE_VIOLATION = 'P2002';
@@ -25,6 +34,17 @@ function emailAlreadyExists() {
   return new ConflictException('An account with this email already exists.', {
     errorCode: 'EMAIL_ALREADY_EXISTS',
   });
+}
+
+// supabase's free email sender only allows a few emails an hour
+function emailError(error: AuthError) {
+  if (error.code === 'over_email_send_rate_limit') {
+    return new HttpException(
+      'Too many emails were sent. Please try again later.',
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+  return error;
 }
 
 function tokens(session: Session) {
@@ -119,6 +139,62 @@ export class AuthService {
     return tokens(data.session);
   }
 
+  // step 1: email them a link to choose a password
+  async requestSetupLink({ email }: RequestSetupLinkDto) {
+    const person = await this.findPersonByEmail(email);
+    if (!person) throw new NotFoundException();
+
+    // linked already = invite expired or password forgotten, a reset email does the same job
+    if (person.authUserId) {
+      const { error } = await this.client().auth.resetPasswordForEmail(email, {
+        redirectTo: this.setupPageUrl(),
+      });
+      if (error) throw emailError(error);
+      return;
+    }
+
+    const { data, error } = await this.admin().inviteUserByEmail(email, {
+      redirectTo: this.setupPageUrl(),
+    });
+    // a supabase account with this email exists but isn't linked to them, needs fixing by hand
+    if (error?.code === 'email_exists') throw new ConflictException();
+    if (error) throw emailError(error);
+
+    // link now, never later by matching emails
+    try {
+      await this.prisma.person.updateMany({
+        where: { personId: person.personId, authUserId: null },
+        data: { authUserId: data.user.id },
+      });
+    } catch (linkError) {
+      await this.deleteAccount(data.user.id);
+      throw linkError;
+    }
+  }
+
+  // step 2: they opened the link and chose a password, then they're logged in
+  async setupPassword(user: RequestUser, { password }: SetupPasswordDto) {
+    // a normal login token isn't enough, it has to come from the email link
+    if (!user.fromEmailLink) throw new ForbiddenException();
+
+    const person = await this.prisma.person.findUniqueOrThrow({
+      where: { personId: user.personId },
+      select: { authUserId: true },
+    });
+    if (!person.authUserId) throw new UnauthorizedException();
+
+    const { data, error } = await this.admin().updateUserById(
+      person.authUserId,
+      { password },
+    );
+    if (error?.code === 'weak_password' || error?.code === 'same_password') {
+      throw new BadRequestException('password is too weak.');
+    }
+    if (error) throw error;
+
+    return this.login({ email: data.user.email ?? '', password });
+  }
+
   // who's logged in + what the frontend needs to pick their pages
   async me(user: RequestUser) {
     // role dates are saudi calendar days
@@ -195,6 +271,11 @@ export class AuthService {
     }
     // can't undo = someone has to delete it in the supabase dashboard
     this.logger.error(`couldn't delete supabase user ${authUserId}`);
+  }
+
+  // frontend page the email link opens
+  private setupPageUrl() {
+    return this.config.getOrThrow<string>('PASSWORD_SETUP_URL');
   }
 
   // made on first use so the app still starts without the supabase env vars

@@ -1,6 +1,9 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  HttpException,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
@@ -13,28 +16,45 @@ import type { RequestUser } from './auth.guard.js';
 import { AuthService } from './auth.service.js';
 import { CheckEmailDto } from './check-email.dto.js';
 import { LoginDto } from './login.dto.js';
+import { SetupPasswordDto } from './setup-password.dto.js';
 import { SignupDto } from './signup.dto.js';
 
-const { signInWithPassword, signUp, deleteUser } = vi.hoisted(() => ({
+const {
+  signInWithPassword,
+  signUp,
+  resetPasswordForEmail,
+  deleteUser,
+  inviteUserByEmail,
+  updateUserById,
+} = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   signUp: vi.fn(),
+  resetPasswordForEmail: vi.fn(),
   deleteUser: vi.fn(),
+  inviteUserByEmail: vi.fn(),
+  updateUserById: vi.fn(),
 }));
 
 vi.mock('@supabase/supabase-js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@supabase/supabase-js')>()),
   createClient: () => ({
-    auth: { signInWithPassword, signUp, admin: { deleteUser } },
+    auth: {
+      signInWithPassword,
+      signUp,
+      resetPasswordForEmail,
+      admin: { deleteUser, inviteUserByEmail, updateUserById },
+    },
   }),
 }));
 
 const findUniqueOrThrow = vi.fn();
 const findFirst = vi.fn();
 const create = vi.fn();
+const updateMany = vi.fn();
 const controller = new AuthController(
   new AuthService(
     {
-      person: { findUniqueOrThrow, findFirst, create },
+      person: { findUniqueOrThrow, findFirst, create, updateMany },
     } as unknown as PrismaService,
     { getOrThrow: () => 'test-value' } as unknown as ConfigService,
   ),
@@ -281,6 +301,157 @@ describe('POST /auth/signup', () => {
         type: 'body',
         metatype: SignupDto,
       }),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('POST /auth/setup-password/request', () => {
+  const body = { email: 'data.member@example.test' };
+
+  beforeEach(() => {
+    findFirst.mockReset().mockResolvedValue({ personId: 8, authUserId: null });
+    updateMany.mockReset().mockResolvedValue({ count: 1 });
+    inviteUserByEmail.mockReset().mockResolvedValue({
+      data: { user: { id: 'invited-auth-user' } },
+      error: null,
+    });
+    resetPasswordForEmail
+      .mockReset()
+      .mockResolvedValue({ data: {}, error: null });
+    deleteUser.mockReset().mockResolvedValue({ data: {}, error: null });
+  });
+
+  it('invites a member who has no account and links it right away', async () => {
+    const response = await controller.requestSetupLink(body);
+
+    expect(inviteUserByEmail).toHaveBeenCalledWith(body.email, {
+      redirectTo: 'test-value',
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { personId: 8, authUserId: null },
+      data: { authUserId: 'invited-auth-user' },
+    });
+    expect(response).toMatchObject({ success: true, data: null });
+  });
+
+  it('sends a reset email to someone already linked', async () => {
+    findFirst.mockResolvedValue({ personId: 8, authUserId: 'linked' });
+
+    await controller.requestSetupLink(body);
+
+    expect(resetPasswordForEmail).toHaveBeenCalledWith(body.email, {
+      redirectTo: 'test-value',
+    });
+    expect(inviteUserByEmail).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for an email nobody has', async () => {
+    findFirst.mockResolvedValue(null);
+
+    await expect(controller.requestSetupLink(body)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(inviteUserByEmail).not.toHaveBeenCalled();
+  });
+
+  it('never links an existing supabase account by matching emails', async () => {
+    inviteUserByEmail.mockResolvedValue({
+      data: { user: null },
+      error: new AuthApiError('already registered', 422, 'email_exists'),
+    });
+
+    await expect(controller.requestSetupLink(body)).rejects.toThrow(
+      ConflictException,
+    );
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('answers 429 when supabase hits its email limit', async () => {
+    inviteUserByEmail.mockResolvedValue({
+      data: { user: null },
+      error: new AuthApiError('rate limit', 429, 'over_email_send_rate_limit'),
+    });
+
+    const failure = await controller.requestSetupLink(body).catch((e) => e);
+    expect(failure).toBeInstanceOf(HttpException);
+    expect((failure as HttpException).getStatus()).toBe(429);
+  });
+
+  it('deletes the invited account when linking fails', async () => {
+    const dbDown = new Error('database down');
+    updateMany.mockRejectedValue(dbDown);
+
+    await expect(controller.requestSetupLink(body)).rejects.toBe(dbDown);
+    expect(deleteUser).toHaveBeenCalledWith('invited-auth-user');
+  });
+});
+
+describe('POST /auth/setup-password', () => {
+  const body = { password: 'new-password-1' };
+  const fromLink: RequestUser = {
+    personId: 8,
+    memberId: 10000007,
+    fromEmailLink: true,
+  };
+
+  function setupAs(user?: RequestUser) {
+    return controller.setupPassword({ user }, body);
+  }
+
+  beforeEach(() => {
+    findUniqueOrThrow
+      .mockReset()
+      .mockResolvedValue({ authUserId: 'hala-auth' });
+    updateUserById.mockReset().mockResolvedValue({
+      data: { user: { email: 'data.member@example.test' } },
+      error: null,
+    });
+    signInWithPassword.mockReset().mockResolvedValue({
+      data: { session: SESSION },
+      error: null,
+    });
+  });
+
+  it('sets the password and logs them in', async () => {
+    const response = await setupAs(fromLink);
+
+    expect(updateUserById).toHaveBeenCalledWith('hala-auth', {
+      password: body.password,
+    });
+    expect(signInWithPassword).toHaveBeenCalledWith({
+      email: 'data.member@example.test',
+      password: body.password,
+    });
+    expect(response.data).toEqual(TOKENS);
+  });
+
+  it('rejects visitors who are not logged in', async () => {
+    await expect(setupAs()).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('rejects a normal login token, it must come from the email link', async () => {
+    await expect(
+      setupAs({ ...fromLink, fromEmailLink: false }),
+    ).rejects.toThrow(ForbiddenException);
+    expect(updateUserById).not.toHaveBeenCalled();
+  });
+
+  it('rejects a password supabase finds too weak', async () => {
+    updateUserById.mockResolvedValue({
+      data: { user: null },
+      error: new AuthApiError('weak', 422, 'weak_password'),
+    });
+
+    await expect(setupAs(fromLink)).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects a short password', async () => {
+    await expect(
+      new ApiValidationPipe().transform(
+        { password: 'short' },
+        { type: 'body', metatype: SetupPasswordDto },
+      ),
     ).rejects.toThrow(BadRequestException);
   });
 });
