@@ -4,6 +4,7 @@ import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { AuthModule } from './auth/auth.module.js';
 import { ApiValidationPipe } from './common/http/api-validation.pipe.js';
 import { HttpErrorFilter } from './common/http/http-error.filter.js';
 import { EventRegistrationsModule } from './event-registrations/event-registrations.module.js';
@@ -15,6 +16,7 @@ import { RegistrationsModule } from './registrations/registrations.module.js';
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    AuthModule,
     RegistrationsModule,
     EventRegistrationsModule,
   ],
