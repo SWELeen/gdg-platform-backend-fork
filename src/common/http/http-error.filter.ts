@@ -32,6 +32,7 @@ const DOMAIN_ERROR_CODES: ReadonlyMap<string, number> = new Map([
   ['INVALID_QR_CODE', 400],
   ['ALREADY_CHECKED_IN', 409],
   ['CHECK_IN_CLOSED', 409],
+  ['EMAIL_ALREADY_EXISTS', 409],
 ]);
 const DIAGNOSTIC_METHODS = new Set([
   'GET',

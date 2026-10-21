@@ -1,29 +1,54 @@
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { AuthApiError } from '@supabase/supabase-js';
 import { ApiValidationPipe } from '../common/http/api-validation.pipe.js';
+import { Prisma } from '../generated/prisma/client.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { AuthController } from './auth.controller.js';
 import type { RequestUser } from './auth.guard.js';
 import { AuthService } from './auth.service.js';
 import { LoginDto } from './login.dto.js';
+import { SignupDto } from './signup.dto.js';
 
-const { signInWithPassword } = vi.hoisted(() => ({
+const { signInWithPassword, signUp, deleteUser } = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
+  signUp: vi.fn(),
+  deleteUser: vi.fn(),
 }));
 
 vi.mock('@supabase/supabase-js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@supabase/supabase-js')>()),
-  createClient: () => ({ auth: { signInWithPassword } }),
+  createClient: () => ({
+    auth: { signInWithPassword, signUp, admin: { deleteUser } },
+  }),
 }));
 
 const findUniqueOrThrow = vi.fn();
+const findFirst = vi.fn();
+const create = vi.fn();
 const controller = new AuthController(
   new AuthService(
-    { person: { findUniqueOrThrow } } as unknown as PrismaService,
+    {
+      person: { findUniqueOrThrow, findFirst, create },
+    } as unknown as PrismaService,
     { getOrThrow: () => 'test-value' } as unknown as ConfigService,
   ),
 );
+
+const SESSION = {
+  access_token: 'access',
+  refresh_token: 'refresh',
+  expires_at: 1790000000,
+};
+const TOKENS = {
+  accessToken: 'access',
+  refreshToken: 'refresh',
+  expiresAt: 1790000000,
+};
 
 describe('POST /auth/login', () => {
   const body = { email: 'noura@example.test', password: 'correct-horse' };
@@ -105,6 +130,106 @@ describe('POST /auth/login', () => {
         metatype: LoginDto,
       }),
     ).resolves.toEqual(body);
+  });
+});
+
+describe('POST /auth/signup', () => {
+  const body = {
+    fullName: '  Sara Visitor ',
+    email: 'Sara@Example.test',
+    password: 'correct-horse',
+  };
+
+  beforeEach(() => {
+    findFirst.mockReset().mockResolvedValue(null);
+    create.mockReset().mockResolvedValue({ personId: 11 });
+    signUp.mockReset().mockResolvedValue({
+      data: { user: { id: 'new-auth-user' }, session: SESSION },
+      error: null,
+    });
+    deleteUser.mockReset().mockResolvedValue({ data: {}, error: null });
+  });
+
+  it('creates the account + a person linked to it and logs them in', async () => {
+    const response = await controller.signup(body);
+
+    expect(signUp).toHaveBeenCalledWith({
+      email: body.email,
+      password: body.password,
+    });
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        authUserId: 'new-auth-user',
+        fullName: 'Sara Visitor',
+        emailPersonal: 'sara@example.test',
+      },
+    });
+    expect(response.data).toEqual(TOKENS);
+  });
+
+  it('rejects an email a person already has, without touching supabase', async () => {
+    findFirst.mockResolvedValue({ personId: 6 });
+
+    await expect(controller.signup(body)).rejects.toThrow(ConflictException);
+    expect(signUp).not.toHaveBeenCalled();
+  });
+
+  it('rejects an email supabase already has', async () => {
+    signUp.mockResolvedValue({
+      data: { user: null, session: null },
+      error: new AuthApiError(
+        'User already registered',
+        422,
+        'user_already_exists',
+      ),
+    });
+
+    await expect(controller.signup(body)).rejects.toThrow(ConflictException);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('deletes the new account when the person row fails', async () => {
+    const dbDown = new Error('database down');
+    create.mockRejectedValue(dbDown);
+
+    await expect(controller.signup(body)).rejects.toBe(dbDown);
+    expect(deleteUser).toHaveBeenCalledWith('new-auth-user');
+  });
+
+  it('treats a duplicate email from a parallel signup as already existing', async () => {
+    create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('unique', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(controller.signup(body)).rejects.toThrow(ConflictException);
+    expect(deleteUser).toHaveBeenCalledWith('new-auth-user');
+  });
+
+  it('never creates a person when supabase gives no session', async () => {
+    signUp.mockResolvedValue({
+      data: { user: { id: 'new-auth-user' }, session: null },
+      error: null,
+    });
+
+    await expect(controller.signup(body)).rejects.toThrow();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: 'blank fullName', input: { ...body, fullName: '   ' } },
+    { name: 'short password', input: { ...body, password: 'short' } },
+    { name: 'invalid email', input: { ...body, email: 'nope' } },
+    { name: 'extra fields', input: { ...body, memberId: 1 } },
+  ])('rejects a body with $name', async ({ input }) => {
+    await expect(
+      new ApiValidationPipe().transform(input, {
+        type: 'body',
+        metatype: SignupDto,
+      }),
+    ).rejects.toThrow(BadRequestException);
   });
 });
 
