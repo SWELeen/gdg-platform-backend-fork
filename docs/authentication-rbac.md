@@ -30,6 +30,8 @@ The guard never rejects a request. No token, a bad or expired token, an unlinked
 
 **`GET /me`**: 401 without a login. Otherwise returns `personId`, `memberId`, `fullName`, `email`, `committees` (`code`, `name`, `position`) and `roles` (club roles current today, Saudi date). Inactive members get empty `committees` and `roles`.
 
+**Protecting a route** (`src/auth/current-user.ts`): `@UseGuards(AuthRequiredGuard)` returns 401 for visitors; `@CurrentUser()` gives `{ personId, memberId, email }`; `@OptionalUser()` gives the user or `null` on public routes. Each route checks its own permissions with `memberId` (for example against `member_committee` / `committee_permission`, like the registration review routes).
+
 **`POST /auth/login`**: body `{ email, password }`. Supabase checks the password; nothing is stored locally. Returns `accessToken`, `refreshToken` and `expiresAt` (Unix seconds). A wrong email or password gets the same 401, so it doesn't reveal which emails exist. Other Supabase failures (including its rate limit) return 500. Login doesn't check the local `person`: an unlinked or deactivated account still gets tokens, but the guard treats it as a visitor, so `/me` and protected routes return 401.
 
 **`POST /auth/check-email`**: body `{ email }`. Always 200 with `{ nextStep }`, which tells the frontend the next screen: `PASSWORD_REQUIRED` (a `person` with this email is linked to a Supabase account → password box), `PASSWORD_SETUP_REQUIRED` (a `person` exists but isn't linked yet → setup link), `SIGNUP_REQUIRED` (no `person` → signup). Looks in `email_personal` and `email_university`, ignoring letter case. Doesn't check `is_active`; a deactivated person can log in but the guard treats them as a visitor.
