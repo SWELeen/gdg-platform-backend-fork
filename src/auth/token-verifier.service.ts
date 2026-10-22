@@ -10,7 +10,12 @@ export interface TokenIdentity {
   // supabase user id from the token's sub claim
   authUserId: string;
   email?: string;
+  // signed in by clicking an invite/reset email, not with a password
+  fromEmailLink: boolean;
 }
+
+// supabase labels invite + reset link sign-ins as otp
+const EMAIL_LINK_METHODS = new Set(['otp']);
 
 const INVALID_TOKEN_ERRORS = [
   errors.JWSInvalid,
@@ -48,12 +53,17 @@ export class TokenVerifierService {
         requiredClaims: ['exp'],
       });
 
-      const { sub, email } = payload;
+      const { sub, email, amr } = payload;
       if (!sub) return null;
 
       return {
         authUserId: sub,
         email: typeof email === 'string' && email ? email : undefined,
+        fromEmailLink:
+          Array.isArray(amr) &&
+          amr.some((entry: { method?: unknown }) =>
+            EMAIL_LINK_METHODS.has(String(entry?.method)),
+          ),
       };
     } catch (error) {
       if (INVALID_TOKEN_ERRORS.some((type) => error instanceof type)) {

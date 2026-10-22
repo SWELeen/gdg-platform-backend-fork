@@ -6,13 +6,12 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-// Integration point with the authentication task: once a request's token is
-// verified, the auth layer sets request.user. Every account has a person;
-// only group members also have a memberId. Until auth exists, protected
-// routes answer 401.
+// the global AuthGuard sets request.user from the login token, these read it.
+// everyone logged in has a personId, only active members have a memberId
 export interface AuthenticatedUser {
   personId: number;
   memberId?: number | null;
+  email?: string;
 }
 
 interface RequestWithUser {
@@ -28,6 +27,7 @@ function userOf(context: ExecutionContext): AuthenticatedUser | undefined {
   return {
     personId: user.personId,
     memberId: isId(user.memberId) ? user.memberId : null,
+    email: user.email,
   };
 }
 

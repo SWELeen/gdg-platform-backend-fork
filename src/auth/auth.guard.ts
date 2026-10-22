@@ -12,6 +12,7 @@ export interface RequestUser {
   // null if they aren't an active member
   memberId: number | null;
   email?: string;
+  fromEmailLink?: boolean;
 }
 
 interface AuthRequest {
@@ -52,6 +53,7 @@ export class AuthGuard implements CanActivate {
       personId: person.personId,
       memberId: person.member?.isActive ? person.member.memberId : null,
       email: identity.email,
+      fromEmailLink: identity.fromEmailLink,
     };
     return true;
   }
