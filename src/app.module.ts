@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { ApiValidationPipe } from './common/http/api-validation.pipe.js';
 import { HttpErrorFilter } from './common/http/http-error.filter.js';
 import { EventRegistrationsModule } from './event-registrations/event-registrations.module.js';
+import { GoogleIntegrationModule } from './integrations/google/google-integration.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RegistrationsModule } from './registrations/registrations.module.js';
 
@@ -19,6 +20,7 @@ import { RegistrationsModule } from './registrations/registrations.module.js';
     AuthModule,
     RegistrationsModule,
     EventRegistrationsModule,
+    GoogleIntegrationModule,
   ],
   controllers: [AppController],
   providers: [
