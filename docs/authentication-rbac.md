@@ -12,6 +12,8 @@ The proposal identifies these user roles: Member, Volunteer, Organizer, Employee
 
 Code lives in `src/auth/`.
 
+**`GET /integrations/google/gmail/callback`** is reserved as the Gmail OAuth redirect URI. It currently responds with HTTP 501 because the OAuth authorization flow, state verification, token exchange, and credential storage are not implemented. Do not treat this route as a working Gmail connection yet.
+
 **Environment** (`.env`, see `.env.example`):
 
 - `SUPABASE_URL`: the Supabase project that issues login tokens. Without it the app still runs, logs a warning, and nobody can log in.
