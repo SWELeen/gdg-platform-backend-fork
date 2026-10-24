@@ -117,12 +117,15 @@ ON CONFLICT ("role_code") DO NOTHING;
 INSERT INTO "permission" ("code", "description", "scope", "is_sensitive") VALUES
     ('applications.club_leaders.decide', 'Approve committee leader and developer lead applications', 'global', true),
     ('applications.developer_leaders.decide', 'Approve developer committee leader applications', 'global', true),
-    ('developer_committees.dashboard.view', 'View developer committees leadership dashboard', 'global', false)
+    ('developer_committees.dashboard.view', 'View developer committees leadership dashboard', 'global', false),
+    ('club.dashboard.view', 'View the club leadership dashboard', 'global', false)
 ON CONFLICT ("code") DO NOTHING;
 
 INSERT INTO "role_permission" ("role_code", "code") VALUES
     ('GROUP_LEADER', 'applications.club_leaders.decide'),
+    ('GROUP_LEADER', 'club.dashboard.view'),
     ('GROUP_CO_LEADER', 'applications.club_leaders.decide'),
+    ('GROUP_CO_LEADER', 'club.dashboard.view'),
     ('DEVELOPER_COMMITTEES_LEADER', 'applications.developer_leaders.decide'),
     ('DEVELOPER_COMMITTEES_LEADER', 'developer_committees.dashboard.view')
 ON CONFLICT ("role_code", "code") DO NOTHING;

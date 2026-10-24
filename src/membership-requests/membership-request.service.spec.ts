@@ -179,4 +179,17 @@ describe('MembershipRequestService.decide', () => {
     expect(hasGlobalPermission).toHaveBeenCalledWith(actor.memberId, 'applications.club_leaders.decide');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it('prevents duplicate processing of a global role approval', async () => {
+    tx.membershipRequestGlobalRole.findUnique.mockResolvedValue({
+      membershipRequestGlobalRoleId: 701,
+      membershipRequestId: 40,
+      roleCode: 'ADVISOR',
+      status: Decision.APPROVED,
+      membershipRequest: { personId: 61 },
+    });
+    await expect(service.decideGlobalRole(40, 'ADVISOR', 'APPROVED', actor)).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.memberRole.create).not.toHaveBeenCalled();
+    expect(tx.membershipRequestGlobalRole.update).not.toHaveBeenCalled();
+  });
 });
