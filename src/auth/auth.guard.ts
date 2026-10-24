@@ -1,9 +1,11 @@
 import {
   type CanActivate,
   type ExecutionContext,
+  ForbiddenException,
   Inject,
   Injectable,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TokenVerifierService } from './token-verifier.service.js';
 
@@ -16,7 +18,8 @@ export interface RequestUser {
 }
 
 interface AuthRequest {
-  headers: { authorization?: string };
+  headers: { authorization?: string; cookie?: string; origin?: string };
+  method: string;
   user?: RequestUser;
 }
 
@@ -31,12 +34,22 @@ export class AuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthRequest>();
+    const usesAuthCookie = request.headers.cookie?.split(';').some((item) => /^\s*gdg_(access|refresh)=/.test(item)) ?? false;
+    if (usesAuthCookie && !['GET', 'HEAD', 'OPTIONS'].includes(request.method.toUpperCase())) {
+      const allowedOrigin = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+      if (request.headers.origin !== allowedOrigin) throw new ForbiddenException('Invalid request origin.');
+    }
     const header = request.headers.authorization;
-    const token = header && /^Bearer\s+(\S+)$/i.exec(header)?.[1];
+    const cookie = request.headers.cookie?.split(';').map((item) => item.trim()).find((item) => item.startsWith('gdg_access='));
+    const token = (header && /^Bearer\s+(\S+)$/i.exec(header)?.[1])
+      ?? (cookie ? decodeURIComponent(cookie.slice('gdg_access='.length)) : undefined);
     if (!token) return true;
 
     const identity = await this.verifier.verify(token);
     if (!identity) return true;
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const revoked = await this.prisma.revokedAuthToken.findUnique({ where: { tokenHash }, select: { expiresAt: true } });
+    if (revoked && revoked.expiresAt > new Date()) return true;
 
     const person = await this.prisma.person.findUnique({
       where: { authUserId: identity.authUserId },

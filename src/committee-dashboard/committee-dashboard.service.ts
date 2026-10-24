@@ -5,9 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Prisma } from '../generated/prisma/client.js';
 import type { RequestUser } from '../auth/auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -31,45 +29,117 @@ export class CommitteeDashboardService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(CommitteeAccessService)
     private readonly access: CommitteeAccessService,
-    @Inject(ConfigService) private readonly config: ConfigService,
   ) {}
+
+  async getDeveloperOverview(user: RequestUser | undefined) {
+    if (!user?.memberId) throw new ForbiddenException();
+    if (!(await this.access.hasGlobalPermission(user.memberId, 'developer_committees.dashboard.view'))) throw new ForbiddenException();
+    const committees = await this.prisma.committee.findMany({
+      where: { committeeCode: { in: ['AUTOMATION', 'DATA', 'WEB', 'AI', 'ROBOTICS', 'CYBER'] } },
+      select: { committeeId: true, committeeCode: true, committeeName: true, _count: { select: { members: true } } },
+      orderBy: { committeeName: 'asc' },
+    });
+    const leaders = await this.prisma.memberCommittee.groupBy({
+      by: ['committeeId'],
+      where: { committeeId: { in: committees.map(({ committeeId }) => committeeId) }, role: { in: ['Leader', 'Co-Leader'] }, member: { isActive: true } },
+      _count: { _all: true },
+    });
+    const activeTasks = await Promise.all(committees.map((committee) => this.prisma.committeeTask.count({
+      where: { committeeId: committee.committeeId, status: { in: ['TODO', 'IN_PROGRESS'] } },
+    })));
+    return committees.map((committee, index) => ({
+      code: committee.committeeCode,
+      name: committee.committeeName,
+      memberCount: committee._count.members,
+      leaderCount: leaders.find((row) => row.committeeId === committee.committeeId)?._count._all ?? 0,
+      activeTaskCount: activeTasks[index],
+    }));
+  }
+
+  async getClubLeadershipOverview(user: RequestUser | undefined) {
+    if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, 'club.dashboard.view'))) throw new ForbiddenException();
+    const today = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }));
+    const [person, members, tasks, points, pointTotals, monthPoints, completedTasks, activeTasks, tasksDueThisWeek, events, registrationGroups] = await Promise.all([
+      this.prisma.person.findUnique({ where: { personId: user.personId }, select: { fullName: true } }),
+      this.prisma.member.findMany({
+        where: { isActive: true, person: { isActive: true } },
+        include: {
+          person: true,
+          committees: { select: { role: true } },
+          roleAssignments: {
+            where: { AND: [{ OR: [{ startsOn: null }, { startsOn: { lte: today } }] }, { OR: [{ endsOn: null }, { endsOn: { gte: today } }] }] },
+            select: { roleCode: true },
+          },
+        },
+        orderBy: { person: { fullName: 'asc' } },
+      }),
+      this.prisma.committeeTask.findMany({
+        include: { assignee: { include: { member: { include: { person: true } } } } },
+        orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }], take: 200,
+      }),
+      this.prisma.committeePointEntry.findMany({
+        include: { recipient: { include: { member: { include: { person: true } } } } },
+        orderBy: [{ createdAt: 'desc' }, { pointEntryId: 'desc' }], take: 200,
+      }),
+      this.prisma.committeePointEntry.groupBy({ by: ['memberId'], _sum: { pointsDelta: true } }),
+      this.prisma.committeePointEntry.aggregate({ where: { createdAt: { gte: riyadhPeriodStart(new Date(), 'month') } }, _sum: { pointsDelta: true } }),
+      this.prisma.committeeTask.groupBy({ by: ['assignedMemberId'], where: { status: CommitteeTaskStatus.COMPLETED }, _count: { _all: true } }),
+      this.prisma.committeeTask.count({ where: { status: { in: ['TODO', 'IN_PROGRESS'] } } }),
+      this.prisma.committeeTask.count({ where: { status: { in: ['TODO', 'IN_PROGRESS'] }, dueAt: { gte: riyadhPeriodStart(new Date(), 'week'), lt: new Date(riyadhPeriodStart(new Date(), 'week').getTime() + 7 * 86400000) } } }),
+      this.prisma.event.findMany({
+        include: { _count: { select: { registrations: true } } },
+        orderBy: { startsAt: 'asc' },
+      }),
+      this.prisma.eventRegistration.groupBy({ by: ['status'], _count: { _all: true } }),
+    ]);
+    const memberPoints = new Map(pointTotals.map((row) => [row.memberId, row._sum.pointsDelta ?? 0]));
+    const memberCompletedTasks = new Map(completedTasks.map((row) => [row.assignedMemberId, row._count._all]));
+    const mappedMembers = members.map((member) => ({
+      id: String(member.memberId), name: member.person.fullName,
+      email: member.person.emailUniversity ?? member.person.emailPersonal ?? '',
+      role: [...new Set([...member.committees.map(({ role }) => role), ...member.roleAssignments.map(({ roleCode }) => roleCode)])].join(' / ') || 'Member',
+      status: 'Active' as const, points: memberPoints.get(member.memberId) ?? 0,
+      tasksCompleted: memberCompletedTasks.get(member.memberId) ?? 0, lastActivity: null,
+    }));
+    const now = new Date();
+    return {
+      committee: { id: null, code: 'CLUB', name: 'GDG on Campus UJ' },
+      currentMember: user.memberId ? { id: String(user.memberId), name: person?.fullName ?? '', role: 'Club Leadership' } : null,
+      stats: {
+        committeeMembers: mappedMembers.length, activeMembers: mappedMembers.length, awayMembers: 0,
+        upcomingEvents: events.filter((event) => event.status === 'PUBLISHED' && event.startsAt >= now).length,
+        upcomingEventsInNext30Days: events.filter((event) => event.status === 'PUBLISHED' && event.startsAt >= now && event.startsAt < new Date(now.getTime() + 30 * 86400000)).length,
+        totalPoints: [...memberPoints.values()].reduce((sum, value) => sum + value, 0), pointsThisMonth: monthPoints._sum.pointsDelta ?? 0,
+        activeTasks, tasksDueThisWeek, eventsCreated: events.length,
+        eventsPublishedThisYear: events.filter((event) => event.status === 'PUBLISHED' && event.createdAt.getUTCFullYear() === now.getUTCFullYear()).length,
+        pendingRegistrations: registrationGroups.find(({ status }) => status === 'PENDING')?._count._all ?? 0,
+        acceptedRegistrations: registrationGroups.filter(({ status }) => ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(status)).reduce((sum, row) => sum + row._count._all, 0),
+        rejectedRegistrations: registrationGroups.filter(({ status }) => ['REJECTED', 'NOT_SELECTED'].includes(status)).reduce((sum, row) => sum + row._count._all, 0),
+      },
+      permissions: { canManageTasks: false, canManagePoints: false, canManageRegistrations: false, canAddMembers: false },
+      members: mappedMembers,
+      events: events.map((event) => ({
+        id: String(event.eventId), title: event.name, date: event.startsAt.toISOString(), endsAt: event.endsAt.toISOString(),
+        location: event.location, status: event.status, registered: event._count.registrations,
+        confirmed: 0, checkedIn: 0, capacity: event.capacity, createdAt: event.createdAt.toISOString(),
+      })),
+      tasks: tasks.map((task) => ({
+        id: String(task.taskId), title: task.title, description: task.description,
+        assignedMemberId: String(task.assignedMemberId), assignedMemberName: task.assignee.member.person.fullName,
+        createdByMemberId: String(task.createdByMemberId), dueAt: task.dueAt.toISOString(), priority: task.priority,
+        status: task.status, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
+      })),
+      pointHistory: points.map((entry) => ({
+        id: String(entry.pointEntryId), memberId: String(entry.memberId), memberName: entry.recipient.member.person.fullName,
+        pointsDelta: entry.pointsDelta, reason: entry.reason, createdAt: entry.createdAt.toISOString(),
+      })),
+      recentActivities: [],
+    };
+  }
 
   async getDashboard(user: RequestUser | undefined, committeeCode: string) {
     const committee = await this.prisma.committee.findUnique({ where: { committeeCode } });
-    if (!committee) {
-      if (!this.isLocalDashboardAuthBypassEnabled()) throw new NotFoundException();
-      return {
-        committee: { id: null, code: committeeCode, name: committeeCode },
-        currentMember: null,
-        stats: {
-          committeeMembers: 0,
-          activeMembers: 0,
-          awayMembers: 0,
-          upcomingEvents: 0,
-          upcomingEventsInNext30Days: 0,
-          totalPoints: 0,
-          pointsThisMonth: 0,
-          activeTasks: 0,
-          tasksDueThisWeek: 0,
-          eventsCreated: 0,
-          eventsPublishedThisYear: 0,
-          pendingRegistrations: 0,
-          acceptedRegistrations: 0,
-          rejectedRegistrations: 0,
-        },
-        permissions: {
-          canManageTasks: false,
-          canManagePoints: false,
-          canManageRegistrations: false,
-          canAddMembers: false,
-        },
-        members: [],
-        events: [],
-        tasks: [],
-        pointHistory: [],
-        recentActivities: [],
-      };
-    }
+    if (!committee) throw new NotFoundException();
 
     let membership = user?.memberId
       ? await this.prisma.memberCommittee.findUnique({
@@ -81,10 +151,7 @@ export class CommitteeDashboardService {
       membership = null;
     }
 
-    if (!membership && this.isLocalDashboardAuthBypassEnabled()) {
-      membership = await this.findLocalDashboardMembership(committee.committeeId);
-    }
-    if (!membership && !this.isLocalDashboardAuthBypassEnabled()) throw new UnauthorizedException();
+    if (!membership) throw new ForbiddenException('An active member of this committee is required for dashboard access.');
 
     const memberId = membership?.memberId ?? null;
     const [canViewDashboard, canManageTasks, canManagePoints, canManageRegistrations, canAddMembers] = memberId
@@ -429,37 +496,12 @@ export class CommitteeDashboardService {
         })
       : null;
 
-    if (!membership && this.isLocalDashboardAuthBypassEnabled()) {
-      membership = await this.findLocalDashboardMembership(committee.committeeId);
-    }
-
     if (!membership) {
-      if (!user?.memberId && !this.isLocalDashboardAuthBypassEnabled()) throw new UnauthorizedException();
+      if (!user?.memberId) throw new ForbiddenException();
       throw new ForbiddenException('An active member of this committee is required for dashboard changes.');
     }
     if (!membership.member.isActive || !membership.member.person.isActive) throw new ForbiddenException();
     return { committee, memberId: membership.memberId, membership };
-  }
-
-  private async findLocalDashboardMembership(committeeId: number) {
-    const activeMemberFilter = {
-      committeeId,
-      member: { isActive: true, person: { isActive: true } },
-    };
-    return await this.prisma.memberCommittee.findFirst({
-      where: { ...activeMemberFilter, role: { in: ['Leader', 'Co-Leader'] } },
-      include: { member: { include: { person: true } } },
-      orderBy: { memberId: 'asc' },
-    }) ?? await this.prisma.memberCommittee.findFirst({
-      where: activeMemberFilter,
-      include: { member: { include: { person: true } } },
-      orderBy: { memberId: 'asc' },
-    });
-  }
-
-  private isLocalDashboardAuthBypassEnabled() {
-    return this.config.get('NODE_ENV') !== 'production'
-      && this.config.get('COMMITTEE_DASHBOARD_AUTH_BYPASS') !== 'false';
   }
 
   private async requirePermission(memberId: number, permission: string, committeeId: number) {

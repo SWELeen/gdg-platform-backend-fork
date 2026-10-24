@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { AuthGuard, type RequestUser } from './auth.guard.js';
@@ -7,9 +8,10 @@ const AUTH_USER_ID = '6f1c2a4e-1b2c-4d5e-8f90-123456789abc';
 
 const verify = vi.fn();
 const findUnique = vi.fn();
+const findRevokedToken = vi.fn();
 const guard = new AuthGuard(
   { verify } as unknown as TokenVerifierService,
-  { person: { findUnique } } as unknown as PrismaService,
+  { person: { findUnique }, revokedAuthToken: { findUnique: findRevokedToken } } as unknown as PrismaService,
 );
 
 // fake request with only the parts the guard looks at
@@ -23,9 +25,16 @@ function requestWith(authorization?: string) {
   return { request, context };
 }
 
+function requestWithCookie(cookie: string, origin?: string) {
+  const request = { headers: { cookie, origin }, method: 'POST' };
+  const context = { switchToHttp: () => ({ getRequest: () => request }) } as unknown as ExecutionContext;
+  return { request, context };
+}
+
 beforeEach(() => {
   verify.mockReset().mockResolvedValue({ authUserId: AUTH_USER_ID });
   findUnique.mockReset();
+  findRevokedToken.mockReset().mockResolvedValue(null);
 });
 
 describe('AuthGuard', () => {
@@ -90,6 +99,20 @@ describe('AuthGuard', () => {
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request.user).toBeUndefined();
     expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects a validly signed access token after logout revokes it', async () => {
+    findRevokedToken.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000) });
+    const { request, context } = requestWith('Bearer good-token');
+    await guard.canActivate(context);
+    expect(request.user).toBeUndefined();
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('requires the configured origin for cookie-authenticated mutations', async () => {
+    const { context } = requestWithCookie('gdg_access=good-token', 'https://attacker.example');
+    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
+    expect(verify).not.toHaveBeenCalled();
   });
 
   it.each([

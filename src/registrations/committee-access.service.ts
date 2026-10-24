@@ -33,4 +33,20 @@ export class CommitteeAccessService {
       ) AS allowed`;
     return rows[0]?.allowed === true;
   }
+
+  async hasGlobalPermission(memberId: number, code: string): Promise<boolean> {
+    const rows = await this.prisma.$queryRaw<{ allowed: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM member m
+        JOIN member_role mr ON mr.member_id = m.member_id
+        JOIN role_permission rp ON rp.role_code = mr.role_code
+        WHERE m.member_id = ${memberId}
+          AND m.is_active
+          AND rp.code = ${code}
+          AND (mr.starts_on IS NULL OR mr.starts_on <= CURRENT_DATE)
+          AND (mr.ends_on IS NULL OR mr.ends_on >= CURRENT_DATE)
+      ) AS allowed`;
+    return rows[0]?.allowed === true;
+  }
 }

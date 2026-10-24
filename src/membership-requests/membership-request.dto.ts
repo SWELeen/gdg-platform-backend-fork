@@ -12,16 +12,17 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-const REQUESTED_ROLES = ['Leader', 'Co-Leader', 'Advisor', 'Member'] as const;
+const REQUESTED_ROLES = ['Leader', 'Co-Leader', 'Member'] as const;
 
 export class MembershipApplicationDataDto {
   @IsString()
   @MaxLength(50)
   phoneNumber: string;
 
+  @IsOptional()
   @IsEmail()
   @MaxLength(255)
-  universityEmail: string;
+  universityEmail?: string;
 
   @IsString()
   @MaxLength(255)
@@ -52,8 +53,8 @@ export class MembershipCommitteeApplicationDto {
   @Matches(/^[A-Z0-9_]{1,20}$/)
   committeeCode: string;
 
-  // This is stored as the applicant's preference only. Approval always grants
-  // the least-privileged Member position.
+  // This is an application request; the backend assigns it only after the
+  // responsible approval tier accepts it.
   @IsIn(REQUESTED_ROLES)
   requestedRole: (typeof REQUESTED_ROLES)[number];
 }

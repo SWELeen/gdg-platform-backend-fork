@@ -43,6 +43,15 @@ export class MembershipRequestsController {
     private readonly requests: MembershipRequestService,
   ) {}
 
+  @Get('leadership')
+  async listLeadership(
+    @Query('scope') scope: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (scope !== 'CLUB' && scope !== 'DEVELOPER_COMMITTEES') throw new ForbiddenException();
+    return apiSuccess(await this.requests.listLeadership(scope, user));
+  }
+
   @Post()
   @UseGuards(VerifiedSupabaseEmailGuard)
   async create(
@@ -71,5 +80,25 @@ export class MembershipRequestsController {
       await this.requests.decide(requestId, params.committeeCode, body.decision, user),
       'Membership request decision saved.',
     );
+  }
+
+  @Patch(':requestId/leadership/committees/:committeeCode')
+  async decideLeadershipCommittee(
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Param() params: MembershipRequestCommitteeParamDto,
+    @Body() body: DecideMembershipRequestDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return apiSuccess(await this.requests.decideLeadershipCommittee(requestId, params.committeeCode, body.decision, user));
+  }
+
+  @Patch(':requestId/leadership/global-roles/:roleCode')
+  async decideGlobalRole(
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Param('roleCode') roleCode: string,
+    @Body() body: DecideMembershipRequestDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return apiSuccess(await this.requests.decideGlobalRole(requestId, roleCode, body.decision, user));
   }
 }

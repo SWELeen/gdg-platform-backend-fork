@@ -29,6 +29,7 @@ const {
   verifyOtp,
   refreshSession,
   getUser,
+  signOut,
 } = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   signUp: vi.fn(),
@@ -39,6 +40,7 @@ const {
   verifyOtp: vi.fn(),
   refreshSession: vi.fn(),
   getUser: vi.fn(),
+  signOut: vi.fn(),
 }));
 
 vi.mock('@supabase/supabase-js', async (importOriginal) => ({
@@ -51,19 +53,26 @@ vi.mock('@supabase/supabase-js', async (importOriginal) => ({
       refreshSession,
       getUser,
       resetPasswordForEmail,
-      admin: { deleteUser, inviteUserByEmail, updateUserById },
+      admin: { deleteUser, inviteUserByEmail, updateUserById, signOut },
     },
   }),
 }));
 
 const findUniqueOrThrow = vi.fn();
 const findFirst = vi.fn();
+const findUnique = vi.fn();
 const create = vi.fn();
 const updateMany = vi.fn();
+const update = vi.fn();
+const deletePerson = vi.fn();
+const transaction = vi.fn();
+const cookie = vi.fn();
+const response = { cookie, clearCookie: vi.fn() };
 const controller = new AuthController(
   new AuthService(
     {
-      person: { findUniqueOrThrow, findFirst, create, updateMany },
+      person: { findUniqueOrThrow, findFirst, findUnique, create, updateMany, update, delete: deletePerson },
+      $transaction: transaction,
     } as unknown as PrismaService,
     { getOrThrow: () => 'test-value' } as unknown as ConfigService,
   ),
@@ -74,12 +83,6 @@ const SESSION = {
   refresh_token: 'refresh',
   expires_at: 1790000000,
 };
-const TOKENS = {
-  accessToken: 'access',
-  refreshToken: 'refresh',
-  expiresAt: 1790000000,
-};
-
 describe('POST /auth/login', () => {
   const body = { email: 'noura@example.test', password: 'correct-horse' };
 
@@ -91,25 +94,27 @@ describe('POST /auth/login', () => {
           refresh_token: 'refresh',
           expires_at: 1790000000,
         },
+        user: { id: 'linked-auth-user' },
       },
       error: null,
     });
+    findUnique.mockReset().mockResolvedValue({ isActive: true });
+    signOut.mockReset().mockResolvedValue({ error: null });
+    cookie.mockReset();
   });
 
-  it('returns the session tokens from supabase', async () => {
-    const response = await controller.login(body);
+  it('sets httpOnly session cookies instead of returning provider tokens', async () => {
+    const result = await controller.login(body, response as never);
 
     expect(signInWithPassword).toHaveBeenCalledWith(body);
-    expect(response).toEqual({
+    expect(result).toEqual({
       success: true,
       message: 'OK',
       error: null,
-      data: {
-        accessToken: 'access',
-        refreshToken: 'refresh',
-        expiresAt: 1790000000,
-      },
+      data: { authenticated: true },
     });
+    expect(cookie).toHaveBeenCalledWith('gdg_access', 'access', expect.objectContaining({ httpOnly: true, sameSite: 'strict' }));
+    expect(cookie).toHaveBeenCalledWith('gdg_refresh', 'refresh', expect.objectContaining({ httpOnly: true, sameSite: 'strict', path: '/auth' }));
   });
 
   it('rejects a wrong email or password with 401', async () => {
@@ -122,7 +127,14 @@ describe('POST /auth/login', () => {
       ),
     });
 
-    await expect(controller.login(body)).rejects.toThrow(UnauthorizedException);
+    await expect(controller.login(body, response as never)).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('does not issue a session to an unlinked or inactive local account', async () => {
+    findUnique.mockResolvedValue({ isActive: false });
+    await expect(controller.login(body, response as never)).rejects.toThrow(UnauthorizedException);
+    expect(signOut).toHaveBeenCalledWith('access', 'local');
+    expect(cookie).not.toHaveBeenCalledWith('gdg_access', expect.anything(), expect.anything());
   });
 
   it('passes other supabase failures on instead of hiding them as 401', async () => {
@@ -136,7 +148,7 @@ describe('POST /auth/login', () => {
       error: rateLimited,
     });
 
-    await expect(controller.login(body)).rejects.toBe(rateLimited);
+    await expect(controller.login(body, response as never)).rejects.toThrow(HttpException);
   });
 
   it.each([
@@ -219,33 +231,41 @@ describe('POST /auth/signup', () => {
     fullName: '  Sara Visitor ',
     email: 'Sara@Example.test',
     password: 'correct-horse',
+    registrationType: 'NON_MEMBER' as const,
+    applicationData: {
+      phoneNumber: '+966500000000', university: 'University of Jeddah', college: 'Computer Science',
+      major: 'Computer Science', level: 'Level 4', gender: 'female',
+    },
   };
 
   beforeEach(() => {
     findFirst.mockReset().mockResolvedValue(null);
     create.mockReset().mockResolvedValue({ personId: 11 });
     signUp.mockReset().mockResolvedValue({
-      data: { user: { id: 'new-auth-user' }, session: SESSION },
+      data: { user: { id: 'new-auth-user' }, session: null },
       error: null,
     });
     deleteUser.mockReset().mockResolvedValue({ data: {}, error: null });
   });
 
-  it('creates the account + a person linked to it and logs them in', async () => {
+  it('creates a person with a server-side pending registration and waits for email verification', async () => {
     const response = await controller.signup(body);
 
     expect(signUp).toHaveBeenCalledWith({
       email: body.email,
       password: body.password,
     });
-    expect(create).toHaveBeenCalledWith({
-      data: {
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
         authUserId: 'new-auth-user',
         fullName: 'Sara Visitor',
         emailPersonal: 'sara@example.test',
-      },
-    });
-    expect(response.data).toEqual(TOKENS);
+        emailUniversity: null,
+        emailIdentities: { create: [{ email: 'sara@example.test', kind: 'PERSONAL' }] },
+        pendingSignup: { create: expect.objectContaining({ registrationType: 'NON_MEMBER', committees: [], globalRoles: [] }) },
+      }),
+    }));
+    expect(response.data).toMatchObject({ emailVerificationRequired: true, universityEmailVerificationRequired: false });
   });
 
   it('rejects an email a person already has, without touching supabase', async () => {
@@ -289,22 +309,15 @@ describe('POST /auth/signup', () => {
     expect(deleteUser).toHaveBeenCalledWith('new-auth-user');
   });
 
-  it('creates the person but waits for email verification when supabase gives no session', async () => {
+  it('rejects configuration that auto-confirms new accounts without sending a verification code', async () => {
     signUp.mockResolvedValue({
-      data: { user: { id: 'new-auth-user' }, session: null },
+      data: { user: { id: 'new-auth-user' }, session: SESSION },
       error: null,
     });
 
-    await expect(controller.signup(body)).resolves.toMatchObject({
-      data: { emailVerificationRequired: true },
-    });
-    expect(create).toHaveBeenCalledWith({
-      data: {
-        authUserId: 'new-auth-user',
-        fullName: 'Sara Visitor',
-        emailPersonal: 'sara@example.test',
-      },
-    });
+    await expect(controller.signup(body)).rejects.toThrow();
+    expect(deleteUser).toHaveBeenCalledWith('new-auth-user');
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('rejects Supabase’s obfuscated duplicate user instead of creating a ghost person', async () => {
@@ -336,17 +349,20 @@ describe('POST /auth/verify-email', () => {
   const body = { email: 'noura@example.test', token: '123456' };
 
   beforeEach(() => {
-    verifyOtp.mockReset().mockResolvedValue({ data: { session: SESSION }, error: null });
+    verifyOtp.mockReset().mockResolvedValue({ data: { session: SESSION, user: { id: 'auth-user' } }, error: null });
+    findUnique.mockReset().mockResolvedValue({ personId: 11, emailUniversity: 'student@university.test', pendingSignup: { expiresAt: new Date(Date.now() + 60_000) } });
+    update.mockReset().mockResolvedValue({ personId: 11 });
   });
 
-  it('returns the verified Supabase session', async () => {
-    await expect(controller.verifySignupEmail(body)).resolves.toMatchObject({ data: TOKENS });
+  it('sets a cookie session and requires independent university email verification', async () => {
+    await expect(controller.verifySignupEmail(body, response as never)).resolves.toMatchObject({ data: { authenticated: true, universityEmailVerificationRequired: true } });
     expect(verifyOtp).toHaveBeenCalledWith({ ...body, type: 'email' });
+    expect(update).toHaveBeenCalledWith({ where: { personId: 11 }, data: { emailPersonalVerifiedAt: expect.any(Date) } });
   });
 
   it('rejects invalid verification codes', async () => {
     verifyOtp.mockResolvedValue({ data: { session: null }, error: new Error('invalid') });
-    await expect(controller.verifySignupEmail(body)).rejects.toThrow(UnauthorizedException);
+    await expect(controller.verifySignupEmail(body, response as never)).rejects.toThrow(UnauthorizedException);
   });
 });
 
@@ -356,7 +372,7 @@ describe('POST /auth/refresh', () => {
   });
 
   it('returns a refreshed Supabase session', async () => {
-    await expect(controller.refresh({ refreshToken: 'refresh' })).resolves.toMatchObject({ data: TOKENS });
+    await expect(controller.refresh({ headers: { cookie: 'gdg_refresh=refresh' } } as never, response as never)).resolves.toMatchObject({ data: { authenticated: true } });
     expect(refreshSession).toHaveBeenCalledWith({ refresh_token: 'refresh' });
   });
 });
@@ -472,7 +488,7 @@ describe('POST /auth/setup-password', () => {
   };
 
   function setupAs(user?: RequestUser) {
-    return controller.setupPassword({ user }, body);
+    return controller.setupPassword({ user }, body, response as never);
   }
 
   beforeEach(() => {
@@ -484,9 +500,10 @@ describe('POST /auth/setup-password', () => {
       error: null,
     });
     signInWithPassword.mockReset().mockResolvedValue({
-      data: { session: SESSION },
+      data: { session: SESSION, user: { id: 'linked-auth-user' } },
       error: null,
     });
+    findUnique.mockReset().mockResolvedValue({ isActive: true });
   });
 
   it('sets the password and logs them in', async () => {
@@ -499,7 +516,7 @@ describe('POST /auth/setup-password', () => {
       email: 'data.member@example.test',
       password: body.password,
     });
-    expect(response.data).toEqual(TOKENS);
+    expect(response.data).toEqual({ authenticated: true });
   });
 
   it('rejects visitors who are not logged in', async () => {

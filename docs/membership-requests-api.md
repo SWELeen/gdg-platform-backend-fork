@@ -1,5 +1,23 @@
 # Membership requests API
 
+## Current registration and approval contract
+
+New browser registrations are submitted to `POST /auth/signup`; the full verified registration payload is held server-side until email checks finish. The browser must not create a request by reposting profile details from session storage. The signup payload contains `registrationType: "MEMBER" | "NON_MEMBER"`, `applicationData`, and (for members) `committees` plus optional `requestedGlobalRoles` (`ADVISOR`, `DEVELOPER_COMMITTEES_LEADER`). Personal email is required; university email is optional. Every provided email must be verified before data is finalized.
+
+The backend then stores non-members in `non_member_registration`, or creates one pending `membership_request` with independent committee/global-role decisions. Member rows, committee positions, and global roles are created only after the responsible approval. Members can choose multiple committees. `Leader`/`Co-Leader` requests for Automation, Data Analysis, Web Development, AI, IoT/Robotics, and Cybersecurity require `DEVELOPER_COMMITTEES_LEADER`; other committee leadership and global role requests require `GROUP_LEADER` or `GROUP_CO_LEADER`. Ordinary member requests go to the selected committee's Leader/Co-Leader. Every decision rejects self-approval.
+
+Leadership review endpoints:
+
+- `GET /membership-requests/leadership?scope=DEVELOPER_COMMITTEES` — Developer Committees Leader only.
+- `GET /membership-requests/leadership?scope=CLUB` — Group Leader/Co-Leader only.
+- `PATCH /membership-requests/:requestId/leadership/committees/:committeeCode` — approve/reject a routed committee leadership request.
+- `PATCH /membership-requests/:requestId/leadership/global-roles/:roleCode` — Group Leader/Co-Leader approve/reject Advisor or Developer Committees Leader applications.
+- `GET /developer-committees/dashboard` — role-checked aggregate committee counts for the Developer Committees Leader dashboard.
+
+`GET /club-leadership/dashboard` returns an organization-wide read-only overview and requires `club.dashboard.view`, granted to both `GROUP_LEADER` and `GROUP_CO_LEADER`. Both roles use the same `GET /membership-requests/leadership?scope=CLUB` queue and the same decision routes. Decisions lock the request and reject repeated processing; approved global roles (Advisor or Developer Committees Leader) are granted once, while approved committee leadership gets the requested committee role. The dashboard reuses the shared leader UI for overview, members, tasks, points, and settings, with management actions disabled because no club-wide mutation permissions exist.
+
+All routes derive the acting person/member from a verified Supabase token in the HttpOnly session cookie (or a supported bearer integration); client-supplied actor IDs, reviewer IDs, granted roles, and approval scope are never used as authority. The submitted decision is validated and accepted only after backend permission and request-scope checks. The migration is authored, not applied. Existing descriptions below describe the legacy committee-only endpoint and are retained for compatibility context.
+
 All routes below use the existing Supabase Auth bearer token. `POST` additionally asks Supabase Auth to confirm the token's email is verified before saving a request. Applicant identity comes from the token's `sub` mapped to `person.auth_user_id`; request bodies cannot supply a person or member ID.
 
 ## Submit an application
