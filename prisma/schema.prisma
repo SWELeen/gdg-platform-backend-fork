@@ -62,6 +62,8 @@ model Person {
   fullName        String   @map("full_name") @db.VarChar(255)
   emailUniversity String?  @map("email_university") @db.VarChar(255)
   emailPersonal   String?  @map("email_personal") @db.VarChar(255)
+  emailPersonalVerifiedAt DateTime? @map("email_personal_verified_at") @db.Timestamptz(6)
+  emailUniversityVerifiedAt DateTime? @map("email_university_verified_at") @db.Timestamptz(6)
   phoneNumber     String?  @map("phone_number") @db.VarChar(50)
   university      String?  @db.VarChar(255)
   branch          String?  @db.VarChar(100)
@@ -76,6 +78,10 @@ model Person {
   member        Member?
   registrations EventRegistration[] @relation("RegistrationOwner")
   membershipRequest MembershipRequest?
+  nonMemberRegistration NonMemberRegistration?
+  emailVerificationChallenges EmailVerificationChallenge[]
+  pendingSignup PendingSignup?
+  emailIdentities PersonEmailIdentity[]
 
   @@map("person")
 }
@@ -87,6 +93,7 @@ model Role {
 
   permissions RolePermission[]
   members     MemberRole[]
+  membershipRequestGlobalRoles MembershipRequestGlobalRole[]
 
   @@map("role")
 }
@@ -138,6 +145,7 @@ model Member {
   excusedRegistrations     EventRegistration[]          @relation("RegistrationExcuseStaff")
   resolvedBlacklistEntries RegistrationBlacklistEntry[] @relation("BlacklistResolver")
   reviewedMembershipCommittees MembershipRequestCommittee[] @relation("MembershipDecisionReviewer")
+  reviewedGlobalMembershipRoles MembershipRequestGlobalRole[] @relation("GlobalRoleDecisionReviewer")
 
   @@map("member")
 }
@@ -247,6 +255,7 @@ model MembershipRequest {
 
   person     Person                       @relation(fields: [personId], references: [personId], onDelete: Restrict, onUpdate: NoAction)
   committees MembershipRequestCommittee[]
+  globalRoles MembershipRequestGlobalRole[]
 
   @@map("membership_request")
 }
@@ -256,6 +265,7 @@ model MembershipRequestCommittee {
   membershipRequestId          Int                        @map("membership_request_id")
   committeeId                  Int                        @map("committee_id")
   requestedRole                String                     @map("requested_role") @db.VarChar(100)
+  approvalScope                String                     @default("COMMITTEE") @map("approval_scope") @db.VarChar(32)
   status                       MembershipCommitteeDecision @default(PENDING)
   decidedByMemberId            Int?                       @map("decided_by_member_id")
   decidedAt                    DateTime?                  @map("decided_at") @db.Timestamptz(6)
@@ -267,6 +277,90 @@ model MembershipRequestCommittee {
   @@unique([membershipRequestId, committeeId])
   @@index([committeeId, status, membershipRequestId])
   @@map("membership_request_committee")
+}
+
+model MembershipRequestGlobalRole {
+  membershipRequestGlobalRoleId Int                        @id @default(autoincrement()) @map("membership_request_global_role_id")
+  membershipRequestId           Int                        @map("membership_request_id")
+  roleCode                      String                     @map("role_code") @db.Text
+  status                        MembershipCommitteeDecision @default(PENDING)
+  decidedByMemberId             Int?                       @map("decided_by_member_id")
+  decidedAt                     DateTime?                  @map("decided_at") @db.Timestamptz(6)
+
+  membershipRequest MembershipRequest @relation(fields: [membershipRequestId], references: [membershipRequestId], onDelete: Cascade, onUpdate: NoAction)
+  role              Role               @relation(fields: [roleCode], references: [roleCode], onDelete: Restrict, onUpdate: NoAction)
+  reviewer          Member?            @relation("GlobalRoleDecisionReviewer", fields: [decidedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([membershipRequestId, roleCode])
+  @@index([roleCode, status, membershipRequestId])
+  @@map("membership_request_global_role")
+}
+
+model NonMemberRegistration {
+  nonMemberRegistrationId Int      @id @default(autoincrement()) @map("non_member_registration_id")
+  personId                Int      @unique @map("person_id")
+  applicationData         Json     @map("application_data") @db.JsonB
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  person Person @relation(fields: [personId], references: [personId], onDelete: Restrict, onUpdate: NoAction)
+
+  @@map("non_member_registration")
+}
+
+model EmailVerificationChallenge {
+  emailVerificationChallengeId Int       @id @default(autoincrement()) @map("email_verification_challenge_id")
+  personId                     Int       @map("person_id")
+  purpose                      String    @db.VarChar(32)
+  email                        String    @db.VarChar(255)
+  codeHash                     String    @map("code_hash") @db.VarChar(64)
+  sentAt                       DateTime  @default(now()) @map("sent_at") @db.Timestamptz(6)
+  expiresAt                    DateTime  @map("expires_at") @db.Timestamptz(6)
+  attempts                     Int       @default(0)
+  consumedAt                   DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  person Person @relation(fields: [personId], references: [personId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([personId, purpose])
+  @@index([expiresAt])
+  @@map("email_verification_challenge")
+}
+
+model PendingSignup {
+  pendingSignupId Int      @id @default(autoincrement()) @map("pending_signup_id")
+  personId        Int      @unique @map("person_id")
+  registrationType String  @map("registration_type") @db.VarChar(20)
+  applicationData Json     @map("application_data") @db.JsonB
+  committees      Json     @default("[]") @db.JsonB
+  globalRoles     Json     @default("[]") @map("global_roles") @db.JsonB
+  expiresAt       DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  person Person @relation(fields: [personId], references: [personId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expiresAt])
+  @@map("pending_signup")
+}
+
+model RevokedAuthToken {
+  tokenHash String   @id @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime @default(now()) @map("revoked_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("revoked_auth_token")
+}
+
+model PersonEmailIdentity {
+  personEmailIdentityId Int      @id @default(autoincrement()) @map("person_email_identity_id")
+  personId              Int      @map("person_id")
+  email                 String   @unique @db.VarChar(255)
+  kind                  String   @db.VarChar(20)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  person Person @relation(fields: [personId], references: [personId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([personId, kind])
+  @@map("person_email_identity")
 }
 
 model CommitteeTask {

@@ -1,5 +1,15 @@
 # Authentication and RBAC
 
+## Current signup and session flow (supersedes legacy endpoint descriptions below)
+
+Browser sessions use HttpOnly `gdg_access` and `gdg_refresh` cookies. They are `SameSite=Strict`, `Secure` in production, and cookie-authenticated mutations require an exact `Origin` match with `FRONTEND_URL`. CORS is limited to that origin and allows credentials. The frontend does not read or persist access/refresh tokens. `/auth/refresh` rotates Supabase sessions; `/auth/logout` revokes the current access token digest locally, signs out the refresh session at Supabase, and clears cookies. Protected routes still enforce backend permissions.
+
+`POST /auth/signup` requires a personal email, password, registration type, application data, committee selections, and requested global roles. A university email is optional and must differ from the personal address. Supabase email confirmation must be enabled to verify the personal email. If university email is supplied, a second six-digit OTP is sent by Resend; it expires after ten minutes, allows five attempts, and has a 60-second send cooldown. OTP digests are stored, not plaintext codes. `RESEND_API_KEY` and `AUTH_EMAIL_FROM` must be configured for university-email signup.
+
+Signup choices remain in `pending_signup` on the server for up to 24 hours. No application, non-member record, active member, or role is created until every provided email is verified. Verified non-members are recorded in `non_member_registration`. Verified member applicants receive pending committee and global-role application rows. Each committee application is routed to its committee leaders; committee leadership in Automation, Data Analysis, Web Development, AI, IoT/Robotics, or Cybersecurity is routed to the Developer Committees Leader; other committee leaders and global leadership roles are routed to Group Leaders/Co-Leaders. The backend assigns requested positions only after the responsible approval. Self-approval is rejected.
+
+The `20261024170000_registration_approval_security` migration is required before deploying this behavior. It is authored but has not been applied to any database. Email confirmation in Supabase and Resend sender credentials are infrastructure prerequisites. Existing descriptions below that mention bearer-only browser sessions, token JSON responses, or signup without email confirmation are historical and must not be used as the current API contract.
+
 ## Approved direction
 
 The user confirmed Supabase Auth as the credential owner on 2026-10-05. NestJS verifies the provider identity and enforces local role-based and committee-based access control. The backend is the authoritative enforcement point. Google OAuth remains a potential provider flow requiring configuration review.
