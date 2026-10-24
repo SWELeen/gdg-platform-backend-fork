@@ -33,6 +33,7 @@ const DOMAIN_ERROR_CODES: ReadonlyMap<string, number> = new Map([
   ['ALREADY_CHECKED_IN', 409],
   ['CHECK_IN_CLOSED', 409],
   ['EMAIL_ALREADY_EXISTS', 409],
+  ['EMAIL_ADDRESS_NOT_AUTHORIZED', 403],
 ]);
 const DIAGNOSTIC_METHODS = new Set([
   'GET',

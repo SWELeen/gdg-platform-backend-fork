@@ -89,11 +89,11 @@ export class CommitteeDashboardService {
     const memberId = membership?.memberId ?? null;
     const [canViewDashboard, canManageTasks, canManagePoints, canManageRegistrations, canAddMembers] = memberId
       ? await Promise.all([
-          this.access.hasCommitteePermission(memberId, VIEW_PERMISSION, committee.committeeId),
-          this.access.hasCommitteePermission(memberId, TASK_PERMISSION, committee.committeeId),
-          this.access.hasCommitteePermission(memberId, POINTS_PERMISSION, committee.committeeId),
-          this.access.hasCommitteePermission(memberId, 'registrations.review', committee.committeeId),
-          this.access.hasCommitteePermission(memberId, MEMBERS_PERMISSION, committee.committeeId),
+          this.access.hasCommitteePermission(memberId, VIEW_PERMISSION, undefined, committee.committeeId),
+          this.access.hasCommitteePermission(memberId, TASK_PERMISSION, undefined, committee.committeeId),
+          this.access.hasCommitteePermission(memberId, POINTS_PERMISSION, undefined, committee.committeeId),
+          this.access.hasCommitteePermission(memberId, 'registrations.review', undefined, committee.committeeId),
+          this.access.hasCommitteePermission(memberId, MEMBERS_PERMISSION, undefined, committee.committeeId),
         ])
       : [true, false, false, false, false];
     if (!canViewDashboard) throw new ForbiddenException();
@@ -463,7 +463,7 @@ export class CommitteeDashboardService {
   }
 
   private async requirePermission(memberId: number, permission: string, committeeId: number) {
-    if (!(await this.access.hasCommitteePermission(memberId, permission, committeeId))) throw new ForbiddenException();
+    if (!(await this.access.hasCommitteePermission(memberId, permission, undefined, committeeId))) throw new ForbiddenException();
   }
 
   private async requireCommitteeMember(committeeId: number, memberId: number) {
