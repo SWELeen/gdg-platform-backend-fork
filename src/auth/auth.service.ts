@@ -44,6 +44,12 @@ function emailError(error: AuthError) {
       HttpStatus.TOO_MANY_REQUESTS,
     );
   }
+  if (error.code === 'email_address_not_authorized') {
+    return new ForbiddenException(
+      'This email address is not authorized by the default email provider.',
+      { errorCode: 'EMAIL_ADDRESS_NOT_AUTHORIZED' },
+    );
+  }
   return error;
 }
 
@@ -135,7 +141,7 @@ export class AuthService {
     if (error?.code === 'weak_password') {
       throw new BadRequestException('password is too weak.');
     }
-    if (error) throw error;
+    if (error) throw emailError(error);
     if (!data.user || data.user.identities?.length === 0) throw emailAlreadyExists();
 
     try {
