@@ -47,6 +47,8 @@ services:
         condition: service_healthy
     environment:
       PORT: 3001
+      NODE_ENV: development
+      COMMITTEE_DASHBOARD_AUTH_BYPASS: ${COMMITTEE_DASHBOARD_AUTH_BYPASS:-true}
       FRONTEND_URL: http://localhost:3000
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
     ports:

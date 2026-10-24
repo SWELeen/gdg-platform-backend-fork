@@ -180,6 +180,7 @@ model Committee {
   members     MemberCommittee[]
   events      Event[]
   permissions CommitteePermission[]
+  tasks       CommitteeTask[]
 
   @@index([parentCommitteeId])
   @@map("committee")
@@ -211,10 +212,53 @@ model MemberCommittee {
 
   member    Member    @relation(fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
   committee Committee @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
+  assignedTasks CommitteeTask[] @relation("TaskAssignee")
+  createdTasks  CommitteeTask[] @relation("TaskCreator")
+  pointsReceived CommitteePointEntry[] @relation("PointsRecipient")
+  pointsAwarded  CommitteePointEntry[] @relation("PointsAwarder")
 
   @@unique([memberId, committeeId])
   @@index([committeeId])
   @@map("member_committee")
+}
+
+model CommitteeTask {
+  taskId            Int      @id @default(autoincrement()) @map("task_id")
+  committeeId       Int      @map("committee_id")
+  title             String   @db.VarChar(150)
+  description       String   @default("") @db.Text
+  assignedMemberId  Int      @map("assigned_member_id")
+  createdByMemberId Int      @map("created_by_member_id")
+  dueAt             DateTime @map("due_at") @db.Timestamptz(3)
+  priority          String   @default("MEDIUM") @db.VarChar(10)
+  status            String   @default("TODO") @db.VarChar(20)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  committee Committee       @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
+  assignee  MemberCommittee @relation("TaskAssignee", fields: [assignedMemberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
+  creator   MemberCommittee @relation("TaskCreator", fields: [createdByMemberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([committeeId, status, dueAt])
+  @@index([assignedMemberId, committeeId, status])
+  @@map("committee_task")
+}
+
+model CommitteePointEntry {
+  pointEntryId      Int      @id @default(autoincrement()) @map("point_entry_id")
+  committeeId       Int      @map("committee_id")
+  memberId          Int      @map("member_id")
+  awardedByMemberId Int      @map("awarded_by_member_id")
+  pointsDelta       Int      @map("points_delta")
+  reason            String   @db.VarChar(500)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recipient MemberCommittee @relation("PointsRecipient", fields: [memberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
+  awarder   MemberCommittee @relation("PointsAwarder", fields: [awardedByMemberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([committeeId, createdAt, pointEntryId])
+  @@index([memberId, committeeId, createdAt])
+  @@map("committee_point_entry")
 }
 
 model Event {
