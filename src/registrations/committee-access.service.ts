@@ -13,6 +13,7 @@ export class CommitteeAccessService {
   async hasCommitteePermission(
     memberId: number,
     code: string,
+    committeeId?: number,
   ): Promise<boolean> {
     const rows = await this.prisma.$queryRaw<{ allowed: boolean }[]>`
       SELECT EXISTS (
@@ -25,6 +26,7 @@ export class CommitteeAccessService {
         WHERE m.member_id = ${memberId}
           AND m.is_active
           AND cp.code = ${code}
+         AND (${committeeId ?? null}::integer IS NULL OR mc.committee_id = ${committeeId ?? null})
       ) AS allowed`;
     return rows[0]?.allowed === true;
   }
