@@ -298,6 +298,7 @@ export class RegistrationReviewService {
         registration.person.emailUniversity,
       recipientName: registration.person.fullName,
       eventName: event.name,
+      eventStartsAt: event.startsAt,
       confirmationDeadline: registration.confirmationDeadline ?? undefined,
     };
   }

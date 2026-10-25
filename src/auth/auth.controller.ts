@@ -55,9 +55,12 @@ export class AuthController {
   @Post('auth/verify-email')
   @HttpCode(200)
   async verifySignupEmail(@Body() body: VerifySignupEmailDto, @Res({ passthrough: true }) response?: Response) {
-    const session = await this.auth.verifySignupEmail(body.email, body.token);
-    this.setSessionCookies(response, session);
-    return apiSuccess({ authenticated: true, universityEmailVerificationRequired: session.universityEmailVerificationRequired, registrationPendingApproval: session.registrationPendingApproval });
+    const result = await this.auth.verifySignupEmail(body.email, body.token);
+    if ('accessToken' in result) {
+      this.setSessionCookies(response, result);
+      return apiSuccess({ authenticated: true, universityEmailVerificationRequired: result.universityEmailVerificationRequired, registrationPendingApproval: result.registrationPendingApproval });
+    }
+    return apiSuccess(result);
   }
 
   @Post('auth/verify-university-email')

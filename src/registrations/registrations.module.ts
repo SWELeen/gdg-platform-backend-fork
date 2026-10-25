@@ -20,6 +20,10 @@ import { RegistrationsController } from './registrations.controller.js';
     ConfirmationExpiryJob,
   ],
   // promoteNextFromWaitlist is called by the member confirm/decline flow.
-  exports: [RegistrationReviewService, CommitteeAccessService],
+  exports: [
+    RegistrationReviewService,
+    CommitteeAccessService,
+    RegistrationEmailService,
+  ],
 })
 export class RegistrationsModule {}
