@@ -23,6 +23,7 @@ import {
   registrationNotFound,
 } from '../registrations/registration-errors.js';
 import { RegistrationReviewService } from '../registrations/registration-review.service.js';
+import { RegistrationEmailService } from '../registrations/registration-email.service.js';
 import { checkAnswers } from './answers.js';
 import { AttendanceTokenService } from './attendance-token.service.js';
 import type { AnswerDto } from './event-registration.dto.js';
@@ -67,6 +68,8 @@ export class EventRegistrationService {
     private readonly tokens: AttendanceTokenService,
     @Inject(RegistrationReviewService)
     private readonly review: RegistrationReviewService,
+    @Inject(RegistrationEmailService)
+    private readonly emails: RegistrationEmailService,
   ) {}
 
   async listPublishedEvents() {
@@ -274,14 +277,28 @@ export class EventRegistrationService {
     });
     if (count === 0) throw this.cannotRespond(registration.status);
 
+    const attendanceQrCodeDataUrl = await AttendanceTokenService.qrImage(
+      issued.token,
+    );
+    await this.emails.sendSafely({
+      kind: 'CONFIRMED',
+      registrationId,
+      to:
+        registration.person.emailPersonal ??
+        registration.person.emailUniversity,
+      recipientName: registration.person.fullName,
+      eventName: registration.event.name,
+      eventStartsAt: registration.event.startsAt,
+      eventLocation: registration.event.location,
+      attendanceQrCodeDataUrl,
+    });
+
     return {
       registrationId,
       status: RegistrationStatus.CONFIRMED,
       confirmedAt: now,
       attendanceToken: issued.token,
-      attendanceQrCodeDataUrl: await AttendanceTokenService.qrImage(
-        issued.token,
-      ),
+      attendanceQrCodeDataUrl,
     };
   }
 
@@ -357,7 +374,19 @@ export class EventRegistrationService {
   private async ownRegistration(registrationId: number, personId: number) {
     const registration = await this.prisma.eventRegistration.findUnique({
       where: { registrationId },
-      select: { personId: true, eventId: true, status: true },
+      select: {
+        personId: true,
+        eventId: true,
+        status: true,
+        person: {
+          select: {
+            fullName: true,
+            emailPersonal: true,
+            emailUniversity: true,
+          },
+        },
+        event: { select: { name: true, startsAt: true, location: true } },
+      },
     });
     if (!registration) throw registrationNotFound();
     if (registration.personId !== personId) throw notYourRegistration();

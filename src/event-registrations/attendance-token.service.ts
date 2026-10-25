@@ -4,7 +4,7 @@ import {
   createHash,
   randomBytes,
 } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import QRCode from 'qrcode';
 
@@ -72,12 +72,13 @@ export class AttendanceTokenService {
 
   private secret(): Buffer {
     if (!this.key) {
-      const key = Buffer.from(
-        this.config.getOrThrow<string>('ATTENDANCE_TOKEN_KEY'),
-        'base64',
-      );
+      const configuredKey = this.config.get<string>('ATTENDANCE_TOKEN_KEY');
+      const key = configuredKey ? Buffer.from(configuredKey, 'base64') : Buffer.alloc(0);
       if (key.length !== 32) {
-        throw new Error('ATTENDANCE_TOKEN_KEY must be 32 bytes in base64.');
+        throw new ServiceUnavailableException(
+          'Attendance QR generation is unavailable. Please contact the event team.',
+          { errorCode: 'ATTENDANCE_QR_UNAVAILABLE' },
+        );
       }
       this.key = key;
     }

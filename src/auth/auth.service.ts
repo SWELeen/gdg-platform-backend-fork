@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
+import nodemailer from 'nodemailer';
 import {
   type AuthError,
   createClient,
@@ -101,6 +102,19 @@ export class AuthService {
   }
 
   async verifySignupEmail(email: string, token: string) {
+    const pendingPerson = await this.prisma.person.findFirst({
+      where: {
+        emailPersonal: { equals: email.trim().toLowerCase(), mode: 'insensitive' },
+        pendingSignup: { is: { expiresAt: { gt: new Date() } } },
+      },
+      select: { personId: true, authUserId: true, emailUniversity: true },
+    });
+    if (pendingPerson?.emailUniversity) {
+      if (!pendingPerson.authUserId) throw new UnauthorizedException();
+      await this.verifySharedSignupCode(pendingPerson.personId, pendingPerson.authUserId, token);
+      return { authenticated: false as const, registrationPendingApproval: true as const };
+    }
+
     const { data, error } = await this.client().auth.verifyOtp({
       email,
       token,
@@ -170,40 +184,51 @@ export class AuthService {
     applicationData, committees = [], requestedGlobalRoles = [],
   }: SignupDto) {
     if ((applicationData.universityEmail?.trim().toLowerCase() ?? null) !== (universityEmail?.trim().toLowerCase() ?? null)) {
-      throw new BadRequestException('The university email must match the address being verified.');
+      throw new BadRequestException('The university email must match the address being verified.', {
+        errorCode: 'UNIVERSITY_EMAIL_MISMATCH',
+      });
     }
     // existing members who haven't activated yet count too
     if (await this.findPersonByEmail(email)) throw emailAlreadyExists();
     if (universityEmail && await this.findPersonByEmail(universityEmail)) throw emailAlreadyExists();
     if (universityEmail && email.trim().toLowerCase() === universityEmail.trim().toLowerCase()) {
-      throw new BadRequestException('Personal and university emails must be different addresses.');
+      throw new BadRequestException('Personal and university emails must be different addresses.', {
+        errorCode: 'EMAILS_MUST_DIFFER',
+      });
     }
 
-    const { data, error } = await this.client().auth.signUp({
-      email,
-      password,
-    });
-    if (
-      error?.code === 'user_already_exists' ||
-      error?.code === 'email_exists'
-    ) {
-      throw emailAlreadyExists();
-    }
-    if (error?.code === 'weak_password') {
-      throw new BadRequestException('password is too weak.');
-    }
-    if (error) throw emailError(error);
-    if (!data.user || data.user.identities?.length === 0) throw emailAlreadyExists();
-    if (data.session) {
-      await this.deleteAccount(data.user.id);
-      throw new ServiceUnavailableException('Enable Supabase email confirmation before allowing signup.');
+    let authUserId: string;
+    if (universityEmail) {
+      // Use an app-managed shared OTP for both addresses. Supabase's signup OTP
+      // is generated internally and cannot be copied to the second recipient.
+      const { data, error } = await this.admin().createUser({ email, password, email_confirm: false });
+      if (error?.code === 'user_already_exists' || error?.code === 'email_exists') throw emailAlreadyExists();
+      if (error?.code === 'weak_password') {
+        throw new BadRequestException('Choose a stronger password.', { errorCode: 'SIGNUP_WEAK_PASSWORD' });
+      }
+      if (error) throw emailError(error);
+      if (!data.user) throw emailAlreadyExists();
+      authUserId = data.user.id;
+    } else {
+      const { data, error } = await this.client().auth.signUp({ email, password });
+      if (error?.code === 'user_already_exists' || error?.code === 'email_exists') throw emailAlreadyExists();
+      if (error?.code === 'weak_password') {
+        throw new BadRequestException('Choose a stronger password.', { errorCode: 'SIGNUP_WEAK_PASSWORD' });
+      }
+      if (error) throw emailError(error);
+      if (!data.user || data.user.identities?.length === 0) throw emailAlreadyExists();
+      if (data.session) {
+        await this.deleteAccount(data.user.id);
+        throw new ServiceUnavailableException('Enable Supabase email confirmation before allowing signup.');
+      }
+      authUserId = data.user.id;
     }
 
     let createdPersonId: number | undefined;
     try {
       const person = await this.prisma.person.create({
         data: {
-          authUserId: data.user.id,
+          authUserId,
           fullName: fullName.trim(),
           // registration emails go to email_personal
           emailPersonal: email.toLowerCase(),
@@ -227,11 +252,13 @@ export class AuthService {
         select: { personId: true },
       });
       createdPersonId = person.personId;
-      if (universityEmail) await this.sendUniversityVerification(person.personId, universityEmail.toLowerCase());
+      if (universityEmail) {
+        await this.sendSharedSignupVerification(person.personId, email.toLowerCase(), universityEmail.toLowerCase());
+      }
     } catch (personError) {
       if (createdPersonId) await this.prisma.person.delete({ where: { personId: createdPersonId } }).catch(() => undefined);
       // no person = the account is useless, so undo it
-      await this.deleteAccount(data.user.id);
+      await this.deleteAccount(authUserId);
       if (
         personError instanceof Prisma.PrismaClientKnownRequestError &&
         personError.code === UNIQUE_VIOLATION
@@ -270,11 +297,75 @@ export class AuthService {
         emailPersonalVerifiedAt: null,
         pendingSignup: { is: { expiresAt: { gt: new Date() } } },
       },
-      select: { personId: true },
+      select: { personId: true, emailUniversity: true },
     });
     if (!person) return;
+    if (person.emailUniversity) {
+      await this.sendSharedSignupVerification(person.personId, normalizedEmail, person.emailUniversity);
+      return;
+    }
     const { error } = await this.client().auth.resend({ type: 'signup', email: normalizedEmail });
     if (error) throw emailError(error);
+  }
+
+  private async verifySharedSignupCode(personId: number, authUserId: string, code: string) {
+    const challenge = await this.prisma.emailVerificationChallenge.findUnique({
+      where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
+    });
+    if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date() || challenge.attempts >= 5) {
+      throw new UnauthorizedException();
+    }
+    const actual = Buffer.from(this.verificationHash(personId, code, 'SHARED_SIGNUP'), 'hex');
+    const expected = Buffer.from(challenge.codeHash, 'hex');
+    const valid = actual.length === expected.length && timingSafeEqual(actual, expected);
+    if (!valid) {
+      await this.prisma.emailVerificationChallenge.updateMany({
+        where: { emailVerificationChallengeId: challenge.emailVerificationChallengeId, consumedAt: null, attempts: { lt: 5 }, expiresAt: { gt: new Date() } },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new UnauthorizedException();
+    }
+
+    const { error } = await this.admin().updateUserById(authUserId, { email_confirm: true });
+    if (error) throw error;
+    const consumed = await this.prisma.emailVerificationChallenge.updateMany({
+      where: { emailVerificationChallengeId: challenge.emailVerificationChallengeId, consumedAt: null, attempts: { lt: 5 }, expiresAt: { gt: new Date() } },
+      data: { consumedAt: new Date() },
+    });
+    if (!consumed.count) throw new UnauthorizedException();
+    await this.prisma.person.update({
+      where: { personId },
+      data: { emailPersonalVerifiedAt: new Date(), emailUniversityVerifiedAt: new Date() },
+    });
+    await this.finalizePendingSignup(personId);
+  }
+
+  private async sendSharedSignupVerification(personId: number, personalEmail: string, universityEmail: string) {
+    const now = new Date();
+    const previous = await this.prisma.emailVerificationChallenge.findUnique({
+      where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
+      select: { sentAt: true },
+    });
+    if (previous && now.getTime() - previous.sentAt.getTime() < 60_000) {
+      throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    const from = this.config.get<string>('AUTH_EMAIL_FROM');
+    if (!from) {
+      throw new ServiceUnavailableException('Shared email verification is not configured.', {
+        errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED',
+      });
+    }
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const expiresAt = new Date(now.getTime() + 10 * 60_000);
+    await this.prisma.emailVerificationChallenge.upsert({
+      where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
+      create: { personId, purpose: 'SHARED_SIGNUP', email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0 },
+      update: { email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0, consumedAt: null },
+    });
+    const text = `Your GDG on Campus UJ registration code is ${code}. Enter it on the signup page within 10 minutes.`;
+    await Promise.all([...new Set([personalEmail, universityEmail])].map((to) =>
+      this.sendAuthEmail({ from, to, subject: 'Verify your GDG on Campus UJ registration', text }),
+    ));
   }
 
   async resendUniversityVerification(personId: number) {
@@ -295,9 +386,12 @@ export class AuthService {
       select: { sentAt: true },
     });
     if (previous && now.getTime() - previous.sentAt.getTime() < 60_000) throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
-    const apiKey = this.config.get<string>('RESEND_API_KEY');
     const from = this.config.get<string>('AUTH_EMAIL_FROM');
-    if (!apiKey || !from) throw new ServiceUnavailableException('University email verification is not configured.');
+    if (!from) {
+      throw new ServiceUnavailableException('University email verification is not configured.', {
+        errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED',
+      });
+    }
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     const expiresAt = new Date(now.getTime() + 10 * 60_000);
     await this.prisma.emailVerificationChallenge.upsert({
@@ -305,17 +399,32 @@ export class AuthService {
       create: { personId, purpose: 'UNIVERSITY', email, codeHash: this.verificationHash(personId, code), sentAt: now, expiresAt, attempts: 0 },
       update: { email, codeHash: this.verificationHash(personId, code), sentAt: now, expiresAt, attempts: 0, consumedAt: null },
     });
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: email, subject: 'Verify your university email', text: `Your verification code is ${code}. It expires in 10 minutes.` }),
-    });
-    if (!response.ok) throw new ServiceUnavailableException('Could not send university email verification.');
+    await this.sendAuthEmail({ from, to: email, subject: 'Verify your university email', text: `Your verification code is ${code}. It expires in 10 minutes.` });
   }
 
-  private verificationHash(personId: number, code: string) {
+  private async sendAuthEmail(message: { from: string; to: string; subject: string; text: string }) {
+    const host = this.config.get<string>('SMTP_HOST');
+    const port = Number(this.config.get<string>('SMTP_PORT') ?? 465);
+    const user = this.config.get<string>('SMTP_USER');
+    const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
+    if (!host || !Number.isInteger(port) || !user || !pass) {
+      throw new ServiceUnavailableException('Email delivery is not configured.', {
+        errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED',
+      });
+    }
+    const transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
+    try {
+      await transporter.sendMail(message);
+    } catch {
+      throw new ServiceUnavailableException('Could not send verification email. Check the SMTP settings.');
+    } finally {
+      transporter.close();
+    }
+  }
+
+  private verificationHash(personId: number, code: string, purpose = 'UNIVERSITY') {
     return createHmac('sha256', this.config.getOrThrow<string>('SUPABASE_SECRET_KEY'))
-      .update(`${personId}:UNIVERSITY:${code}`).digest('hex');
+      .update(`${personId}:${purpose}:${code}`).digest('hex');
   }
 
   private async finalizePendingSignup(personId: number) {

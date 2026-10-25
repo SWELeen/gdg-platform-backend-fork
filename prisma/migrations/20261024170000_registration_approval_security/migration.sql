@@ -114,6 +114,14 @@ INSERT INTO "role" ("role_code", "description", "is_privileged")
 VALUES ('DEVELOPER_COMMITTEES_LEADER', 'Developer committees overall leader', true)
 ON CONFLICT ("role_code") DO NOTHING;
 
+-- New global permissions use three-part names (area.subject.action).
+-- The original registry allowed only two-part names, so widen the format
+-- before inserting these permissions.
+ALTER TABLE "permission" DROP CONSTRAINT "permission_code_check";
+ALTER TABLE "permission"
+    ADD CONSTRAINT "permission_code_check"
+    CHECK ("code" ~ '^[a-z_]+([.][a-z_]+){1,2}$');
+
 INSERT INTO "permission" ("code", "description", "scope", "is_sensitive") VALUES
     ('applications.club_leaders.decide', 'Approve committee leader and developer lead applications', 'global', true),
     ('applications.developer_leaders.decide', 'Approve developer committee leader applications', 'global', true),

@@ -710,12 +710,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       'EVENTS.create',
       'events',
       'eventsXcreate',
-      'events.create.extra',
+      'events.create.extra.more',
       'events.create1',
     ])('rejects invalid permission code %j', async (code) => {
       await invalid(async (tx) => {
         await tx.$executeRaw`INSERT INTO permission(code, description, scope) VALUES (${code}, 'Test', 'global')`;
       }, 'permission_code_check');
+    });
+
+    it('accepts three-part permission codes', async () => {
+      await valid(async (tx) => {
+        await tx.permission.create({
+          data: {
+            code: 'developer.audit.view',
+            description: 'Three-part permission test',
+            scope: 'global',
+          },
+        });
+      });
     });
 
     it.each(['', 'GLOBAL', 'member'])(
