@@ -165,11 +165,7 @@ export class MembershipRequestService {
       }
 
       if (decision === MembershipCommitteeDecision.APPROVED) {
-        let member = await tx.member.findUnique({ where: { personId: requestOwner.personId } });
-        member ??= await tx.member.create({ data: { personId: requestOwner.personId } });
-        if (!member.isActive) {
-          throw new ConflictException('The member account must be reactivated before approval.');
-        }
+        const member = await this.getOrCreateActiveMember(tx, requestOwner.personId);
         // The selected role is only a preference. Never promote an applicant
         // into a privileged committee position through this decision endpoint.
         await tx.memberCommittee.upsert({
@@ -188,21 +184,7 @@ export class MembershipRequestService {
         },
       });
 
-      const decisions = await tx.membershipRequestCommittee.findMany({
-        where: { membershipRequestId: requestId },
-        select: { status: true },
-      });
-      const globalDecisions = await tx.membershipRequestGlobalRole.findMany({ where: { membershipRequestId: requestId }, select: { status: true } });
-      const allDecisions = [...decisions, ...globalDecisions];
-      const status = allDecisions.some((item) => item.status === MembershipCommitteeDecision.PENDING)
-        ? MembershipRequestStatus.PENDING
-        : allDecisions.some((item) => item.status === MembershipCommitteeDecision.APPROVED)
-          ? MembershipRequestStatus.APPROVED
-          : MembershipRequestStatus.REJECTED;
-      await tx.membershipRequest.update({
-        where: { membershipRequestId: requestId },
-        data: { status },
-      });
+      await this.refreshAggregateStatus(tx, requestId);
 
       const updated = await tx.membershipRequest.findUniqueOrThrow({
         where: { membershipRequestId: requestId },
@@ -257,9 +239,7 @@ export class MembershipRequestService {
       if (row.membershipRequest.personId === actor.personId) throw new ForbiddenException('You cannot approve your own request.');
       if (row.status !== MembershipCommitteeDecision.PENDING) throw new ConflictException('This request has already been decided.');
       if (decision === MembershipCommitteeDecision.APPROVED) {
-        let member = await tx.member.findUnique({ where: { personId: row.membershipRequest.personId } });
-        member ??= await tx.member.create({ data: { personId: row.membershipRequest.personId } });
-        if (!member.isActive) throw new ConflictException('The member account must be reactivated before approval.');
+        const member = await this.getOrCreateActiveMember(tx, row.membershipRequest.personId);
         await tx.memberCommittee.upsert({
           where: { memberId_committeeId: { memberId: member.memberId, committeeId: committee.committeeId } },
           create: { memberId: member.memberId, committeeId: committee.committeeId, role: row.requestedRole },
@@ -285,9 +265,7 @@ export class MembershipRequestService {
       if (row.membershipRequest.personId === actor.personId) throw new ForbiddenException('You cannot approve your own request.');
       if (row.status !== MembershipCommitteeDecision.PENDING) throw new ConflictException('This request has already been decided.');
       if (decision === MembershipCommitteeDecision.APPROVED) {
-        let member = await tx.member.findUnique({ where: { personId: row.membershipRequest.personId } });
-        member ??= await tx.member.create({ data: { personId: row.membershipRequest.personId } });
-        if (!member.isActive) throw new ConflictException('The member account must be reactivated before approval.');
+        const member = await this.getOrCreateActiveMember(tx, row.membershipRequest.personId);
         const existing = await tx.memberRole.findFirst({ where: { memberId: member.memberId, roleCode, endsOn: null } });
         if (!existing) await tx.memberRole.create({ data: { memberId: member.memberId, roleCode, assignedBy: actor.memberId } });
       }
@@ -301,6 +279,15 @@ export class MembershipRequestService {
     if (!(await this.access.hasCommitteePermission(memberId, APPLICATIONS_DECIDE, committeeCode))) {
       throw new ForbiddenException();
     }
+  }
+
+  private async getOrCreateActiveMember(tx: Prisma.TransactionClient, personId: number) {
+    const member = await tx.member.findUnique({ where: { personId } })
+      ?? await tx.member.create({ data: { personId } });
+    if (!member.isActive) {
+      throw new ConflictException('The member account must be reactivated before approval.');
+    }
+    return member;
   }
 
   private async assertLeadershipPermission(memberId: number, scope: 'CLUB' | 'DEVELOPER_COMMITTEES') {
