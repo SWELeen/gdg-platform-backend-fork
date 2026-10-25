@@ -102,35 +102,52 @@ export class AuthService {
   }
 
   async verifySignupEmail(email: string, token: string) {
-    const pendingPerson = await this.prisma.person.findFirst({
-      where: {
-        emailPersonal: { equals: email.trim().toLowerCase(), mode: 'insensitive' },
-        pendingSignup: { is: { expiresAt: { gt: new Date() } } },
-      },
-      select: { personId: true, authUserId: true, emailUniversity: true },
+    const normalizedEmail = email.trim().toLowerCase();
+    const pending = await this.prisma.signupVerification.findUnique({
+      where: { emailPersonal: normalizedEmail },
     });
-    if (pendingPerson?.emailUniversity) {
-      if (!pendingPerson.authUserId) throw new UnauthorizedException();
-      await this.verifySharedSignupCode(pendingPerson.personId, pendingPerson.authUserId, token);
+    if (!pending) return this.verifyLegacySignupEmail(normalizedEmail, token);
+    if (pending.expiresAt <= new Date() || pending.verifiedAt) throw new UnauthorizedException();
+
+    if (pending.emailUniversity) {
+      if (!pending.codeExpiresAt || pending.codeExpiresAt <= new Date()) throw new UnauthorizedException();
+      await this.verifySharedSignupCode(pending, token);
+      await this.createVerifiedSignup(pending, new Date());
       return { authenticated: false as const, registrationPendingApproval: true as const };
     }
 
     const { data, error } = await this.client().auth.verifyOtp({
-      email,
+      email: normalizedEmail,
       token,
       type: 'email',
     });
     if (error?.status === 429 || error?.code === 'over_request_rate_limit') throw emailError(error);
     if (error || !data.session || !data.user) throw new UnauthorizedException();
+    if (data.user.id !== pending.authUserId) throw new UnauthorizedException();
+    await this.createVerifiedSignup(pending, new Date());
+    return { ...tokens(data.session), universityEmailVerificationRequired: false, registrationPendingApproval: true };
+  }
+
+  // Allows signup attempts created before the staging migration to finish.
+  private async verifyLegacySignupEmail(email: string, token: string) {
+    const legacy = await this.prisma.person.findFirst({
+      where: { emailPersonal: { equals: email, mode: 'insensitive' }, pendingSignup: { is: { expiresAt: { gt: new Date() } } } },
+      select: { personId: true, authUserId: true, emailUniversity: true },
+    });
+    if (legacy?.emailUniversity) {
+      if (!legacy.authUserId) throw new UnauthorizedException();
+      await this.verifyLegacySharedSignupCode(legacy.personId, legacy.authUserId, token);
+      return { authenticated: false as const, registrationPendingApproval: true as const };
+    }
+    const { data, error } = await this.client().auth.verifyOtp({ email, token, type: 'email' });
+    if (error?.status === 429 || error?.code === 'over_request_rate_limit') throw emailError(error);
+    if (error || !data.session || !data.user) throw new UnauthorizedException();
     const person = await this.prisma.person.findUnique({
       where: { authUserId: data.user.id },
-      select: { personId: true, emailUniversity: true, pendingSignup: { select: { expiresAt: true } } },
+      select: { personId: true, pendingSignup: { select: { expiresAt: true } } },
     });
     if (!person?.pendingSignup || person.pendingSignup.expiresAt <= new Date()) throw new UnauthorizedException();
     await this.prisma.person.update({ where: { personId: person.personId }, data: { emailPersonalVerifiedAt: new Date() } });
-    if (person.emailUniversity) {
-      return { ...tokens(data.session), universityEmailVerificationRequired: true, registrationPendingApproval: false };
-    }
     await this.finalizePendingSignup(person.personId);
     return { ...tokens(data.session), universityEmailVerificationRequired: false, registrationPendingApproval: true };
   }
@@ -188,9 +205,22 @@ export class AuthService {
         errorCode: 'UNIVERSITY_EMAIL_MISMATCH',
       });
     }
-    // existing members who haven't activated yet count too
+    // Existing members and unexpired signup attempts both reserve their emails.
     if (await this.findPersonByEmail(email)) throw emailAlreadyExists();
     if (universityEmail && await this.findPersonByEmail(universityEmail)) throw emailAlreadyExists();
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedUniversityEmail = universityEmail?.trim().toLowerCase() ?? null;
+    const staged = await this.prisma.signupVerification.findFirst({
+      where: {
+        expiresAt: { gt: new Date() },
+        OR: [
+          { emailPersonal: normalizedEmail },
+          ...(normalizedUniversityEmail ? [{ emailPersonal: normalizedUniversityEmail }, { emailUniversity: normalizedEmail }, { emailUniversity: normalizedUniversityEmail }] : [{ emailUniversity: normalizedEmail }]),
+        ],
+      },
+      select: { signupVerificationId: true },
+    });
+    if (staged) throw emailAlreadyExists();
     if (universityEmail && email.trim().toLowerCase() === universityEmail.trim().toLowerCase()) {
       throw new BadRequestException('Personal and university emails must be different addresses.', {
         errorCode: 'EMAILS_MUST_DIFFER',
@@ -224,40 +254,25 @@ export class AuthService {
       authUserId = data.user.id;
     }
 
-    let createdPersonId: number | undefined;
     try {
-      const person = await this.prisma.person.create({
+      const pending = await this.prisma.signupVerification.create({
         data: {
           authUserId,
           fullName: fullName.trim(),
-          // registration emails go to email_personal
-          emailPersonal: email.toLowerCase(),
-          emailUniversity: universityEmail?.toLowerCase() ?? null,
-          emailIdentities: {
-            create: [
-              { email: email.trim().toLowerCase(), kind: 'PERSONAL' },
-              ...(universityEmail ? [{ email: universityEmail.trim().toLowerCase(), kind: 'UNIVERSITY' }] : []),
-            ],
-          },
-          pendingSignup: {
-            create: {
-              registrationType,
-              applicationData: JSON.parse(JSON.stringify(applicationData)),
-              committees: JSON.parse(JSON.stringify(committees)),
-              globalRoles: JSON.parse(JSON.stringify(requestedGlobalRoles)),
-              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-            },
-          },
+          emailPersonal: normalizedEmail,
+          emailUniversity: normalizedUniversityEmail,
+          registrationType,
+          applicationData: JSON.parse(JSON.stringify(applicationData)),
+          committees: JSON.parse(JSON.stringify(committees)),
+          globalRoles: JSON.parse(JSON.stringify(requestedGlobalRoles)),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
-        select: { personId: true },
       });
-      createdPersonId = person.personId;
       if (universityEmail) {
-        await this.sendSharedSignupVerification(person.personId, email.toLowerCase(), universityEmail.toLowerCase());
+        await this.sendSharedSignupVerification(pending);
       }
     } catch (personError) {
-      if (createdPersonId) await this.prisma.person.delete({ where: { personId: createdPersonId } }).catch(() => undefined);
-      // no person = the account is useless, so undo it
+      await this.prisma.signupVerification.deleteMany({ where: { authUserId } }).catch(() => undefined);
       await this.deleteAccount(authUserId);
       if (
         personError instanceof Prisma.PrismaClientKnownRequestError &&
@@ -291,41 +306,60 @@ export class AuthService {
 
   async resendPersonalVerification(email: string) {
     const normalizedEmail = email.trim().toLowerCase();
-    const person = await this.prisma.person.findFirst({
-      where: {
-        emailPersonal: { equals: normalizedEmail, mode: 'insensitive' },
-        emailPersonalVerifiedAt: null,
-        pendingSignup: { is: { expiresAt: { gt: new Date() } } },
-      },
-      select: { personId: true, emailUniversity: true },
-    });
-    if (!person) return;
-    if (person.emailUniversity) {
-      await this.sendSharedSignupVerification(person.personId, normalizedEmail, person.emailUniversity);
+    const pending = await this.prisma.signupVerification.findUnique({ where: { emailPersonal: normalizedEmail } });
+    if (!pending) {
+      const legacy = await this.prisma.person.findFirst({
+        where: { emailPersonal: { equals: normalizedEmail, mode: 'insensitive' }, emailPersonalVerifiedAt: null, pendingSignup: { is: { expiresAt: { gt: new Date() } } } },
+        select: { personId: true, emailUniversity: true },
+      });
+      if (!legacy) return;
+      if (legacy.emailUniversity) {
+        await this.sendLegacySharedSignupVerification(legacy.personId, normalizedEmail, legacy.emailUniversity);
+        return;
+      }
+      const { error } = await this.client().auth.resend({ type: 'signup', email: normalizedEmail });
+      if (error) throw emailError(error);
+      return;
+    }
+    if (pending.verifiedAt || pending.expiresAt <= new Date()) return;
+    if (pending.emailUniversity) {
+      await this.sendSharedSignupVerification(pending);
       return;
     }
     const { error } = await this.client().auth.resend({ type: 'signup', email: normalizedEmail });
     if (error) throw emailError(error);
   }
 
-  private async verifySharedSignupCode(personId: number, authUserId: string, code: string) {
+  private async verifySharedSignupCode(
+    pending: Prisma.SignupVerificationGetPayload<object>,
+    code: string,
+  ) {
+    if (!pending.codeHash || !pending.sentAt || !pending.codeExpiresAt || pending.codeExpiresAt <= new Date() || pending.attempts >= 5) throw new UnauthorizedException();
+    const actual = Buffer.from(this.verificationHash(pending.authUserId, code, 'SHARED_SIGNUP'), 'hex');
+    const expected = Buffer.from(pending.codeHash, 'hex');
+    const valid = actual.length === expected.length && timingSafeEqual(actual, expected);
+    const updated = await this.prisma.signupVerification.updateMany({
+      where: { signupVerificationId: pending.signupVerificationId, verifiedAt: null, attempts: { lt: 5 }, expiresAt: { gt: new Date() } },
+      data: valid ? { attempts: { increment: 0 } } : { attempts: { increment: 1 } },
+    });
+    if (!updated.count || !valid) throw new UnauthorizedException();
+    const { error } = await this.admin().updateUserById(pending.authUserId, { email_confirm: true });
+    if (error) throw error;
+  }
+
+  private async verifyLegacySharedSignupCode(personId: number, authUserId: string, code: string) {
     const challenge = await this.prisma.emailVerificationChallenge.findUnique({
       where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
     });
-    if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date() || challenge.attempts >= 5) {
-      throw new UnauthorizedException();
-    }
+    if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date() || challenge.attempts >= 5) throw new UnauthorizedException();
     const actual = Buffer.from(this.verificationHash(personId, code, 'SHARED_SIGNUP'), 'hex');
     const expected = Buffer.from(challenge.codeHash, 'hex');
     const valid = actual.length === expected.length && timingSafeEqual(actual, expected);
-    if (!valid) {
-      await this.prisma.emailVerificationChallenge.updateMany({
-        where: { emailVerificationChallengeId: challenge.emailVerificationChallengeId, consumedAt: null, attempts: { lt: 5 }, expiresAt: { gt: new Date() } },
-        data: { attempts: { increment: 1 } },
-      });
-      throw new UnauthorizedException();
-    }
-
+    const updated = await this.prisma.emailVerificationChallenge.updateMany({
+      where: { emailVerificationChallengeId: challenge.emailVerificationChallengeId, consumedAt: null, attempts: { lt: 5 }, expiresAt: { gt: new Date() } },
+      data: valid ? { attempts: { increment: 0 } } : { attempts: { increment: 1 } },
+    });
+    if (!updated.count || !valid) throw new UnauthorizedException();
     const { error } = await this.admin().updateUserById(authUserId, { email_confirm: true });
     if (error) throw error;
     const consumed = await this.prisma.emailVerificationChallenge.updateMany({
@@ -333,20 +367,33 @@ export class AuthService {
       data: { consumedAt: new Date() },
     });
     if (!consumed.count) throw new UnauthorizedException();
-    await this.prisma.person.update({
-      where: { personId },
-      data: { emailPersonalVerifiedAt: new Date(), emailUniversityVerifiedAt: new Date() },
-    });
+    await this.prisma.person.update({ where: { personId }, data: { emailPersonalVerifiedAt: new Date(), emailUniversityVerifiedAt: new Date() } });
     await this.finalizePendingSignup(personId);
   }
 
-  private async sendSharedSignupVerification(personId: number, personalEmail: string, universityEmail: string) {
+  private async sendLegacySharedSignupVerification(personId: number, personalEmail: string, universityEmail: string) {
     const now = new Date();
     const previous = await this.prisma.emailVerificationChallenge.findUnique({
       where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
       select: { sentAt: true },
     });
-    if (previous && now.getTime() - previous.sentAt.getTime() < 60_000) {
+    if (previous && now.getTime() - previous.sentAt.getTime() < 60_000) throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
+    const from = this.config.get<string>('AUTH_EMAIL_FROM');
+    if (!from) throw new ServiceUnavailableException('Shared email verification is not configured.', { errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED' });
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const expiresAt = new Date(now.getTime() + 10 * 60_000);
+    await this.prisma.emailVerificationChallenge.upsert({
+      where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
+      create: { personId, purpose: 'SHARED_SIGNUP', email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0 },
+      update: { email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0, consumedAt: null },
+    });
+    const text = `Your GDG on Campus UJ registration code is ${code}. Enter it on the signup page within 10 minutes.`;
+    await Promise.all([...new Set([personalEmail, universityEmail])].map((to) => this.sendAuthEmail({ from, to, subject: 'Verify your GDG on Campus UJ registration', text })));
+  }
+
+  private async sendSharedSignupVerification(pending: Prisma.SignupVerificationGetPayload<object>) {
+    const now = new Date();
+    if (pending.sentAt && now.getTime() - pending.sentAt.getTime() < 60_000) {
       throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
     }
     const from = this.config.get<string>('AUTH_EMAIL_FROM');
@@ -356,16 +403,55 @@ export class AuthService {
       });
     }
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    const expiresAt = new Date(now.getTime() + 10 * 60_000);
-    await this.prisma.emailVerificationChallenge.upsert({
-      where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
-      create: { personId, purpose: 'SHARED_SIGNUP', email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0 },
-      update: { email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0, consumedAt: null },
+    const codeExpiresAt = new Date(now.getTime() + 10 * 60_000);
+    await this.prisma.signupVerification.update({
+      where: { signupVerificationId: pending.signupVerificationId },
+      data: { codeHash: this.verificationHash(pending.authUserId, code, 'SHARED_SIGNUP'), sentAt: now, codeExpiresAt, attempts: 0 },
     });
     const text = `Your GDG on Campus UJ registration code is ${code}. Enter it on the signup page within 10 minutes.`;
-    await Promise.all([...new Set([personalEmail, universityEmail])].map((to) =>
+    await Promise.all([...new Set([pending.emailPersonal, pending.emailUniversity!])].map((to) =>
       this.sendAuthEmail({ from, to, subject: 'Verify your GDG on Campus UJ registration', text }),
     ));
+  }
+
+  private async createVerifiedSignup(pending: Prisma.SignupVerificationGetPayload<object>, verifiedAt: Date) {
+    const personId = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.signupVerification.updateMany({
+        where: { signupVerificationId: pending.signupVerificationId, verifiedAt: null, expiresAt: { gt: new Date() } },
+        data: { verifiedAt },
+      });
+      if (!claimed.count) throw new UnauthorizedException();
+
+      const person = await tx.person.create({
+        data: {
+          authUserId: pending.authUserId,
+          fullName: pending.fullName,
+          emailPersonal: pending.emailPersonal,
+          emailUniversity: pending.emailUniversity,
+          emailPersonalVerifiedAt: verifiedAt,
+          emailUniversityVerifiedAt: pending.emailUniversity ? verifiedAt : null,
+          emailIdentities: {
+            create: [
+              { email: pending.emailPersonal, kind: 'PERSONAL' },
+              ...(pending.emailUniversity ? [{ email: pending.emailUniversity, kind: 'UNIVERSITY' as const }] : []),
+            ],
+          },
+          pendingSignup: {
+            create: {
+              registrationType: pending.registrationType,
+              applicationData: pending.applicationData as Prisma.InputJsonValue,
+              committees: pending.committees as Prisma.InputJsonValue,
+              globalRoles: pending.globalRoles as Prisma.InputJsonValue,
+              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            },
+          },
+        },
+        select: { personId: true },
+      });
+      await tx.signupVerification.delete({ where: { signupVerificationId: pending.signupVerificationId } });
+      return person.personId;
+    });
+    await this.finalizePendingSignup(personId);
   }
 
   async resendUniversityVerification(personId: number) {
@@ -422,7 +508,7 @@ export class AuthService {
     }
   }
 
-  private verificationHash(personId: number, code: string, purpose = 'UNIVERSITY') {
+  private verificationHash(personId: number | string, code: string, purpose = 'UNIVERSITY') {
     return createHmac('sha256', this.config.getOrThrow<string>('SUPABASE_SECRET_KEY'))
       .update(`${personId}:${purpose}:${code}`).digest('hex');
   }
