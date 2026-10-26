@@ -13,6 +13,7 @@ import { CommitteeAccessService } from '../registrations/committee-access.servic
 import {
   CreateCommitteeMemberDto,
   CommitteeTaskStatus,
+  MEMBER_TASK_STATUSES,
   CreateCommitteeTaskDto,
   UpdateCommitteePointsDto,
   UpdateCommitteeTaskDto,
@@ -22,6 +23,8 @@ const VIEW_PERMISSION = 'dashboard.view';
 const TASK_PERMISSION = 'tasks.manage';
 const POINTS_PERMISSION = 'points.manage';
 const MEMBERS_PERMISSION = 'members.manage';
+// Tasks still being worked on, including those waiting for a leader to confirm.
+const ACTIVE_TASK_STATUSES = [CommitteeTaskStatus.TODO, CommitteeTaskStatus.IN_PROGRESS, CommitteeTaskStatus.PENDING_REVIEW];
 
 @Injectable()
 export class CommitteeDashboardService {
@@ -45,7 +48,7 @@ export class CommitteeDashboardService {
       _count: { _all: true },
     });
     const activeTasks = await Promise.all(committees.map((committee) => this.prisma.committeeTask.count({
-      where: { committeeId: committee.committeeId, status: { in: ['TODO', 'IN_PROGRESS'] } },
+      where: { committeeId: committee.committeeId, status: { in: ACTIVE_TASK_STATUSES } },
     })));
     return committees.map((committee, index) => ({
       code: committee.committeeCode,
@@ -84,8 +87,8 @@ export class CommitteeDashboardService {
       this.prisma.committeePointEntry.groupBy({ by: ['memberId'], _sum: { pointsDelta: true } }),
       this.prisma.committeePointEntry.aggregate({ where: { createdAt: { gte: riyadhPeriodStart(new Date(), 'month') } }, _sum: { pointsDelta: true } }),
       this.prisma.committeeTask.groupBy({ by: ['assignedMemberId'], where: { status: CommitteeTaskStatus.COMPLETED }, _count: { _all: true } }),
-      this.prisma.committeeTask.count({ where: { status: { in: ['TODO', 'IN_PROGRESS'] } } }),
-      this.prisma.committeeTask.count({ where: { status: { in: ['TODO', 'IN_PROGRESS'] }, dueAt: { gte: riyadhPeriodStart(new Date(), 'week'), lt: new Date(riyadhPeriodStart(new Date(), 'week').getTime() + 7 * 86400000) } } }),
+      this.prisma.committeeTask.count({ where: { status: { in: ACTIVE_TASK_STATUSES } } }),
+      this.prisma.committeeTask.count({ where: { status: { in: ACTIVE_TASK_STATUSES }, dueAt: { gte: riyadhPeriodStart(new Date(), 'week'), lt: new Date(riyadhPeriodStart(new Date(), 'week').getTime() + 7 * 86400000) } } }),
       this.prisma.event.findMany({
         include: { _count: { select: { registrations: true } } },
         orderBy: { startsAt: 'asc' },
@@ -420,6 +423,44 @@ export class CommitteeDashboardService {
     return this.mapTask(task);
   }
 
+  // A member moves their own task along; marking it done only asks a leader to confirm it.
+  async updateMyTaskStatus(memberId: number | null | undefined, taskId: number, status: (typeof MEMBER_TASK_STATUSES)[number]) {
+    if (!memberId) throw new ForbiddenException();
+    const task = await this.prisma.committeeTask.findFirst({
+      where: { taskId, assignedMemberId: memberId, assignee: { member: { isActive: true } } },
+      select: { status: true },
+    });
+    if (!task) throw new NotFoundException();
+    if (task.status === CommitteeTaskStatus.COMPLETED) throw new ConflictException('A confirmed task cannot be changed.');
+    if (task.status !== status) {
+      // Conditional, so a leader's confirmation at the same moment is never overwritten.
+      const { count } = await this.prisma.committeeTask.updateMany({
+        where: { taskId, assignedMemberId: memberId, status: task.status },
+        data: { status },
+      });
+      if (count === 0) throw new ConflictException('The task changed; reload and try again.');
+    }
+    return (await this.getMyTasks(memberId)).find((item) => item.id === String(taskId));
+  }
+
+  // A committee leader confirms a task the member marked done, or sends it back.
+  async reviewTask(user: RequestUser | undefined, committeeCode: string, taskId: number, decision: 'APPROVE' | 'RETURN') {
+    const { committee, memberId } = await this.requireMembership(user, committeeCode);
+    await this.requirePermission(memberId, TASK_PERMISSION, committee.committeeId);
+    const task = await this.prisma.committeeTask.findFirst({ where: { taskId, committeeId: committee.committeeId }, select: { status: true } });
+    if (!task) throw new NotFoundException();
+    const { count } = await this.prisma.committeeTask.updateMany({
+      where: { taskId, committeeId: committee.committeeId, status: CommitteeTaskStatus.PENDING_REVIEW },
+      data: { status: decision === 'APPROVE' ? CommitteeTaskStatus.COMPLETED : CommitteeTaskStatus.IN_PROGRESS },
+    });
+    if (count === 0) throw new ConflictException('Only a task waiting for confirmation can be reviewed.');
+    const updated = await this.prisma.committeeTask.findUniqueOrThrow({
+      where: { taskId },
+      include: { assignee: { include: { member: { include: { person: true } } } } },
+    });
+    return this.mapTask(updated);
+  }
+
   async deleteTask(user: RequestUser | undefined, committeeCode: string, taskId: number) {
     const { committee, memberId } = await this.requireMembership(user, committeeCode);
     await this.requirePermission(memberId, TASK_PERMISSION, committee.committeeId);
@@ -470,6 +511,25 @@ export class CommitteeDashboardService {
         reason: entry.reason, createdAt: entry.createdAt.toISOString(),
       };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }
+
+  // The signed-in member's own tasks in every committee they belong to; the id comes from the token only.
+  async getMyTasks(memberId: number | null | undefined) {
+    if (!memberId) return [];
+    const tasks = await this.prisma.committeeTask.findMany({
+      where: { assignedMemberId: memberId, assignee: { member: { isActive: true } } },
+      include: {
+        assignee: { include: { member: { include: { person: true } } } },
+        committee: { select: { committeeCode: true, committeeName: true } },
+      },
+      orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }],
+      take: 500,
+    });
+    return tasks.map((task) => ({
+      ...this.mapTask(task),
+      committeeCode: task.committee.committeeCode,
+      committeeName: task.committee.committeeName,
+    }));
   }
 
   private mapTask(task: {

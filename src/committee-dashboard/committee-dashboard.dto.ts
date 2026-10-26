@@ -2,6 +2,7 @@ import {
   IsEmail,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -21,7 +22,22 @@ export enum CommitteeTaskPriority {
 export enum CommitteeTaskStatus {
   TODO = 'TODO',
   IN_PROGRESS = 'IN_PROGRESS',
+  // Done by the member, waiting for a committee leader to confirm.
+  PENDING_REVIEW = 'PENDING_REVIEW',
   COMPLETED = 'COMPLETED',
+}
+
+/** Statuses a member may set on their own task; only a leader can make it COMPLETED. */
+export const MEMBER_TASK_STATUSES = [CommitteeTaskStatus.TODO, CommitteeTaskStatus.IN_PROGRESS, CommitteeTaskStatus.PENDING_REVIEW] as const;
+
+export class UpdateMyTaskDto {
+  @IsIn(MEMBER_TASK_STATUSES)
+  status!: (typeof MEMBER_TASK_STATUSES)[number];
+}
+
+export class ReviewCommitteeTaskDto {
+  @IsIn(['APPROVE', 'RETURN'])
+  decision!: 'APPROVE' | 'RETURN';
 }
 
 export class CreateCommitteeMemberDto {
