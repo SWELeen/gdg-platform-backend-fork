@@ -11,6 +11,7 @@ import type { RequestUser } from '../auth/auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CommitteeAccessService } from '../registrations/committee-access.service.js';
 import {
+  AddMemberToCommitteeDto,
   CreateCommitteeMemberDto,
   CommitteeTaskStatus,
   CreateCommitteeTaskDto,
@@ -59,13 +60,13 @@ export class CommitteeDashboardService {
   async getClubLeadershipOverview(user: RequestUser | undefined) {
     if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, 'club.dashboard.view'))) throw new ForbiddenException();
     const today = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }));
-    const [person, members, tasks, points, pointTotals, monthPoints, completedTasks, activeTasks, tasksDueThisWeek, events, registrationGroups] = await Promise.all([
+    const [person, members, tasks, points, pointTotals, monthPoints, completedTasks, activeTasks, tasksDueThisWeek, events, registrationGroups, committees, committeePointTotals, canAddMembers] = await Promise.all([
       this.prisma.person.findUnique({ where: { personId: user.personId }, select: { fullName: true } }),
       this.prisma.member.findMany({
         where: { isActive: true, person: { isActive: true } },
         include: {
           person: true,
-          committees: { select: { role: true } },
+          committees: { select: { role: true, committeeId: true, committee: { select: { committeeCode: true, committeeName: true } } } },
           roleAssignments: {
             where: { AND: [{ OR: [{ startsOn: null }, { startsOn: { lte: today } }] }, { OR: [{ endsOn: null }, { endsOn: { gte: today } }] }] },
             select: { roleCode: true },
@@ -74,11 +75,16 @@ export class CommitteeDashboardService {
         orderBy: { person: { fullName: 'asc' } },
       }),
       this.prisma.committeeTask.findMany({
-        include: { assignee: { include: { member: { include: { person: true } } } } },
+        include: {
+          assignee: { include: { member: { include: { person: true } } } },
+          committee: { select: { committeeCode: true, committeeName: true } },
+        },
         orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }], take: 200,
       }),
       this.prisma.committeePointEntry.findMany({
-        include: { recipient: { include: { member: { include: { person: true } } } } },
+        include: {
+          recipient: { include: { member: { include: { person: true } }, committee: { select: { committeeCode: true, committeeName: true } } } },
+        },
         orderBy: [{ createdAt: 'desc' }, { pointEntryId: 'desc' }], take: 200,
       }),
       this.prisma.committeePointEntry.groupBy({ by: ['memberId'], _sum: { pointsDelta: true } }),
@@ -91,8 +97,12 @@ export class CommitteeDashboardService {
         orderBy: { startsAt: 'asc' },
       }),
       this.prisma.eventRegistration.groupBy({ by: ['status'], _count: { _all: true } }),
+      this.prisma.committee.findMany({ select: { committeeCode: true, committeeName: true }, orderBy: { committeeName: 'asc' } }),
+      this.prisma.committeePointEntry.groupBy({ by: ['memberId', 'committeeId'], _sum: { pointsDelta: true } }),
+      this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION),
     ]);
     const memberPoints = new Map(pointTotals.map((row) => [row.memberId, row._sum.pointsDelta ?? 0]));
+    const memberCommitteePoints = new Map(committeePointTotals.map((row) => [`${row.memberId}:${row.committeeId}`, row._sum.pointsDelta ?? 0]));
     const memberCompletedTasks = new Map(completedTasks.map((row) => [row.assignedMemberId, row._count._all]));
     const mappedMembers = members.map((member) => ({
       id: String(member.memberId), name: member.person.fullName,
@@ -100,6 +110,11 @@ export class CommitteeDashboardService {
       role: [...new Set([...member.committees.map(({ role }) => role), ...member.roleAssignments.map(({ roleCode }) => roleCode)])].join(' / ') || 'Member',
       status: 'Active' as const, points: memberPoints.get(member.memberId) ?? 0,
       tasksCompleted: memberCompletedTasks.get(member.memberId) ?? 0, lastActivity: null,
+      committees: member.committees.map(({ role, committeeId, committee }) => ({
+        code: committee.committeeCode, name: committee.committeeName, role,
+        points: memberCommitteePoints.get(`${member.memberId}:${committeeId}`) ?? 0,
+      })),
+      globalRoles: member.roleAssignments.map(({ roleCode }) => roleCode),
     }));
     const now = new Date();
     return {
@@ -116,7 +131,8 @@ export class CommitteeDashboardService {
         acceptedRegistrations: registrationGroups.filter(({ status }) => ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(status)).reduce((sum, row) => sum + row._count._all, 0),
         rejectedRegistrations: registrationGroups.filter(({ status }) => ['REJECTED', 'NOT_SELECTED'].includes(status)).reduce((sum, row) => sum + row._count._all, 0),
       },
-      permissions: { canManageTasks: false, canManagePoints: false, canManageRegistrations: false, canAddMembers: false },
+      permissions: { canManageTasks: false, canManagePoints: false, canManageRegistrations: false, canAddMembers },
+      committees: committees.map(({ committeeCode, committeeName }) => ({ code: committeeCode, name: committeeName })),
       members: mappedMembers,
       events: events.map((event) => ({
         id: String(event.eventId), title: event.name, date: event.startsAt.toISOString(), endsAt: event.endsAt.toISOString(),
@@ -128,10 +144,12 @@ export class CommitteeDashboardService {
         assignedMemberId: String(task.assignedMemberId), assignedMemberName: task.assignee.member.person.fullName,
         createdByMemberId: String(task.createdByMemberId), dueAt: task.dueAt.toISOString(), priority: task.priority,
         status: task.status, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
+        committeeCode: task.committee.committeeCode, committeeName: task.committee.committeeName,
       })),
       pointHistory: points.map((entry) => ({
         id: String(entry.pointEntryId), memberId: String(entry.memberId), memberName: entry.recipient.member.person.fullName,
         pointsDelta: entry.pointsDelta, reason: entry.reason, createdAt: entry.createdAt.toISOString(),
+        committeeCode: entry.recipient.committee.committeeCode, committeeName: entry.recipient.committee.committeeName,
       })),
       recentActivities: [],
     };
@@ -374,6 +392,30 @@ export class CommitteeDashboardService {
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictException('A person or membership with this email already exists.');
+      }
+      throw error;
+    }
+  }
+
+  // club leadership adds an existing member to another committee; new people still join through membership requests
+  async addMemberToCommittee(user: RequestUser | undefined, targetMemberId: number, dto: AddMemberToCommitteeDto) {
+    if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION))) throw new ForbiddenException();
+    const committee = await this.prisma.committee.findUnique({ where: { committeeCode: dto.committeeCode.trim().toUpperCase() } });
+    if (!committee) throw new NotFoundException('The selected committee does not exist.');
+    const member = await this.prisma.member.findUnique({ where: { memberId: targetMemberId }, include: { person: true } });
+    if (!member || !member.isActive || !member.person.isActive) throw new NotFoundException('The selected person is not an active member.');
+
+    try {
+      const membership = await this.prisma.memberCommittee.create({
+        data: { memberId: member.memberId, committeeId: committee.committeeId, role: 'Member' },
+      });
+      return {
+        memberId: String(member.memberId),
+        committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role, points: 0 },
+      };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('This person is already a member of the committee.');
       }
       throw error;
     }

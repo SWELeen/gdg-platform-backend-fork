@@ -37,6 +37,13 @@ export class CreateCommitteeMemberDto {
   email!: string;
 }
 
+export class AddMemberToCommitteeDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  committeeCode!: string;
+}
+
 export class CreateCommitteeTaskDto {
   @IsString()
   @MaxLength(150)
