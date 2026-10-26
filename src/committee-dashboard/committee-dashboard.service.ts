@@ -6,11 +6,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '../generated/prisma/client.js';
+import { EventStatus, Prisma, QuestionType } from '../generated/prisma/client.js';
+import { apiValidationError, type ApiErrorDetail } from '../common/http/api-response.js';
 import type { RequestUser } from '../auth/auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CommitteeAccessService } from '../registrations/committee-access.service.js';
 import {
+  CreateCommitteeEventDto,
   CreateCommitteeMemberDto,
   CommitteeTaskStatus,
   CreateCommitteeTaskDto,
@@ -22,6 +24,7 @@ const VIEW_PERMISSION = 'dashboard.view';
 const TASK_PERMISSION = 'tasks.manage';
 const POINTS_PERMISSION = 'points.manage';
 const MEMBERS_PERMISSION = 'members.manage';
+const EVENTS_PERMISSION = 'events.create';
 
 @Injectable()
 export class CommitteeDashboardService {
@@ -154,15 +157,16 @@ export class CommitteeDashboardService {
     if (!membership) throw new ForbiddenException('An active member of this committee is required for dashboard access.');
 
     const memberId = membership?.memberId ?? null;
-    const [canViewDashboard, canManageTasks, canManagePoints, canManageRegistrations, canAddMembers] = memberId
+    const [canViewDashboard, canManageTasks, canManagePoints, canManageRegistrations, canAddMembers, canCreateEvents] = memberId
       ? await Promise.all([
           this.access.hasCommitteePermission(memberId, VIEW_PERMISSION, undefined, committee.committeeId),
           this.access.hasCommitteePermission(memberId, TASK_PERMISSION, undefined, committee.committeeId),
           this.access.hasCommitteePermission(memberId, POINTS_PERMISSION, undefined, committee.committeeId),
           this.access.hasCommitteePermission(memberId, 'registrations.review', undefined, committee.committeeId),
           this.access.hasCommitteePermission(memberId, MEMBERS_PERMISSION, undefined, committee.committeeId),
+          this.access.hasCommitteePermission(memberId, EVENTS_PERMISSION, undefined, committee.committeeId),
         ])
-      : [true, false, false, false, false];
+      : [true, false, false, false, false, false];
     if (!canViewDashboard) throw new ForbiddenException();
     const now = new Date();
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -289,12 +293,13 @@ export class CommitteeDashboardService {
         acceptedRegistrations: registrationCount('CONFIRMED') + registrationCount('AWAITING_CONFIRMATION'),
         rejectedRegistrations: registrationCount('REJECTED') + registrationCount('NOT_SELECTED'),
       },
-      permissions: { canManageTasks, canManagePoints, canManageRegistrations, canAddMembers },
+      permissions: { canManageTasks, canManagePoints, canManageRegistrations, canAddMembers, canCreateEvents },
       members,
       events: events.map((event) => ({
         id: String(event.eventId),
         title: event.name,
         date: event.startsAt.toISOString(),
+        eventType: event.eventType,
         endsAt: event.endsAt.toISOString(),
         location: event.location,
         status: event.status,
@@ -377,6 +382,123 @@ export class CommitteeDashboardService {
       }
       throw error;
     }
+  }
+
+  async createEvent(user: RequestUser | undefined, committeeCode: string, dto: CreateCommitteeEventDto) {
+    const { committee, memberId } = await this.requireMembership(user, committeeCode);
+    await this.requirePermission(memberId, EVENTS_PERMISSION, committee.committeeId);
+
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = new Date(dto.endsAt);
+    const registrationDeadline = new Date(dto.registrationDeadline);
+    const questions = (dto.questions ?? []).map((question) => ({
+      ...question,
+      text: question.text.trim(),
+      options: question.type === 'TEXT' ? [] : [...new Set((question.options ?? []).map((option) => option.trim()).filter(Boolean))],
+    }));
+
+    const errors: ApiErrorDetail[] = [];
+    const now = Date.now();
+    if (startsAt.getTime() <= now) errors.push({ pointer: '/startsAt', message: 'The event must start in the future.' });
+    if (endsAt.getTime() <= startsAt.getTime()) errors.push({ pointer: '/endsAt', message: 'The event must end after it starts.' });
+    if (registrationDeadline.getTime() <= now) errors.push({ pointer: '/registrationDeadline', message: 'The registration deadline must be in the future.' });
+    if (registrationDeadline.getTime() > startsAt.getTime()) errors.push({ pointer: '/registrationDeadline', message: 'Registration must close before the event starts.' });
+    questions.forEach((question, index) => {
+      if (!question.text) errors.push({ pointer: `/questions/${index}/text`, message: 'Question text is required.' });
+      if (question.type !== 'TEXT' && question.options.length < 2) {
+        errors.push({ pointer: `/questions/${index}/options`, message: 'Choice questions need at least two different options.' });
+      }
+    });
+    if (errors.length > 0) throw apiValidationError(errors);
+
+    const event = await this.prisma.event.create({
+      data: {
+        name: dto.name.trim(),
+        description: dto.description.trim(),
+        eventType: dto.eventType,
+        startsAt,
+        endsAt,
+        registrationDeadline,
+        location: dto.location.trim(),
+        mapsLink: dto.mapsLink?.trim() || null,
+        capacity: dto.capacity,
+        speakers: dto.speakers?.trim() || null,
+        requirements: dto.requirements?.trim() || null,
+        requiredRegistrantFields: [...new Set(dto.requiredRegistrantFields ?? [])],
+        status: dto.status === 'PUBLISHED' ? EventStatus.PUBLISHED : EventStatus.DRAFT,
+        createdByMemberId: memberId,
+        committeeId: committee.committeeId,
+        questions: {
+          create: questions.map((question, index) => ({
+            questionText: question.text,
+            questionType: QuestionType[question.type],
+            isRequired: question.required,
+            position: index + 1,
+            // SQL NULL, not a JSON null: the table requires text questions to have no options.
+            options: question.type === 'TEXT' ? Prisma.DbNull : question.options,
+          })),
+        },
+      },
+      select: { eventId: true, name: true, status: true, startsAt: true, registrationDeadline: true },
+    });
+    return { id: String(event.eventId), ...event };
+  }
+
+  // Full details of one of the committee's events, drafts included, for the people who create them.
+  async getCommitteeEvent(user: RequestUser | undefined, committeeCode: string, eventId: number) {
+    const { committee, memberId } = await this.requireMembership(user, committeeCode);
+    await this.requirePermission(memberId, EVENTS_PERMISSION, committee.committeeId);
+    const event = await this.prisma.event.findFirst({
+      where: { eventId, committeeId: committee.committeeId },
+      select: {
+        eventId: true, name: true, description: true, eventType: true, status: true,
+        startsAt: true, endsAt: true, registrationDeadline: true, location: true, mapsLink: true,
+        capacity: true, speakers: true, requirements: true, imageUrl: true, requiredRegistrantFields: true,
+        questions: {
+          orderBy: { position: 'asc' },
+          select: { questionId: true, questionText: true, questionType: true, isRequired: true, options: true },
+        },
+      },
+    });
+    if (!event) throw new NotFoundException();
+    return { id: String(event.eventId), ...event };
+  }
+
+  // Only drafts can be deleted: nobody can register for a draft, so no registration is lost.
+  async deleteDraftEvent(user: RequestUser | undefined, committeeCode: string, eventId: number) {
+    const { committee, memberId } = await this.requireMembership(user, committeeCode);
+    await this.requirePermission(memberId, EVENTS_PERMISSION, committee.committeeId);
+    const event = await this.prisma.event.findFirst({
+      where: { eventId, committeeId: committee.committeeId },
+      select: { status: true },
+    });
+    if (!event) throw new NotFoundException();
+    if (event.status !== EventStatus.DRAFT) throw new ConflictException('Only a draft can be deleted.');
+    // Conditional delete, so a draft published at the same moment is kept. Its questions go with it.
+    const { count } = await this.prisma.event.deleteMany({ where: { eventId, status: EventStatus.DRAFT } });
+    if (count === 0) throw new ConflictException('Only a draft can be deleted.');
+    return { id: String(eventId) };
+  }
+
+  async publishEvent(user: RequestUser | undefined, committeeCode: string, eventId: number) {
+    const { committee, memberId } = await this.requireMembership(user, committeeCode);
+    await this.requirePermission(memberId, EVENTS_PERMISSION, committee.committeeId);
+    const event = await this.prisma.event.findFirst({
+      where: { eventId, committeeId: committee.committeeId },
+      select: { status: true, registrationDeadline: true },
+    });
+    if (!event) throw new NotFoundException();
+    if (event.status !== EventStatus.DRAFT) throw new ConflictException('Only a draft can be published.');
+    if (event.registrationDeadline.getTime() <= Date.now()) {
+      throw apiValidationError([{ pointer: '/registrationDeadline', message: 'The registration deadline has passed.' }]);
+    }
+    // Conditional update so two publishes at once cannot both succeed.
+    const { count } = await this.prisma.event.updateMany({
+      where: { eventId, status: EventStatus.DRAFT },
+      data: { status: EventStatus.PUBLISHED },
+    });
+    if (count === 0) throw new ConflictException('Only a draft can be published.');
+    return { id: String(eventId), status: EventStatus.PUBLISHED };
   }
 
   async createTask(user: RequestUser | undefined, committeeCode: string, dto: CreateCommitteeTaskDto) {
