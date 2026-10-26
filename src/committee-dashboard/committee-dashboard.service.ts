@@ -9,6 +9,7 @@ import {
 import { Prisma } from '../generated/prisma/client.js';
 import type { RequestUser } from '../auth/auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { DEVELOPER_COMMITTEES_CODE } from '../committees/committee-catalog.js';
 import { CommitteeAccessService } from '../registrations/committee-access.service.js';
 import {
   CreateCommitteeMemberDto,
@@ -35,7 +36,7 @@ export class CommitteeDashboardService {
     if (!user?.memberId) throw new ForbiddenException();
     if (!(await this.access.hasGlobalPermission(user.memberId, 'developer_committees.dashboard.view'))) throw new ForbiddenException();
     const committees = await this.prisma.committee.findMany({
-      where: { committeeCode: { in: ['AUTOMATION', 'DATA', 'WEB', 'AI', 'ROBOTICS', 'CYBER'] } },
+      where: { parent: { committeeCode: DEVELOPER_COMMITTEES_CODE } },
       select: { committeeId: true, committeeCode: true, committeeName: true, _count: { select: { members: true } } },
       orderBy: { committeeName: 'asc' },
     });

@@ -37,7 +37,7 @@ describe('Developer Committees Leader dashboard', () => {
     ]);
     expect(hasGlobalPermission).toHaveBeenCalledWith(12, 'developer_committees.dashboard.view');
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { committeeCode: { in: ['AUTOMATION', 'DATA', 'WEB', 'AI', 'ROBOTICS', 'CYBER'] } },
+      where: { parent: { committeeCode: 'DEV' } },
     }));
   });
 });
