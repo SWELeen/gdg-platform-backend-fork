@@ -14,6 +14,19 @@ export interface RegistrationListQuery {
   status?: RegistrationStatus;
 }
 
+// Registrant details come from the account, so nobody can claim to be a
+// member. Contact and study details are shared only when the event asks for them.
+export function registrantProfile(
+  person: { phoneNumber: string | null; major: string | null; member: { isActive: boolean } | null },
+  requiredFields: string[],
+) {
+  return {
+    membership: person.member?.isActive === true,
+    ...(requiredFields.includes('phone') ? { phone: person.phoneNumber } : {}),
+    ...(requiredFields.includes('major') ? { major: person.major } : {}),
+  };
+}
+
 @Injectable()
 export class RegistrationListService {
   constructor(
@@ -38,7 +51,7 @@ export class RegistrationListService {
 
     const event = await this.prisma.event.findUnique({
       where: { eventId },
-      select: { eventId: true, name: true, capacity: true },
+      select: { eventId: true, name: true, capacity: true, requiredRegistrantFields: true },
     });
     if (!event) {
       throw new NotFoundException('The event was not found.', {
@@ -82,6 +95,9 @@ export class RegistrationListService {
               fullName: true,
               emailPersonal: true,
               emailUniversity: true,
+              phoneNumber: true,
+              major: true,
+              member: { select: { isActive: true } },
             },
           },
           answers: {
@@ -131,6 +147,7 @@ export class RegistrationListService {
         registrationId: row.registrationId,
         name: row.person.fullName,
         email: row.person.emailPersonal ?? row.person.emailUniversity,
+        profile: registrantProfile(row.person, event.requiredRegistrantFields),
         status: row.status,
         registeredAt: row.registeredAt,
         waitlistPosition: row.waitlistPosition,

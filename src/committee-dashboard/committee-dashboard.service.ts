@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { DEVELOPER_COMMITTEES_CODE } from '../committees/committee-catalog.js';
 import { CommitteeAccessService } from '../registrations/committee-access.service.js';
 import {
+  AddMemberToCommitteeDto,
   CreateCommitteeEventDto,
   CreateCommitteeMemberDto,
   CommitteeTaskStatus,
@@ -26,6 +27,7 @@ const VIEW_PERMISSION = 'dashboard.view';
 const TASK_PERMISSION = 'tasks.manage';
 const POINTS_PERMISSION = 'points.manage';
 const MEMBERS_PERMISSION = 'members.manage';
+const EVENTS_PERMISSION = 'events.create';
 // Tasks still being worked on, including those waiting for a leader to confirm.
 const ACTIVE_TASK_STATUSES = [CommitteeTaskStatus.TODO, CommitteeTaskStatus.IN_PROGRESS, CommitteeTaskStatus.PENDING_REVIEW];
 
@@ -519,6 +521,30 @@ export class CommitteeDashboardService {
     });
     if (count === 0) throw new ConflictException('Only a draft can be published.');
     return { id: String(eventId), status: EventStatus.PUBLISHED };
+  }
+
+  // club leadership adds an existing member to another committee; new people still join through membership requests
+  async addMemberToCommittee(user: RequestUser | undefined, targetMemberId: number, dto: AddMemberToCommitteeDto) {
+    if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION))) throw new ForbiddenException();
+    const committee = await this.prisma.committee.findUnique({ where: { committeeCode: dto.committeeCode.trim().toUpperCase() } });
+    if (!committee) throw new NotFoundException('The selected committee does not exist.');
+    const member = await this.prisma.member.findUnique({ where: { memberId: targetMemberId }, include: { person: true } });
+    if (!member || !member.isActive || !member.person.isActive) throw new NotFoundException('The selected person is not an active member.');
+
+    try {
+      const membership = await this.prisma.memberCommittee.create({
+        data: { memberId: member.memberId, committeeId: committee.committeeId, role: 'Member' },
+      });
+      return {
+        memberId: String(member.memberId),
+        committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role, points: 0 },
+      };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('This person is already a member of the committee.');
+      }
+      throw error;
+    }
   }
 
   async createTask(user: RequestUser | undefined, committeeCode: string, dto: CreateCommitteeTaskDto) {

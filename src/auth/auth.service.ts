@@ -115,12 +115,14 @@ export class AuthService {
     });
     if (!pending) return this.verifyLegacySignupEmail(normalizedEmail, token);
     if (pending.expiresAt <= new Date() || pending.verifiedAt) throw new UnauthorizedException();
+    // Non-members only attend events, so their account is ready once verified.
+    const registrationPendingApproval = pending.registrationType === 'MEMBER';
 
     if (pending.emailUniversity) {
       if (!pending.codeExpiresAt || pending.codeExpiresAt <= new Date()) throw new UnauthorizedException();
       await this.verifySharedSignupCode(pending, token);
       await this.createVerifiedSignup(pending, new Date());
-      return { authenticated: false as const, registrationPendingApproval: true as const };
+      return { authenticated: false as const, registrationPendingApproval };
     }
 
     const { data, error } = await this.client().auth.verifyOtp({
@@ -132,7 +134,7 @@ export class AuthService {
     if (error || !data.session || !data.user) throw new UnauthorizedException();
     if (data.user.id !== pending.authUserId) throw new UnauthorizedException();
     await this.createVerifiedSignup(pending, new Date());
-    return { ...tokens(data.session), universityEmailVerificationRequired: false, registrationPendingApproval: true };
+    return { ...tokens(data.session), universityEmailVerificationRequired: false, registrationPendingApproval };
   }
 
   // Allows signup attempts created before the staging migration to finish.
@@ -647,6 +649,7 @@ export class AuthService {
             },
           },
         },
+        membershipRequest: { select: { status: true } },
       },
     });
 
@@ -665,6 +668,7 @@ export class AuthService {
           position: role,
         })) ?? [],
       roles: [...new Set(member?.roleAssignments.map((r) => r.roleCode))],
+      membershipRequestPending: person.membershipRequest?.status === 'PENDING',
     };
   }
 

@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { MembershipCommitteeDecision as Decision } from '../generated/prisma/client.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import type { CommitteeAccessService } from '../registrations/committee-access.service.js';
@@ -64,9 +64,29 @@ beforeEach(() => {
     findUnique: vi.fn().mockResolvedValue(null),
     create: vi.fn().mockResolvedValue({ memberId: 99, isActive: true }),
   };
-  tx.memberCommittee = { upsert: vi.fn().mockResolvedValue({}) };
-  tx.memberRole = { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) };
+  // By default every committee has its own leader and there is another
+  // developer-committees leader, so requests stay where they were filed.
+  tx.memberCommittee = {
+    upsert: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([{ committeeId: 3, member: { personId: 50 } }]),
+  };
+  tx.memberRole = {
+    findFirst: vi.fn().mockResolvedValue(null),
+    create: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([{ member: { personId: 51 } }]),
+  };
 });
+
+function leadershipRow(overrides: Record<string, unknown>) {
+  return {
+    membershipRequestCommitteeId: 400,
+    membershipRequestId: 40,
+    committeeId: 3,
+    status: Decision.PENDING,
+    membershipRequest: { personId: 61 },
+    ...overrides,
+  };
+}
 
 describe('MembershipRequestService.decide', () => {
   it('changes only the selected committee, grants Member role, and keeps aggregate pending', async () => {
@@ -191,5 +211,62 @@ describe('MembershipRequestService.decide', () => {
     await expect(service.decideGlobalRole(40, 'ADVISOR', 'APPROVED', actor)).rejects.toBeInstanceOf(ConflictException);
     expect(tx.memberRole.create).not.toHaveBeenCalled();
     expect(tx.membershipRequestGlobalRole.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('MembershipRequestService approval routing', () => {
+  it('moves a developer leader request to club leadership when the applicant is the only developer-committees leader', async () => {
+    tx.memberRole.findMany.mockResolvedValue([{ member: { personId: 61 } }]);
+    tx.membershipRequestCommittee.findUnique.mockResolvedValue(leadershipRow({ approvalScope: 'DEVELOPER_COMMITTEES', requestedRole: 'Co-Leader' }));
+    await service.decideLeadershipCommittee(40, 'DATA', 'APPROVED', actor);
+    expect(hasGlobalPermission).toHaveBeenCalledWith(actor.memberId, 'applications.club_leaders.decide');
+    expect(tx.memberCommittee.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: { memberId: 99, committeeId: 3, role: 'Co-Leader' } }));
+  });
+
+  it('lets club leadership decide a member request for a committee with no leader, granting only membership', async () => {
+    tx.memberCommittee.findMany.mockResolvedValue([]);
+    tx.membershipRequestCommittee.findUnique.mockResolvedValue(leadershipRow({ approvalScope: 'COMMITTEE', requestedRole: 'Member' }));
+    await service.decideLeadershipCommittee(40, 'DMD', 'APPROVED', actor);
+    expect(hasGlobalPermission).toHaveBeenCalledWith(actor.memberId, 'applications.club_leaders.decide');
+    expect(tx.memberCommittee.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: { memberId: 99, committeeId: 3, role: 'Member' } }));
+  });
+
+  it('keeps a member request with its committee while the committee has a leader', async () => {
+    tx.membershipRequestCommittee.findUnique.mockResolvedValue(leadershipRow({ approvalScope: 'COMMITTEE', requestedRole: 'Member' }));
+    await expect(service.decideLeadershipCommittee(40, 'DATA', 'APPROVED', actor)).rejects.toBeInstanceOf(NotFoundException);
+    expect(tx.memberCommittee.upsert).not.toHaveBeenCalled();
+  });
+
+  it('lists escalated requests for club leadership and never the reviewer’s own request', async () => {
+    const request = (personId: number) => ({
+      membershipRequestId: personId,
+      personId,
+      status: 'PENDING',
+      applicationData: {},
+      createdAt: new Date('2026-10-27T00:00:00Z'),
+      person: { fullName: 'Applicant', emailPersonal: 'applicant@example.test', emailUniversity: null },
+      committees: [],
+      globalRoles: [],
+    });
+    const committee = { committeeCode: 'DMD', committeeName: 'Digital Media and Design' };
+    const findMany = vi.fn().mockResolvedValue([
+      { committeeId: 3, approvalScope: 'COMMITTEE', requestedRole: 'Member', status: Decision.PENDING, committee, membershipRequest: request(61) },
+      { committeeId: 9, approvalScope: 'COMMITTEE', requestedRole: 'Member', status: Decision.PENDING, committee, membershipRequest: request(62) },
+    ]);
+    const listing = new MembershipRequestService({
+      ...prisma,
+      membershipRequestCommittee: { findMany },
+      membershipRequestGlobalRole: { findMany: vi.fn().mockResolvedValue([]) },
+      memberCommittee: tx.memberCommittee,
+      memberRole: tx.memberRole,
+    } as unknown as PrismaService, access);
+
+    const result = await listing.listLeadership('CLUB', actor);
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ membershipRequest: { personId: { not: actor.personId } } }),
+    }));
+    // Committee 3 has its own leader; committee 9 has none, so only it reaches club leadership.
+    expect(result.map((item) => item.id)).toEqual([62]);
   });
 });
