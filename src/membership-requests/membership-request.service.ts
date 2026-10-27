@@ -53,14 +53,9 @@ export class MembershipRequestService {
   async create(user: AuthenticatedUser, body: CreateMembershipRequestDto) {
     const person = await this.prisma.person.findUnique({
       where: { personId: user.personId },
-      select: { emailPersonalVerifiedAt: true, emailUniversity: true, emailUniversityVerifiedAt: true },
+      select: { emailPersonalVerifiedAt: true },
     });
-    if (!person?.emailPersonalVerifiedAt || (person.emailUniversity && !person.emailUniversityVerifiedAt)) {
-      throw new ForbiddenException('Verify every registered email before submitting a membership request.');
-    }
-    if ((body.applicationData.universityEmail?.toLowerCase() ?? null) !== (person.emailUniversity?.toLowerCase() ?? null)) {
-      throw new ForbiddenException('The application must use the verified university email on the account.');
-    }
+    if (!person?.emailPersonalVerifiedAt) throw new ForbiddenException('Verify your personal email before submitting a membership request.');
     const committees = await findApplicableCommittees(this.prisma, body.committees.map(({ committeeCode }) => committeeCode));
     if (!committees) throw new NotFoundException('One or more selected committees are unavailable.');
 

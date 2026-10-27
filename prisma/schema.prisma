@@ -349,7 +349,7 @@ model SignupVerification {
   authUserId            String    @unique @map("auth_user_id") @db.Uuid
   fullName              String    @map("full_name") @db.VarChar(255)
   emailPersonal         String    @unique @map("email_personal") @db.VarChar(255)
-  emailUniversity       String?   @unique @map("email_university") @db.VarChar(255)
+  emailUniversity       String?   @map("email_university") @db.VarChar(255)
   registrationType      String    @map("registration_type") @db.VarChar(20)
   applicationData       Json      @map("application_data") @db.JsonB
   committees            Json      @default("[]") @db.JsonB
@@ -378,7 +378,7 @@ model RevokedAuthToken {
 model PersonEmailIdentity {
   personEmailIdentityId Int      @id @default(autoincrement()) @map("person_email_identity_id")
   personId              Int      @map("person_id")
-  email                 String   @unique @db.VarChar(255)
+  email                 String   @db.VarChar(255)
   kind                  String   @db.VarChar(20)
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 

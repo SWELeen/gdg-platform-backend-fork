@@ -7,20 +7,17 @@ import {
   Post,
   Req,
   UnauthorizedException,
-  UseGuards,
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { AuthRequiredGuard, type AuthenticatedUser, CurrentUser } from './current-user.js';
 import { apiSuccess } from '../common/http/api-response.js';
 import type { RequestUser } from './auth.guard.js';
 import { AuthService } from './auth.service.js';
 import { CheckEmailDto } from './check-email.dto.js';
 import { LoginDto } from './login.dto.js';
-import { RequestSetupLinkDto, SetupPasswordDto } from './setup-password.dto.js';
+import { CompleteSetupPasswordDto, RequestSetupLinkDto, SetupPasswordDto } from './setup-password.dto.js';
 import { SignupDto } from './signup.dto.js';
 import { VerifySignupEmailDto } from './verify-signup-email.dto.js';
-import { VerifyUniversityEmailDto } from './verify-university-email.dto.js';
 import { ResendPersonalVerificationDto } from './resend-verification.dto.js';
 
 @Controller()
@@ -58,24 +55,9 @@ export class AuthController {
     const result = await this.auth.verifySignupEmail(body.email, body.token);
     if ('accessToken' in result) {
       this.setSessionCookies(response, result);
-      return apiSuccess({ authenticated: true, universityEmailVerificationRequired: result.universityEmailVerificationRequired, registrationPendingApproval: result.registrationPendingApproval });
+      return apiSuccess({ authenticated: true, registrationPendingApproval: result.registrationPendingApproval });
     }
     return apiSuccess(result);
-  }
-
-  @Post('auth/verify-university-email')
-  @HttpCode(200)
-  @UseGuards(AuthRequiredGuard)
-  async verifyUniversityEmail(@CurrentUser() user: AuthenticatedUser, @Body() body: VerifyUniversityEmailDto) {
-    return apiSuccess(await this.auth.verifyUniversityEmail(user.personId, body.code));
-  }
-
-  @Post('auth/resend-university-verification')
-  @HttpCode(200)
-  @UseGuards(AuthRequiredGuard)
-  async resendUniversityVerification(@CurrentUser() user: AuthenticatedUser) {
-    await this.auth.resendUniversityVerification(user.personId);
-    return apiSuccess({ sent: true });
   }
 
   @Post('auth/refresh')
@@ -119,6 +101,15 @@ export class AuthController {
     if (!request.user) throw new UnauthorizedException();
     this.setSessionCookies(response, await this.auth.setupPassword(request.user, body));
     return apiSuccess({ authenticated: true });
+  }
+
+  @Post('auth/setup-password/complete')
+  @HttpCode(200)
+  async completeSetupPassword(
+    @Body() body: CompleteSetupPasswordDto,
+  ) {
+    await this.auth.completeSetupPassword(body);
+    return apiSuccess({ passwordUpdated: true });
   }
 
   @Get('me')

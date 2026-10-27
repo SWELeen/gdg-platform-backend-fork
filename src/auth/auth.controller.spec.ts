@@ -22,22 +22,28 @@ import { SignupDto } from './signup.dto.js';
 const {
   signInWithPassword,
   signUp,
+  resend,
   resetPasswordForEmail,
   deleteUser,
   inviteUserByEmail,
   updateUserById,
   verifyOtp,
+  setSession,
+  updateUser,
   refreshSession,
   getUser,
   signOut,
 } = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   signUp: vi.fn(),
+  resend: vi.fn(),
   resetPasswordForEmail: vi.fn(),
   deleteUser: vi.fn(),
   inviteUserByEmail: vi.fn(),
   updateUserById: vi.fn(),
   verifyOtp: vi.fn(),
+  setSession: vi.fn(),
+  updateUser: vi.fn(),
   refreshSession: vi.fn(),
   getUser: vi.fn(),
   signOut: vi.fn(),
@@ -49,7 +55,10 @@ vi.mock('@supabase/supabase-js', async (importOriginal) => ({
     auth: {
       signInWithPassword,
       signUp,
+      resend,
       verifyOtp,
+      setSession,
+      updateUser,
       refreshSession,
       getUser,
       resetPasswordForEmail,
@@ -62,6 +71,12 @@ const findUniqueOrThrow = vi.fn();
 const findFirst = vi.fn();
 const findUnique = vi.fn();
 const create = vi.fn();
+const signupFindFirst = vi.fn();
+const signupFindUnique = vi.fn();
+const signupCreate = vi.fn();
+const signupUpdateMany = vi.fn();
+const signupDelete = vi.fn();
+const signupDeleteMany = vi.fn();
 const updateMany = vi.fn();
 const update = vi.fn();
 const deletePerson = vi.fn();
@@ -72,9 +87,17 @@ const controller = new AuthController(
   new AuthService(
     {
       person: { findUniqueOrThrow, findFirst, findUnique, create, updateMany, update, delete: deletePerson },
+      signupVerification: {
+        findFirst: signupFindFirst,
+        findUnique: signupFindUnique,
+        create: signupCreate,
+        updateMany: signupUpdateMany,
+        delete: signupDelete,
+        deleteMany: signupDeleteMany,
+      },
       $transaction: transaction,
     } as unknown as PrismaService,
-    { getOrThrow: () => 'test-value' } as unknown as ConfigService,
+    { getOrThrow: () => 'http://localhost:3000/en/reset-password' } as unknown as ConfigService,
   ),
 );
 
@@ -128,6 +151,23 @@ describe('POST /auth/login', () => {
     });
 
     await expect(controller.login(body, response as never)).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('resends personal verification and returns the code-entry flow for an unconfirmed account', async () => {
+    signInWithPassword.mockResolvedValue({
+      data: { session: null, user: null },
+      error: new AuthApiError('Email not confirmed', 400, 'email_not_confirmed'),
+    });
+    signupFindUnique.mockReset().mockResolvedValue({
+      emailPersonal: body.email,
+      verifiedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      codeHash: null,
+    });
+    resend.mockReset().mockResolvedValue({ error: null });
+
+    await expect(controller.login(body, response as never)).rejects.toMatchObject({ errorCode: 'EMAIL_NOT_VERIFIED' });
+    expect(resend).toHaveBeenCalledWith({ type: 'signup', email: body.email });
   });
 
   it('does not issue a session to an unlinked or inactive local account', async () => {
@@ -196,7 +236,7 @@ describe('POST /auth/check-email', () => {
     expect(response.data).toEqual({ nextStep });
   });
 
-  it('looks in both email columns, ignoring letter case', async () => {
+  it('looks up accounts by personal email only, ignoring letter case', async () => {
     findFirst.mockReset().mockResolvedValue(null);
 
     await controller.checkEmail(body);
@@ -204,10 +244,7 @@ describe('POST /auth/check-email', () => {
     expect(findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          OR: [
-            { emailPersonal: { equals: body.email, mode: 'insensitive' } },
-            { emailUniversity: { equals: body.email, mode: 'insensitive' } },
-          ],
+          emailPersonal: { equals: body.email, mode: 'insensitive' },
         },
       }),
     );
@@ -241,6 +278,9 @@ describe('POST /auth/signup', () => {
   beforeEach(() => {
     findFirst.mockReset().mockResolvedValue(null);
     create.mockReset().mockResolvedValue({ personId: 11 });
+    signupFindFirst.mockReset().mockResolvedValue(null);
+    signupCreate.mockReset().mockResolvedValue({ signupVerificationId: 12 });
+    signupDeleteMany.mockReset().mockResolvedValue({ count: 0 });
     signUp.mockReset().mockResolvedValue({
       data: { user: { id: 'new-auth-user' }, session: null },
       error: null,
@@ -248,30 +288,39 @@ describe('POST /auth/signup', () => {
     deleteUser.mockReset().mockResolvedValue({ data: {}, error: null });
   });
 
-  it('creates a person with a server-side pending registration and waits for email verification', async () => {
+  it('stages signup data and waits for personal-email verification', async () => {
     const response = await controller.signup(body);
 
     expect(signUp).toHaveBeenCalledWith({
       email: body.email,
       password: body.password,
     });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(signupCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         authUserId: 'new-auth-user',
         fullName: 'Sara Visitor',
         emailPersonal: 'sara@example.test',
         emailUniversity: null,
-        emailIdentities: { create: [{ email: 'sara@example.test', kind: 'PERSONAL' }] },
-        pendingSignup: { create: expect.objectContaining({ registrationType: 'NON_MEMBER', committees: [], globalRoles: [] }) },
+        registrationType: 'NON_MEMBER',
+        committees: [],
+        globalRoles: [],
       }),
     }));
-    expect(response.data).toMatchObject({ emailVerificationRequired: true, universityEmailVerificationRequired: false });
+    expect(response.data).toMatchObject({ emailVerificationRequired: true });
   });
 
   it('rejects an email a person already has, without touching supabase', async () => {
     findFirst.mockResolvedValue({ personId: 6 });
 
     await expect(controller.signup(body)).rejects.toThrow(ConflictException);
+    expect(signUp).not.toHaveBeenCalled();
+  });
+
+  it('rejects matching personal and optional university emails', async () => {
+    await expect(controller.signup({
+      ...body,
+      universityEmail: ' sara@EXAMPLE.test ',
+    })).rejects.toMatchObject({ errorCode: 'EMAILS_MUST_DIFFER' });
     expect(signUp).not.toHaveBeenCalled();
   });
 
@@ -286,19 +335,19 @@ describe('POST /auth/signup', () => {
     });
 
     await expect(controller.signup(body)).rejects.toThrow(ConflictException);
-    expect(create).not.toHaveBeenCalled();
+    expect(signupCreate).not.toHaveBeenCalled();
   });
 
   it('deletes the new account when the person row fails', async () => {
     const dbDown = new Error('database down');
-    create.mockRejectedValue(dbDown);
+    signupCreate.mockRejectedValue(dbDown);
 
     await expect(controller.signup(body)).rejects.toBe(dbDown);
     expect(deleteUser).toHaveBeenCalledWith('new-auth-user');
   });
 
   it('treats a duplicate email from a parallel signup as already existing', async () => {
-    create.mockRejectedValue(
+    signupCreate.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError('unique', {
         code: 'P2002',
         clientVersion: 'test',
@@ -317,7 +366,7 @@ describe('POST /auth/signup', () => {
 
     await expect(controller.signup(body)).rejects.toThrow();
     expect(deleteUser).toHaveBeenCalledWith('new-auth-user');
-    expect(create).not.toHaveBeenCalled();
+    expect(signupCreate).not.toHaveBeenCalled();
   });
 
   it('rejects Supabase’s obfuscated duplicate user instead of creating a ghost person', async () => {
@@ -327,7 +376,7 @@ describe('POST /auth/signup', () => {
     });
 
     await expect(controller.signup(body)).rejects.toThrow(ConflictException);
-    expect(create).not.toHaveBeenCalled();
+    expect(signupCreate).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -350,14 +399,48 @@ describe('POST /auth/verify-email', () => {
 
   beforeEach(() => {
     verifyOtp.mockReset().mockResolvedValue({ data: { session: SESSION, user: { id: 'auth-user' } }, error: null });
-    findUnique.mockReset().mockResolvedValue({ personId: 11, emailUniversity: 'student@university.test', pendingSignup: { expiresAt: new Date(Date.now() + 60_000) } });
+    signupFindUnique.mockReset().mockResolvedValue({
+      signupVerificationId: 10,
+      authUserId: 'auth-user',
+      emailPersonal: body.email,
+      emailUniversity: 'student@university.test',
+      fullName: 'Applicant',
+      registrationType: 'NON_MEMBER',
+      applicationData: { phoneNumber: '+966500000000', university: 'University', major: 'CS', gender: 'female' },
+      committees: [],
+      globalRoles: [],
+      expiresAt: new Date(Date.now() + 60_000),
+      verifiedAt: null,
+      codeHash: null,
+    });
+    signupUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+    signupDelete.mockReset().mockResolvedValue({});
+    transaction.mockReset().mockImplementation(async (operation) => operation({
+      signupVerification: { updateMany: signupUpdateMany, delete: signupDelete },
+      person: {
+        create: vi.fn().mockResolvedValue({ personId: 11 }),
+        findUnique: vi.fn().mockResolvedValue({
+          personId: 11,
+          emailPersonalVerifiedAt: new Date(),
+          pendingSignup: {
+            expiresAt: new Date(Date.now() + 60_000),
+            registrationType: 'NON_MEMBER',
+            applicationData: { phoneNumber: '+966500000000', university: 'University', major: 'CS', gender: 'female' },
+            committees: [],
+            globalRoles: [],
+          },
+        }),
+        update: vi.fn(),
+      },
+      nonMemberRegistration: { create: vi.fn() },
+      pendingSignup: { delete: vi.fn() },
+    }));
     update.mockReset().mockResolvedValue({ personId: 11 });
   });
 
-  it('sets a cookie session and requires independent university email verification', async () => {
-    await expect(controller.verifySignupEmail(body, response as never)).resolves.toMatchObject({ data: { authenticated: true, universityEmailVerificationRequired: true } });
+  it('verifies the personal email even when an optional university email was supplied', async () => {
+    await expect(controller.verifySignupEmail(body, response as never)).resolves.toMatchObject({ data: { authenticated: true } });
     expect(verifyOtp).toHaveBeenCalledWith({ ...body, type: 'email' });
-    expect(update).toHaveBeenCalledWith({ where: { personId: 11 }, data: { emailPersonalVerifiedAt: expect.any(Date) } });
   });
 
   it('rejects invalid verification codes', async () => {
@@ -417,7 +500,7 @@ describe('POST /auth/setup-password/request', () => {
     const response = await controller.requestSetupLink(body);
 
     expect(inviteUserByEmail).toHaveBeenCalledWith(body.email, {
-      redirectTo: 'test-value',
+      redirectTo: 'http://localhost:3000/en/reset-password',
     });
     expect(updateMany).toHaveBeenCalledWith({
       where: { personId: 8, authUserId: null },
@@ -432,7 +515,7 @@ describe('POST /auth/setup-password/request', () => {
     await controller.requestSetupLink(body);
 
     expect(resetPasswordForEmail).toHaveBeenCalledWith(body.email, {
-      redirectTo: 'test-value',
+      redirectTo: 'http://localhost:3000/en/reset-password',
     });
     expect(inviteUserByEmail).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();

@@ -133,6 +133,8 @@ Malformed JSON, JSON roots rejected by the existing strict parser and invalid UR
 
 Generic malformed requests use BAD_REQUEST. Field validation uses VALIDATION_ERROR only through the owned factory called by the global DTO pipe. Matching HTTP statuses can therefore share a general category while codes distinguish the reason.
 
+`POST /auth/login` may return 409 `EMAIL_NOT_VERIFIED` after Supabase rejects a correct-password sign-in because the personal email is unconfirmed. For an active pending signup, the backend sends or reuses the personal-email verification code; the frontend stores the email for the verification screen. A 429 resend response means an existing recent code should be used after the login flow opens verification.
+
 The filter accepts native Nest `HttpException` statuses only when they are integers from 400 through 599. The status determines the fixed catalog entry; unknown or mismatched supplied codes cannot override that entry. VALIDATION_ERROR additionally requires the owned metadata described above. Known statuses outside the core catalog retain their HTTP status, including 413, 429 and 503.
 
 Adapter errors must be Error instances with an integer statusCode from 400 through 599, an equal status and a boolean expose property. Even expose=true does not make raw text public. Objects carrying only statusCode/message are not trusted. Unknown thrown values and invalid/nonfailure exception statuses become safe 500 INTERNAL_ERROR responses. The filter does not infer domain errors from Prisma messages or codes.
