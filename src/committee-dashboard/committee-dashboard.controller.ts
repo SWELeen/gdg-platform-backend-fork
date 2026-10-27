@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Inject,
   Param,
   ParseIntPipe,
@@ -13,6 +14,7 @@ import {
 import { apiSuccess } from '../common/http/api-response.js';
 import type { RequestUser } from '../auth/auth.guard.js';
 import {
+  CreateCommitteeEventDto,
   CreateCommitteeMemberDto,
   CreateCommitteeTaskDto,
   UpdateCommitteePointsDto,
@@ -42,6 +44,43 @@ export class CommitteeDashboardController {
     @Body() body: CreateCommitteeMemberDto,
   ) {
     return apiSuccess(await this.dashboard.addMember(request.user, committeeCode, body));
+  }
+
+  @Post('events')
+  async createEvent(
+    @Req() request: { user?: RequestUser },
+    @Param('committeeCode') committeeCode: string,
+    @Body() body: CreateCommitteeEventDto,
+  ) {
+    return apiSuccess(await this.dashboard.createEvent(request.user, committeeCode, body));
+  }
+
+  @Get('events/:eventId')
+  async getEvent(
+    @Req() request: { user?: RequestUser },
+    @Param('committeeCode') committeeCode: string,
+    @Param('eventId', ParseIntPipe) eventId: number,
+  ) {
+    return apiSuccess(await this.dashboard.getCommitteeEvent(request.user, committeeCode, eventId));
+  }
+
+  @Delete('events/:eventId')
+  async deleteDraftEvent(
+    @Req() request: { user?: RequestUser },
+    @Param('committeeCode') committeeCode: string,
+    @Param('eventId', ParseIntPipe) eventId: number,
+  ) {
+    return apiSuccess(await this.dashboard.deleteDraftEvent(request.user, committeeCode, eventId));
+  }
+
+  @Post('events/:eventId/publish')
+  @HttpCode(200)
+  async publishEvent(
+    @Req() request: { user?: RequestUser },
+    @Param('committeeCode') committeeCode: string,
+    @Param('eventId', ParseIntPipe) eventId: number,
+  ) {
+    return apiSuccess(await this.dashboard.publishEvent(request.user, committeeCode, eventId));
   }
 
   @Post('tasks')

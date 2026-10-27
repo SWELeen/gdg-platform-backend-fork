@@ -439,6 +439,10 @@ model Event {
   confirmationWindowHours Int         @default(24) @map("confirmation_window_hours")
   imageUrl                String?     @map("image_url") @db.VarChar(255)
   requirements            String?     @db.Text
+  eventType               String?     @map("event_type") @db.VarChar(30)
+  speakers                String?     @db.Text
+  mapsLink                String?     @map("maps_link") @db.VarChar(500)
+  requiredRegistrantFields String[]   @default([]) @map("required_registrant_fields")
   status                  EventStatus @default(DRAFT)
   createdByMemberId       Int         @map("created_by_member_id")
   committeeId             Int         @map("committee_id")
