@@ -28,6 +28,7 @@ import type { CheckEmailDto } from './check-email.dto.js';
 import type { LoginDto } from './login.dto.js';
 import type {
   RequestSetupLinkDto,
+  CompleteSetupPasswordDto,
   SetupPasswordDto,
 } from './setup-password.dto.js';
 import type { SignupDto } from './signup.dto.js';
@@ -89,6 +90,40 @@ export class AuthService {
       password,
     });
 
+    if (error?.code === 'email_not_confirmed') {
+      const pending = await this.prisma.signupVerification.findUnique({
+        where: { emailPersonal: email.trim().toLowerCase() },
+      });
+      if (pending && !pending.verifiedAt) {
+        try {
+          await this.resendPersonalVerification(pending.emailPersonal);
+        } catch (resendError) {
+          if (!(resendError instanceof HttpException) || resendError.getStatus() !== HttpStatus.TOO_MANY_REQUESTS) throw resendError;
+        }
+        throw new ConflictException('Verify your personal email to continue.', {
+          errorCode: 'EMAIL_NOT_VERIFIED',
+        });
+      }
+      const legacy = await this.prisma.person.findFirst({
+        where: {
+          emailPersonal: { equals: email.trim(), mode: 'insensitive' },
+          emailPersonalVerifiedAt: null,
+          pendingSignup: { is: { expiresAt: { gt: new Date() } } },
+        },
+        select: { emailPersonal: true },
+      });
+      if (legacy) {
+        try {
+          await this.resendPersonalVerification(legacy.emailPersonal!);
+        } catch (resendError) {
+          if (!(resendError instanceof HttpException) || resendError.getStatus() !== HttpStatus.TOO_MANY_REQUESTS) throw resendError;
+        }
+        throw new ConflictException('Verify your personal email to continue.', {
+          errorCode: 'EMAIL_NOT_VERIFIED',
+        });
+      }
+    }
+
     // same answer for wrong email + wrong password
     if (error?.code === 'invalid_credentials') {
       throw new UnauthorizedException();
@@ -118,32 +153,31 @@ export class AuthService {
     // Non-members only attend events, so their account is ready once verified.
     const registrationPendingApproval = pending.registrationType === 'MEMBER';
 
-    if (pending.emailUniversity) {
+    if (pending.codeHash) {
       if (!pending.codeExpiresAt || pending.codeExpiresAt <= new Date()) throw new UnauthorizedException();
       await this.verifySharedSignupCode(pending, token);
       await this.createVerifiedSignup(pending, new Date());
       return { authenticated: false as const, registrationPendingApproval };
     }
 
-    const { data, error } = await this.client().auth.verifyOtp({
-      email: normalizedEmail,
-      token,
-      type: 'email',
-    });
+    const { data, error } = await this.client().auth.verifyOtp({ email: normalizedEmail, token, type: 'email' });
     if (error?.status === 429 || error?.code === 'over_request_rate_limit') throw emailError(error);
-    if (error || !data.session || !data.user) throw new UnauthorizedException();
-    if (data.user.id !== pending.authUserId) throw new UnauthorizedException();
+    if (error || !data.session || !data.user || data.user.id !== pending.authUserId) throw new UnauthorizedException();
     await this.createVerifiedSignup(pending, new Date());
-    return { ...tokens(data.session), universityEmailVerificationRequired: false, registrationPendingApproval };
+    return { ...tokens(data.session), registrationPendingApproval };
   }
 
-  // Allows signup attempts created before the staging migration to finish.
   private async verifyLegacySignupEmail(email: string, token: string) {
     const legacy = await this.prisma.person.findFirst({
       where: { emailPersonal: { equals: email, mode: 'insensitive' }, pendingSignup: { is: { expiresAt: { gt: new Date() } } } },
-      select: { personId: true, authUserId: true, emailUniversity: true },
+      select: { personId: true, authUserId: true },
     });
-    if (legacy?.emailUniversity) {
+    const legacyChallenge = legacy
+      ? await this.prisma.emailVerificationChallenge.findUnique({
+          where: { personId_purpose: { personId: legacy.personId, purpose: 'SHARED_SIGNUP' } },
+        })
+      : null;
+    if (legacy && legacyChallenge) {
       if (!legacy.authUserId) throw new UnauthorizedException();
       await this.verifyLegacySharedSignupCode(legacy.personId, legacy.authUserId, token);
       return { authenticated: false as const, registrationPendingApproval: true as const };
@@ -158,7 +192,7 @@ export class AuthService {
     if (!person?.pendingSignup || person.pendingSignup.expiresAt <= new Date()) throw new UnauthorizedException();
     await this.prisma.person.update({ where: { personId: person.personId }, data: { emailPersonalVerifiedAt: new Date() } });
     await this.finalizePendingSignup(person.personId);
-    return { ...tokens(data.session), universityEmailVerificationRequired: false, registrationPendingApproval: true };
+    return { ...tokens(data.session), registrationPendingApproval: true };
   }
 
   async refreshSession(refreshToken: string) {
@@ -209,64 +243,41 @@ export class AuthService {
     fullName, email, universityEmail, password, registrationType,
     applicationData, committees = [], requestedGlobalRoles = [],
   }: SignupDto) {
-    if ((applicationData.universityEmail?.trim().toLowerCase() ?? null) !== (universityEmail?.trim().toLowerCase() ?? null)) {
-      throw new BadRequestException('The university email must match the address being verified.', {
-        errorCode: 'UNIVERSITY_EMAIL_MISMATCH',
+    if (universityEmail && universityEmail.trim().toLowerCase() === email.trim().toLowerCase()) {
+      throw new BadRequestException('Personal and university emails must be different.', {
+        errorCode: 'EMAILS_MUST_DIFFER',
       });
     }
     // Reject unknown or parent committees before creating the auth account.
     if (!(await findApplicableCommittees(this.prisma, committees.map((item) => item.committeeCode)))) throw committeeUnavailable();
     // Existing members and unexpired signup attempts both reserve their emails.
     if (await this.findPersonByEmail(email)) throw emailAlreadyExists();
-    if (universityEmail && await this.findPersonByEmail(universityEmail)) throw emailAlreadyExists();
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedUniversityEmail = universityEmail?.trim().toLowerCase() ?? null;
     const staged = await this.prisma.signupVerification.findFirst({
       where: {
         expiresAt: { gt: new Date() },
-        OR: [
-          { emailPersonal: normalizedEmail },
-          ...(normalizedUniversityEmail ? [{ emailPersonal: normalizedUniversityEmail }, { emailUniversity: normalizedEmail }, { emailUniversity: normalizedUniversityEmail }] : [{ emailUniversity: normalizedEmail }]),
-        ],
+        emailPersonal: normalizedEmail,
       },
       select: { signupVerificationId: true },
     });
     if (staged) throw emailAlreadyExists();
-    if (universityEmail && email.trim().toLowerCase() === universityEmail.trim().toLowerCase()) {
-      throw new BadRequestException('Personal and university emails must be different addresses.', {
-        errorCode: 'EMAILS_MUST_DIFFER',
-      });
-    }
 
-    let authUserId: string;
-    if (universityEmail) {
-      // Use an app-managed shared OTP for both addresses. Supabase's signup OTP
-      // is generated internally and cannot be copied to the second recipient.
-      const { data, error } = await this.admin().createUser({ email, password, email_confirm: false });
-      if (error?.code === 'user_already_exists' || error?.code === 'email_exists') throw emailAlreadyExists();
-      if (error?.code === 'weak_password') {
-        throw new BadRequestException('Choose a stronger password.', { errorCode: 'SIGNUP_WEAK_PASSWORD' });
-      }
-      if (error) throw emailError(error);
-      if (!data.user) throw emailAlreadyExists();
-      authUserId = data.user.id;
-    } else {
-      const { data, error } = await this.client().auth.signUp({ email, password });
-      if (error?.code === 'user_already_exists' || error?.code === 'email_exists') throw emailAlreadyExists();
-      if (error?.code === 'weak_password') {
-        throw new BadRequestException('Choose a stronger password.', { errorCode: 'SIGNUP_WEAK_PASSWORD' });
-      }
-      if (error) throw emailError(error);
-      if (!data.user || data.user.identities?.length === 0) throw emailAlreadyExists();
-      if (data.session) {
-        await this.deleteAccount(data.user.id);
-        throw new ServiceUnavailableException('Enable Supabase email confirmation before allowing signup.');
-      }
-      authUserId = data.user.id;
+    const { data, error } = await this.client().auth.signUp({ email, password });
+    if (error?.code === 'user_already_exists' || error?.code === 'email_exists') throw emailAlreadyExists();
+    if (error?.code === 'weak_password') {
+      throw new BadRequestException('Choose a stronger password.', { errorCode: 'SIGNUP_WEAK_PASSWORD' });
     }
+    if (error) throw emailError(error);
+    if (!data.user || data.user.identities?.length === 0) throw emailAlreadyExists();
+    if (data.session) {
+      await this.deleteAccount(data.user.id);
+      throw new ServiceUnavailableException('Enable Supabase email confirmation before allowing signup.');
+    }
+    const authUserId = data.user.id;
 
     try {
-      const pending = await this.prisma.signupVerification.create({
+      await this.prisma.signupVerification.create({
         data: {
           authUserId,
           fullName: fullName.trim(),
@@ -279,9 +290,6 @@ export class AuthService {
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       });
-      if (universityEmail) {
-        await this.sendSharedSignupVerification(pending);
-      }
     } catch (personError) {
       await this.prisma.signupVerification.deleteMany({ where: { authUserId } }).catch(() => undefined);
       await this.deleteAccount(authUserId);
@@ -294,25 +302,7 @@ export class AuthService {
       throw personError;
     }
 
-    return { emailVerificationRequired: true, universityEmailVerificationRequired: Boolean(universityEmail) };
-  }
-
-  async verifyUniversityEmail(personId: number, code: string) {
-    const challenge = await this.prisma.emailVerificationChallenge.findUnique({
-      where: { personId_purpose: { personId, purpose: 'UNIVERSITY' } },
-    });
-    if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date() || challenge.attempts >= 5) throw new UnauthorizedException();
-    const actual = Buffer.from(this.verificationHash(personId, code), 'hex');
-    const expected = Buffer.from(challenge.codeHash, 'hex');
-    const valid = actual.length === expected.length && timingSafeEqual(actual, expected);
-    const updated = await this.prisma.emailVerificationChallenge.updateMany({
-      where: { emailVerificationChallengeId: challenge.emailVerificationChallengeId, consumedAt: null, attempts: { lt: 5 }, expiresAt: { gt: new Date() } },
-      data: valid ? { consumedAt: new Date() } : { attempts: { increment: 1 } },
-    });
-    if (!updated.count || !valid) throw new UnauthorizedException();
-    await this.prisma.person.update({ where: { personId }, data: { emailUniversityVerifiedAt: new Date() } });
-    await this.finalizePendingSignup(personId);
-    return { registrationPendingApproval: true };
+    return { emailVerificationRequired: true };
   }
 
   async resendPersonalVerification(email: string) {
@@ -321,19 +311,28 @@ export class AuthService {
     if (!pending) {
       const legacy = await this.prisma.person.findFirst({
         where: { emailPersonal: { equals: normalizedEmail, mode: 'insensitive' }, emailPersonalVerifiedAt: null, pendingSignup: { is: { expiresAt: { gt: new Date() } } } },
-        select: { personId: true, emailUniversity: true },
+        select: { personId: true },
       });
       if (!legacy) return;
-      if (legacy.emailUniversity) {
-        await this.sendLegacySharedSignupVerification(legacy.personId, normalizedEmail, legacy.emailUniversity);
-        return;
+      const challenge = await this.prisma.emailVerificationChallenge.findUnique({
+        where: { personId_purpose: { personId: legacy.personId, purpose: 'SHARED_SIGNUP' } },
+      });
+      if (challenge) {
+        await this.sendLegacySharedSignupVerification(legacy.personId, normalizedEmail);
+      } else {
+        const { error } = await this.client().auth.resend({ type: 'signup', email: normalizedEmail });
+        if (error) throw emailError(error);
       }
-      const { error } = await this.client().auth.resend({ type: 'signup', email: normalizedEmail });
-      if (error) throw emailError(error);
       return;
     }
-    if (pending.verifiedAt || pending.expiresAt <= new Date()) return;
-    if (pending.emailUniversity) {
+    if (pending.verifiedAt) return;
+    if (pending.expiresAt <= new Date()) {
+      await this.prisma.signupVerification.update({
+        where: { signupVerificationId: pending.signupVerificationId },
+        data: { expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) },
+      });
+    }
+    if (pending.codeHash) {
       await this.sendSharedSignupVerification(pending);
       return;
     }
@@ -378,11 +377,11 @@ export class AuthService {
       data: { consumedAt: new Date() },
     });
     if (!consumed.count) throw new UnauthorizedException();
-    await this.prisma.person.update({ where: { personId }, data: { emailPersonalVerifiedAt: new Date(), emailUniversityVerifiedAt: new Date() } });
+    await this.prisma.person.update({ where: { personId }, data: { emailPersonalVerifiedAt: new Date() } });
     await this.finalizePendingSignup(personId);
   }
 
-  private async sendLegacySharedSignupVerification(personId: number, personalEmail: string, universityEmail: string) {
+  private async sendLegacySharedSignupVerification(personId: number, personalEmail: string) {
     const now = new Date();
     const previous = await this.prisma.emailVerificationChallenge.findUnique({
       where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
@@ -390,16 +389,16 @@ export class AuthService {
     });
     if (previous && now.getTime() - previous.sentAt.getTime() < 60_000) throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
     const from = this.config.get<string>('AUTH_EMAIL_FROM');
-    if (!from) throw new ServiceUnavailableException('Shared email verification is not configured.', { errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED' });
+    if (!from) throw new ServiceUnavailableException('Email verification is not configured.');
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     const expiresAt = new Date(now.getTime() + 10 * 60_000);
     await this.prisma.emailVerificationChallenge.upsert({
       where: { personId_purpose: { personId, purpose: 'SHARED_SIGNUP' } },
-      create: { personId, purpose: 'SHARED_SIGNUP', email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0 },
-      update: { email: universityEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0, consumedAt: null },
+      create: { personId, purpose: 'SHARED_SIGNUP', email: personalEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0 },
+      update: { email: personalEmail, codeHash: this.verificationHash(personId, code, 'SHARED_SIGNUP'), sentAt: now, expiresAt, attempts: 0, consumedAt: null },
     });
     const text = `Your GDG on Campus UJ registration code is ${code}. Enter it on the signup page within 10 minutes.`;
-    await Promise.all([...new Set([personalEmail, universityEmail])].map((to) => this.sendAuthEmail({ from, to, subject: 'Verify your GDG on Campus UJ registration', text })));
+    await this.sendAuthEmail({ from, to: personalEmail, subject: 'Verify your GDG on Campus UJ registration', text });
   }
 
   private async sendSharedSignupVerification(pending: Prisma.SignupVerificationGetPayload<object>) {
@@ -408,11 +407,7 @@ export class AuthService {
       throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
     }
     const from = this.config.get<string>('AUTH_EMAIL_FROM');
-    if (!from) {
-      throw new ServiceUnavailableException('Shared email verification is not configured.', {
-        errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED',
-      });
-    }
+    if (!from) throw new ServiceUnavailableException('Email verification is not configured.');
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     const codeExpiresAt = new Date(now.getTime() + 10 * 60_000);
     await this.prisma.signupVerification.update({
@@ -420,9 +415,7 @@ export class AuthService {
       data: { codeHash: this.verificationHash(pending.authUserId, code, 'SHARED_SIGNUP'), sentAt: now, codeExpiresAt, attempts: 0 },
     });
     const text = `Your GDG on Campus UJ registration code is ${code}. Enter it on the signup page within 10 minutes.`;
-    await Promise.all([...new Set([pending.emailPersonal, pending.emailUniversity!])].map((to) =>
-      this.sendAuthEmail({ from, to, subject: 'Verify your GDG on Campus UJ registration', text }),
-    ));
+    await this.sendAuthEmail({ from, to: pending.emailPersonal, subject: 'Verify your GDG on Campus UJ registration', text });
   }
 
   private async createVerifiedSignup(pending: Prisma.SignupVerificationGetPayload<object>, verifiedAt: Date) {
@@ -440,11 +433,10 @@ export class AuthService {
           emailPersonal: pending.emailPersonal,
           emailUniversity: pending.emailUniversity,
           emailPersonalVerifiedAt: verifiedAt,
-          emailUniversityVerifiedAt: pending.emailUniversity ? verifiedAt : null,
+          emailUniversityVerifiedAt: null,
           emailIdentities: {
             create: [
               { email: pending.emailPersonal, kind: 'PERSONAL' },
-              ...(pending.emailUniversity ? [{ email: pending.emailUniversity, kind: 'UNIVERSITY' as const }] : []),
             ],
           },
           pendingSignup: {
@@ -465,49 +457,13 @@ export class AuthService {
     await this.finalizePendingSignup(personId);
   }
 
-  async resendUniversityVerification(personId: number) {
-    const person = await this.prisma.person.findUnique({
-      where: { personId },
-      select: { emailUniversity: true, emailUniversityVerifiedAt: true, pendingSignup: { select: { expiresAt: true } } },
-    });
-    if (!person?.emailUniversity || person.emailUniversityVerifiedAt || !person.pendingSignup || person.pendingSignup.expiresAt <= new Date()) {
-      throw new UnauthorizedException();
-    }
-    await this.sendUniversityVerification(personId, person.emailUniversity);
-  }
-
-  private async sendUniversityVerification(personId: number, email: string) {
-    const now = new Date();
-    const previous = await this.prisma.emailVerificationChallenge.findUnique({
-      where: { personId_purpose: { personId, purpose: 'UNIVERSITY' } },
-      select: { sentAt: true },
-    });
-    if (previous && now.getTime() - previous.sentAt.getTime() < 60_000) throw new HttpException('Please wait before requesting another code.', HttpStatus.TOO_MANY_REQUESTS);
-    const from = this.config.get<string>('AUTH_EMAIL_FROM');
-    if (!from) {
-      throw new ServiceUnavailableException('University email verification is not configured.', {
-        errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED',
-      });
-    }
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    const expiresAt = new Date(now.getTime() + 10 * 60_000);
-    await this.prisma.emailVerificationChallenge.upsert({
-      where: { personId_purpose: { personId, purpose: 'UNIVERSITY' } },
-      create: { personId, purpose: 'UNIVERSITY', email, codeHash: this.verificationHash(personId, code), sentAt: now, expiresAt, attempts: 0 },
-      update: { email, codeHash: this.verificationHash(personId, code), sentAt: now, expiresAt, attempts: 0, consumedAt: null },
-    });
-    await this.sendAuthEmail({ from, to: email, subject: 'Verify your university email', text: `Your verification code is ${code}. It expires in 10 minutes.` });
-  }
-
   private async sendAuthEmail(message: { from: string; to: string; subject: string; text: string }) {
     const host = this.config.get<string>('SMTP_HOST');
     const port = Number(this.config.get<string>('SMTP_PORT') ?? 465);
     const user = this.config.get<string>('SMTP_USER');
     const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
     if (!host || !Number.isInteger(port) || !user || !pass) {
-      throw new ServiceUnavailableException('Email delivery is not configured.', {
-        errorCode: 'UNIVERSITY_EMAIL_VERIFICATION_NOT_CONFIGURED',
-      });
+      throw new ServiceUnavailableException('Email delivery is not configured.');
     }
     const transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
     try {
@@ -519,7 +475,7 @@ export class AuthService {
     }
   }
 
-  private verificationHash(personId: number | string, code: string, purpose = 'UNIVERSITY') {
+  private verificationHash(personId: number | string, code: string, purpose: string) {
     return createHmac('sha256', this.config.getOrThrow<string>('SUPABASE_SECRET_KEY'))
       .update(`${personId}:${purpose}:${code}`).digest('hex');
   }
@@ -528,7 +484,7 @@ export class AuthService {
     await this.prisma.$transaction(async (tx) => {
       const person = await tx.person.findUnique({ where: { personId }, include: { pendingSignup: true } });
       const pending = person?.pendingSignup;
-      if (!person || !pending || pending.expiresAt <= new Date() || !person.emailPersonalVerifiedAt || (person.emailUniversity && !person.emailUniversityVerifiedAt)) throw new UnauthorizedException();
+      if (!person || !pending || pending.expiresAt <= new Date() || !person.emailPersonalVerifiedAt) throw new UnauthorizedException();
       const data = pending.applicationData as Record<string, unknown>;
       await tx.person.update({ where: { personId }, data: {
         phoneNumber: String(data.phoneNumber), university: String(data.university),
@@ -561,21 +517,21 @@ export class AuthService {
   }
 
   // step 1: email them a link to choose a password
-  async requestSetupLink({ email }: RequestSetupLinkDto) {
+  async requestSetupLink({ email, locale = 'en' }: RequestSetupLinkDto) {
     const person = await this.findPersonByEmail(email);
     if (!person) throw new NotFoundException();
 
     // linked already = invite expired or password forgotten, a reset email does the same job
     if (person.authUserId) {
       const { error } = await this.client().auth.resetPasswordForEmail(email, {
-        redirectTo: this.setupPageUrl(),
+        redirectTo: this.setupPageUrl(locale),
       });
       if (error) throw emailError(error);
       return;
     }
 
     const { data, error } = await this.admin().inviteUserByEmail(email, {
-      redirectTo: this.setupPageUrl(),
+      redirectTo: this.setupPageUrl(locale),
     });
     // a supabase account with this email exists but isn't linked to them, needs fixing by hand
     if (error?.code === 'email_exists') throw new ConflictException();
@@ -614,6 +570,67 @@ export class AuthService {
     if (error) throw error;
 
     return this.login({ email: data.user.email ?? '', password });
+  }
+
+  // Verify the one-time email hash only when the user submits the reset form.
+  // Merely opening the landing page cannot consume the link (email scanners may prefetch it).
+  async completeSetupPassword({ tokenHash, type, password }: CompleteSetupPasswordDto): Promise<void> {
+    let stage = 'verify_token';
+    try {
+      const { data, error } = await this.client().auth.verifyOtp({
+        token_hash: tokenHash,
+        type,
+      });
+      if (error?.status === 429 || error?.code === 'over_request_rate_limit') throw emailError(error);
+      if (error || !data.user?.id || !data.session) throw new UnauthorizedException();
+
+      stage = 'find_person';
+      const person = await this.prisma.person.findUnique({
+        where: { authUserId: data.user.id },
+        select: { isActive: true },
+      });
+      if (!person?.isActive) throw new UnauthorizedException();
+
+      stage = 'update_password';
+      // Use the just-verified recovery session instead of admin.updateUserById.
+      // This scopes the password change to the account that proved email ownership
+      // and avoids relying on an admin API key for this user-initiated action.
+      const recoveryClient = createClient(
+        this.config.getOrThrow<string>('SUPABASE_URL'),
+        this.config.getOrThrow<string>('SUPABASE_PUBLISHABLE_KEY'),
+        { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
+      );
+      const { error: sessionError } = await recoveryClient.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
+      if (sessionError) {
+        if (sessionError.status === 401 || sessionError.status === 403) throw new UnauthorizedException();
+        throw sessionError;
+      }
+
+      const { data: updated, error: updateError } = await recoveryClient.auth.updateUser({ password });
+      if (updateError?.code === 'weak_password' || updateError?.code === 'same_password') {
+        throw new BadRequestException('password is too weak.');
+      }
+      if (updateError?.status === 401 || updateError?.status === 403) throw new UnauthorizedException();
+      if (updateError || !updated.user?.id) throw updateError ?? new UnauthorizedException();
+
+      return;
+    } catch (error) {
+      const isServerError = !(error instanceof HttpException) || error.getStatus() >= 500;
+      if (isServerError) {
+        const details = error as { name?: unknown; code?: unknown; status?: unknown };
+        this.logger.error({
+          event: 'password_setup_failed',
+          stage,
+          errorName: error instanceof Error ? error.name : 'unknown',
+          errorCode: typeof details.code === 'string' ? details.code : undefined,
+          errorStatus: typeof details.status === 'number' ? details.status : undefined,
+        });
+      }
+      throw error;
+    }
   }
 
   // who's logged in + what the frontend needs to pick their pages
@@ -672,15 +689,10 @@ export class AuthService {
     };
   }
 
-  // either email column, any letter case
+  // The personal email is the sign-in identity. University email is profile data only.
   private findPersonByEmail(email: string) {
     return this.prisma.person.findFirst({
-      where: {
-        OR: [
-          { emailPersonal: { equals: email, mode: 'insensitive' } },
-          { emailUniversity: { equals: email, mode: 'insensitive' } },
-        ],
-      },
+      where: { emailPersonal: { equals: email, mode: 'insensitive' } },
       select: { personId: true, authUserId: true },
     });
   }
@@ -697,8 +709,13 @@ export class AuthService {
   }
 
   // frontend page the email link opens
-  private setupPageUrl() {
-    return this.config.getOrThrow<string>('PASSWORD_SETUP_URL');
+  private setupPageUrl(locale: 'en' | 'ar' = 'en') {
+    const url = new URL(this.config.getOrThrow<string>('PASSWORD_SETUP_URL'));
+    const basePath = url.pathname
+      .replace(/\/(?:en|ar)\/reset-password\/?$/, '')
+      .replace(/\/+$/, '');
+    url.pathname = `${basePath}/${locale}/reset-password`;
+    return url.toString().replace(/\/$/, '');
   }
 
   // made on first use so the app still starts without the supabase env vars

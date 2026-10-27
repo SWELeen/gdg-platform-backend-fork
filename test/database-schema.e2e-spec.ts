@@ -2022,7 +2022,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           data: { fullName: 'Duplicate provider', authUserId },
         });
       }, 'person_auth_user_id_key');
-      for (const field of ['emailPersonal', 'emailUniversity'] as const) {
+      for (const field of ['emailPersonal'] as const) {
         await invalid(
           async (tx, f) => {
             await tx.person.update({
@@ -2036,9 +2036,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
               },
             });
           },
-          field === 'emailPersonal'
-            ? 'uq_person_email_personal'
-            : 'uq_person_email_university',
+          'uq_person_email_personal',
         );
       }
       await invalid(async (tx, f) => {
@@ -2084,6 +2082,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           permission.code,
         );
       }, 'role_permission_pkey');
+    });
+
+    it('allows university email to repeat because it is optional profile data', async () => {
+      await valid(async (tx, f) => {
+        await tx.person.update({
+          where: { personId: f.person.personId },
+          data: { emailUniversity: 'student@university.test' },
+        });
+        const repeated = await tx.person.create({
+          data: { fullName: 'Another student', emailUniversity: 'student@university.test' },
+        });
+        expect(repeated.emailUniversity).toBe('student@university.test');
+      });
     });
 
     it('enforces registration-side composite FK and referenced history deletion restrictions', async () => {

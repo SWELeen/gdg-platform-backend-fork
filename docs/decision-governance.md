@@ -31,6 +31,7 @@ Do not silently choose one source when sources conflict. First identify the conf
 | Local development/testing uses PostgreSQL and Prisma | Approved by user on 2026-10-05; supersedes the local MySQL baseline |
 | Authentication uses NestJS Auth, JWT, Google OAuth, and backend-enforced RBAC | Approved direction |
 | Swagger/OpenAPI is the authoritative frontend-backend contract | Approved |
+| Personal email/password are the only signup/login credentials; optional university email is unverified profile data | Approved by user on 2026-10-27 |
 
 ## Decision record minimum
 
@@ -39,6 +40,15 @@ Each new decision should record: date, owner/approver, status, context, decision
 ## Legacy-source clarification
 
 Web Doc Final describes some Next.js full-stack capabilities, including Server Actions. For this platform's backend responsibilities, that guidance is superseded by the approved separate-repository architecture: Next.js is frontend only and NestJS is authoritative.
+
+## 2026-10-27 Personal email verification and university email
+
+- Owner/approver: project user in this chat.
+- Status: approved.
+- Decision: the required personal email and password identify the account. Verify only the personal email. An unverified account that submits the correct password at login receives a resent personal-email verification code and is sent to code entry. University email is optional profile information only; do not verify it or use it as a login identity. If supplied, it must differ from the personal email, ignoring surrounding whitespace and letter case. Do not enforce university-email uniqueness across accounts.
+- Affected repositories: frontend and backend.
+- Migration implications: remove university-email uniqueness while preserving personal-email uniqueness; existing university identity rows may remain but must not be treated as login identities. Do not change historical applied migrations.
+- Source: explicit user instruction in the current chat on 2026-10-27.
 
 ## 2026-10-05 Local PostgreSQL development
 
