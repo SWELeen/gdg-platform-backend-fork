@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   Inject,
+  Patch,
   Post,
   Req,
   UnauthorizedException,
@@ -20,6 +21,8 @@ import { SignupDto } from './signup.dto.js';
 import { VerifySignupEmailDto } from './verify-signup-email.dto.js';
 import { ResendPersonalVerificationDto } from './resend-verification.dto.js';
 import { AuthRateLimit } from './auth-rate-limit.guard.js';
+import { UpdateBioDto } from './update-bio.dto.js';
+import { UpdateSocialLinksDto } from './update-social-links.dto.js';
 
 @Controller()
 export class AuthController {
@@ -157,6 +160,26 @@ export class AuthController {
   async me(@Req() request: { user?: RequestUser }) {
     if (!request.user) throw new UnauthorizedException();
     return apiSuccess(await this.auth.me(request.user));
+  }
+
+  @Patch('me/bio')
+  @AuthRateLimit({ scope: 'profile-bio-update', dimension: 'ip', limit: 30, windowSeconds: 3600 })
+  async updateMyBio(
+    @Req() request: { user?: RequestUser },
+    @Body() body: UpdateBioDto,
+  ) {
+    if (!request.user) throw new UnauthorizedException();
+    return apiSuccess(await this.auth.updateBio(request.user, body.bio));
+  }
+
+  @Patch('me/social-links')
+  @AuthRateLimit({ scope: 'profile-social-links-update', dimension: 'ip', limit: 30, windowSeconds: 3600 })
+  async updateMySocialLinks(
+    @Req() request: { user?: RequestUser },
+    @Body() body: UpdateSocialLinksDto,
+  ) {
+    if (!request.user) throw new UnauthorizedException();
+    return apiSuccess(await this.auth.updateSocialLinks(request.user, body));
   }
 
   private setSessionCookies(response: Response | undefined, session: { accessToken: string; refreshToken: string; expiresAt?: number }) {

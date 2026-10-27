@@ -31,6 +31,7 @@ import type {
   SetupPasswordDto,
 } from './setup-password.dto.js';
 import type { SignupDto } from './signup.dto.js';
+import type { UpdateSocialLinksDto } from './update-social-links.dto.js';
 
 const UNIQUE_VIOLATION = 'P2002';
 
@@ -652,6 +653,35 @@ export class AuthService {
   }
 
   // who's logged in + what the frontend needs to pick their pages
+  async updateBio(user: RequestUser, bio: string) {
+    const person = await this.prisma.person.update({
+      where: { personId: user.personId },
+      data: { bio: bio.trim() || null },
+      select: { bio: true },
+    });
+    return { bio: person.bio };
+  }
+
+  async updateSocialLinks(user: RequestUser, links: UpdateSocialLinksDto) {
+    const data = {
+      ...(links.githubUrl !== undefined ? { githubUrl: links.githubUrl?.trim() || null } : {}),
+      ...(links.portfolioUrl !== undefined ? { portfolioUrl: links.portfolioUrl?.trim() || null } : {}),
+      ...(links.xUrl !== undefined ? { xUrl: links.xUrl?.trim() || null } : {}),
+    };
+    const person = await this.prisma.person.update({
+      where: { personId: user.personId },
+      data,
+      select: { githubUrl: true, portfolioUrl: true, xUrl: true },
+    });
+    return {
+      socialLinks: {
+        github: person.githubUrl,
+        portfolio: person.portfolioUrl,
+        x: person.xUrl,
+      },
+    };
+  }
+
   async me(user: RequestUser) {
     // role dates are saudi calendar days
     const today = new Date(
@@ -670,6 +700,9 @@ export class AuthService {
         major: true,
         gender: true,
         bio: true,
+        githubUrl: true,
+        portfolioUrl: true,
+        xUrl: true,
         profileImageUrl: true,
         member: {
           select: {
@@ -725,6 +758,11 @@ export class AuthService {
       level: applicationText('level'),
       gender: person.gender,
       bio: person.bio,
+      socialLinks: {
+        github: person.githubUrl,
+        portfolio: person.portfolioUrl,
+        x: person.xUrl,
+      },
       profileImageUrl: person.profileImageUrl,
       joinDate: member?.joinDate ?? null,
       committees:
