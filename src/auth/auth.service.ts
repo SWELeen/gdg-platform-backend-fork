@@ -22,6 +22,7 @@ import {
 } from '@supabase/supabase-js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { approvalScopeFor, findApplicableCommittees } from '../committees/committee-catalog.js';
 import type { RequestUser } from './auth.guard.js';
 import type { CheckEmailDto } from './check-email.dto.js';
 import type { LoginDto } from './login.dto.js';
@@ -36,6 +37,12 @@ const UNIQUE_VIOLATION = 'P2002';
 function emailAlreadyExists() {
   return new ConflictException('An account with this email already exists.', {
     errorCode: 'EMAIL_ALREADY_EXISTS',
+  });
+}
+
+function committeeUnavailable() {
+  return new BadRequestException('A selected committee is unavailable.', {
+    errorCode: 'COMMITTEE_UNAVAILABLE',
   });
 }
 
@@ -205,6 +212,8 @@ export class AuthService {
         errorCode: 'UNIVERSITY_EMAIL_MISMATCH',
       });
     }
+    // Reject unknown or parent committees before creating the auth account.
+    if (!(await findApplicableCommittees(this.prisma, committees.map((item) => item.committeeCode)))) throw committeeUnavailable();
     // Existing members and unexpired signup attempts both reserve their emails.
     if (await this.findPersonByEmail(email)) throw emailAlreadyExists();
     if (universityEmail && await this.findPersonByEmail(universityEmail)) throw emailAlreadyExists();
@@ -530,17 +539,18 @@ export class AuthService {
         const committees = pending.committees as Array<{ committeeCode: string; requestedRole: string }>;
         const globalRoles = pending.globalRoles as string[];
         if (!committees.length && !globalRoles.length) throw new BadRequestException('Select at least one committee or leadership role.');
-        const rows = await tx.committee.findMany({ where: { committeeCode: { in: committees.map((item) => item.committeeCode) } }, select: { committeeId: true, committeeCode: true } });
-        if (rows.length !== new Set(committees.map((item) => item.committeeCode)).size) throw new BadRequestException('A selected committee is unavailable.');
-        const developerCodes = new Set(['AUTOMATION', 'DATA', 'WEB', 'AI', 'ROBOTICS', 'CYBER']);
+        const rows = await findApplicableCommittees(tx, committees.map((item) => item.committeeCode));
+        if (!rows) throw committeeUnavailable();
         await tx.membershipRequest.create({ data: {
           personId, applicationData: pending.applicationData as Prisma.InputJsonValue,
-          committees: { create: committees.map((selection) => ({
-            committeeId: rows.find((row) => row.committeeCode === selection.committeeCode)!.committeeId,
-            requestedRole: selection.requestedRole,
-            approvalScope: ['Leader', 'Co-Leader'].includes(selection.requestedRole)
-              ? (developerCodes.has(selection.committeeCode) ? 'DEVELOPER_COMMITTEES' : 'CLUB') : 'COMMITTEE',
-          })) },
+          committees: { create: committees.map((selection) => {
+            const committee = rows.find((row) => row.committeeCode === selection.committeeCode)!;
+            return {
+              committeeId: committee.committeeId,
+              requestedRole: selection.requestedRole,
+              approvalScope: approvalScopeFor(committee, selection.requestedRole),
+            };
+          }) },
           globalRoles: { create: globalRoles.map((roleCode) => ({ roleCode })) },
         } });
       }

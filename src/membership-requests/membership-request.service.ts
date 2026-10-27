@@ -12,6 +12,7 @@ import {
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthenticatedUser } from '../auth/current-user.js';
+import { approvalScopeFor, findApplicableCommittees } from '../committees/committee-catalog.js';
 import {
   CommitteeAccessService,
 } from '../registrations/committee-access.service.js';
@@ -55,14 +56,8 @@ export class MembershipRequestService {
     if ((body.applicationData.universityEmail?.toLowerCase() ?? null) !== (person.emailUniversity?.toLowerCase() ?? null)) {
       throw new ForbiddenException('The application must use the verified university email on the account.');
     }
-    const committeeCodes = body.committees.map(({ committeeCode }) => committeeCode);
-    const committees = await this.prisma.committee.findMany({
-      where: { committeeCode: { in: committeeCodes } },
-      select: { committeeId: true, committeeCode: true },
-    });
-    if (committees.length !== new Set(committeeCodes).size) {
-      throw new NotFoundException('One or more selected committees are unavailable.');
-    }
+    const committees = await findApplicableCommittees(this.prisma, body.committees.map(({ committeeCode }) => committeeCode));
+    if (!committees) throw new NotFoundException('One or more selected committees are unavailable.');
 
     const existing = await this.prisma.membershipRequest.findUnique({
       where: { personId: user.personId },
@@ -77,13 +72,14 @@ export class MembershipRequestService {
           personId: user.personId,
           applicationData,
           committees: {
-            create: body.committees.map((item) => ({
-              committeeId: committees.find((c) => c.committeeCode === item.committeeCode)!.committeeId,
-              requestedRole: item.requestedRole,
-              approvalScope: ['Leader', 'Co-Leader'].includes(item.requestedRole)
-                ? (['AUTOMATION', 'DATA', 'WEB', 'AI', 'ROBOTICS', 'CYBER'].includes(item.committeeCode) ? 'DEVELOPER_COMMITTEES' : 'CLUB')
-                : 'COMMITTEE',
-            })),
+            create: body.committees.map((item) => {
+              const committee = committees.find((c) => c.committeeCode === item.committeeCode)!;
+              return {
+                committeeId: committee.committeeId,
+                requestedRole: item.requestedRole,
+                approvalScope: approvalScopeFor(committee, item.requestedRole),
+              };
+            }),
           },
         },
         include: requestInclude,

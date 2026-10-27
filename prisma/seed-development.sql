@@ -20,12 +20,12 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('gdg.optional-local-development-seed'));
 
     FOR r IN SELECT * FROM (VALUES
-        ('DATA', 'Data', NULL::TEXT),
-        ('DEV', 'Development', NULL::TEXT),
+        ('DEV', 'Developers', NULL::TEXT),
+        ('DATA', 'Data Analysis', 'DEV'),
         ('PM', 'Project Management', NULL::TEXT),
         ('PR', 'Public Relations', NULL::TEXT),
-        ('WEB', 'Web', 'DEV'),
-        ('CYBER', 'Cyber Security', 'DEV')
+        ('WEB', 'Web Development', 'DEV'),
+        ('CYBER', 'Cybersecurity', 'DEV')
     ) AS fixture(code, name, parent_code)
     LOOP
         v_parent_id := NULL;
@@ -55,8 +55,8 @@ BEGIN
          ARRAY[]::TEXT[], ARRAY[]::TEXT[],
          ARRAY['Team Leadership & Task Distribution', 'Critical Thinking & Decision Making', 'Reporting & Progress Tracking'], 'GROUP_LEADER'),
         ('Abdullah Misar', 'AbdullahMisar@gmail.com', 'current',
-         ARRAY['DEV', 'WEB'], ARRAY['Leader', 'Member'],
-         ARRAY['Team Leadership & Task Distribution', 'Using Management Tools (Trello, Notion, ClickUp)', 'Effective Communication Skills'], NULL::TEXT),
+         ARRAY['WEB'], ARRAY['Member'],
+         ARRAY['Team Leadership & Task Distribution', 'Using Management Tools (Trello, Notion, ClickUp)', 'Effective Communication Skills'], 'DEVELOPER_COMMITTEES_LEADER'),
         ('Mohmmad Alamri', 'MohmmadAlamri@gmail.com', 'alumni',
          ARRAY['CYBER', 'PR'], ARRAY['Member', 'Member'],
          ARRAY['Critical Thinking & Decision Making', 'Quality Assurance & Attention to Detail', 'Research & Analysis'], NULL::TEXT),
