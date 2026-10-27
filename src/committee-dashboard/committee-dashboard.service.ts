@@ -483,7 +483,11 @@ export class CommitteeDashboardService {
       },
     });
     if (!event) throw new NotFoundException();
-    return { id: String(event.eventId), ...event };
+    return {
+      id: String(event.eventId),
+      ...event,
+      requiredRegistrantFields: event.requiredRegistrantFields.filter((field) => field !== 'universityId'),
+    };
   }
 
   // Only drafts can be deleted: nobody can register for a draft, so no registration is lost.

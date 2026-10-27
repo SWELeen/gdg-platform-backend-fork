@@ -131,7 +131,7 @@ export class UpdateCommitteePointsDto {
 }
 
 export const EVENT_TYPES = ['Workshop', 'Conference', 'Talk', 'Panel', 'Hackathon'] as const;
-export const REGISTRANT_FIELDS = ['fullName', 'universityId', 'college', 'major', 'phone', 'email', 'membership'] as const;
+export const REGISTRANT_FIELDS = ['fullName', 'college', 'major', 'phone', 'email', 'membership'] as const;
 export const EVENT_QUESTION_TYPES = ['TEXT', 'SELECT', 'RADIO', 'CHECKBOX'] as const;
 
 export class CreateEventQuestionDto {

@@ -28,7 +28,7 @@ const validEvent = (): CreateCommitteeEventDto => ({
   registrationDeadline: new Date(Date.now() + 5 * day).toISOString(),
   location: 'Building 1',
   capacity: 30,
-  requiredRegistrantFields: ['universityId', 'phone', 'phone'],
+  requiredRegistrantFields: ['phone', 'phone'],
   status: 'PUBLISHED',
   questions: [
     { text: ' Why? ', type: 'TEXT', required: true, options: ['ignored'] },
@@ -80,7 +80,7 @@ describe('Committee leader creates an event', () => {
       committeeId: 2,
       createdByMemberId: 12,
       mapsLink: null,
-      requiredRegistrantFields: ['universityId', 'phone'],
+      requiredRegistrantFields: ['phone'],
     });
     expect(data.questions.create).toEqual([
       { questionText: 'Why?', questionType: 'TEXT', isRequired: true, position: 1, options: Prisma.DbNull },
