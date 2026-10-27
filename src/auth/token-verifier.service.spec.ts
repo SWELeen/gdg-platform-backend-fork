@@ -68,6 +68,7 @@ describe('TokenVerifierService', () => {
       authUserId: USER_ID,
       email: 'user@example.com',
       fromEmailLink: false,
+      expiresAt: expect.any(Number),
     });
     expect(fetch).toHaveBeenCalledWith(
       `${ISSUER}/.well-known/jwks.json`,
@@ -82,7 +83,15 @@ describe('TokenVerifierService', () => {
       authUserId: USER_ID,
       email: undefined,
       fromEmailLink: false,
+      expiresAt: expect.any(Number),
     });
+  });
+
+  it('returns the verified JWT expiration for session revocation', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 600;
+    const token = await makeToken({ expiresAt });
+
+    await expect(makeVerifier().verify(token)).resolves.toMatchObject({ expiresAt });
   });
 
   it.each([

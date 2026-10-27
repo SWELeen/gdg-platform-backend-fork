@@ -12,6 +12,7 @@ export interface TokenIdentity {
   email?: string;
   // signed in by clicking an invite/reset email, not with a password
   fromEmailLink: boolean;
+  expiresAt: number;
 }
 
 // supabase labels invite + reset link sign-ins as otp
@@ -53,12 +54,13 @@ export class TokenVerifierService {
         requiredClaims: ['exp'],
       });
 
-      const { sub, email, amr } = payload;
-      if (!sub) return null;
+      const { sub, email, amr, exp } = payload;
+      if (!sub || typeof exp !== 'number') return null;
 
       return {
         authUserId: sub,
         email: typeof email === 'string' && email ? email : undefined,
+        expiresAt: exp,
         fromEmailLink:
           Array.isArray(amr) &&
           amr.some((entry: { method?: unknown }) =>

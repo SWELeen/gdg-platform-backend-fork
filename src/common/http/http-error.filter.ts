@@ -15,6 +15,7 @@ const ERROR_CATALOG: Partial<Record<number, readonly [string, string]>> = {
   403: ['FORBIDDEN', 'You do not have permission to perform this action.'],
   404: ['NOT_FOUND', 'The requested resource was not found.'],
   409: ['CONFLICT', 'The request conflicts with the current state.'],
+  429: ['TOO_MANY_REQUESTS', 'Too many requests. Please try again later.'],
   500: ['INTERNAL_ERROR', 'An unexpected error occurred.'],
 };
 // Domain codes an endpoint may send instead of the generic code for its

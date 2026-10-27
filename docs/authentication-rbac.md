@@ -10,6 +10,8 @@ Signup choices remain in `pending_signup` on the server for up to 24 hours. No a
 
 The relevant committed signup migrations must be applied before deploying this behavior. Supabase email confirmation is required and Supabase sends the personal-email code for all new signups. Existing descriptions below that mention bearer-only browser sessions, token JSON responses, or signup without email confirmation are historical and must not be used as the current API contract.
 
+Security review note (2026-10-27): account recovery returns the same success response for known and unknown personal emails. `POST /auth/check-email` still reveals whether an account exists to support the current email-first signup/login UX. Auth routes now use atomic PostgreSQL-backed fixed-window limits; also configure edge-level limits before public production traffic. Set `TRUST_PROXY_HOPS` to the exact trusted proxy count in deployment, or clients behind one proxy will share its IP bucket. No live Supabase or SMTP transaction has been verified by repository tests.
+
 ## Approved direction
 
 The user confirmed Supabase Auth as the credential owner on 2026-10-05. NestJS verifies the provider identity and enforces local role-based and committee-based access control. The backend is the authoritative enforcement point. Google OAuth remains a potential provider flow requiring configuration review.
@@ -18,7 +20,9 @@ Do not store password hashes locally. The current Person model maps to person an
 
 The proposal identifies these user roles: Member, Volunteer, Organizer, Employee/Staff, Admin, and later proposes Alumni. It gives examples of capabilities for Member, Volunteer, Organizer, and Admin.
 
-## Current implementation
+## Historical implementation snapshot
+
+The endpoint descriptions in this section predate the current cookie-based, staged signup flow described at the top of this document. Use that current flow and the published API contract when they differ.
 
 Code lives in `src/auth/`.
 
@@ -52,7 +56,7 @@ The guard never rejects a request. No token, a bad or expired token, an unlinked
 
 **Password setup for existing members** (two steps; the person has to prove they own the email):
 
-1. **`POST /auth/setup-password/request`**: body `{ email, locale? }`, where optional locale is `en` or `ar` (defaults to `en`). The backend uses the frontend origin in `PASSWORD_SETUP_URL` and appends `/{locale}/reset-password`. For compatibility, a value ending in `/en/reset-password` or `/ar/reset-password` is also accepted and its locale is replaced. 404 if no `person` has the email. If the person isn't linked yet, Supabase creates the account and emails an invite, and the backend links `auth_user_id` immediately (never later by matching emails); if linking fails, the invited account is deleted again. If they're already linked (expired invite or forgotten password), Supabase sends a reset email instead. If a Supabase account with that email exists but isn't linked to the person, returns 409 and needs fixing by hand. Supabase's email limit returns 429. Success: 200, `data: null`.
+1. **`POST /auth/setup-password/request`**: body `{ email, locale? }`, where optional locale is `en` or `ar` (defaults to `en`). The backend uses `PASSWORD_SETUP_URL` and appends `/{locale}/reset-password`. Existing people receive an invite or reset email; unlinked accounts are linked by Supabase user ID only. If no person exists, the endpoint returns the same generic success response without sending email, to avoid disclosing account existence. If a Supabase account exists but is not linked to the person, it returns 409. Provider email limits return 429. Success: 200, `data: null`.
 2. Configure the Supabase **Reset Password** email template to link to `{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=recovery`, and the **Invite user** template to use `{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=invite`, rather than linking directly to `{{ .ConfirmationURL }}`. Add `PASSWORD_SETUP_URL` to Supabase's allowed redirect URLs. The app reads the credential from the URL fragment (not sent in the initial HTTP request), removes it from the address bar, and does not verify it on page load, so email link scanners cannot consume it by prefetching the page.
 3. **`POST /auth/setup-password/complete`**: body `{ tokenHash, type, password }`, where `type` is `recovery` or `invite` and password is 8-72 characters. The backend verifies the one-time token hash with Supabase only when the user submits the form, checks that the verified Supabase account is linked to an active person, sets the password, and returns 200 with `{ passwordUpdated: true }`. The user then signs in normally. Invalid, expired, or already-used tokens return 401. The existing **`POST /auth/setup-password`** bearer-token route remains supported for links already sent before the template change.
 
@@ -83,6 +87,27 @@ These capabilities describe original product intent, not the current role regist
 - Do not log tokens, OAuth client secrets, or personally sensitive credentials.
 - Use the backend's approved CORS allowlist; do not accept arbitrary browser origins.
 - Protect role changes and other sensitive authorization actions with approved audit events once audit logging is implemented.
+
+## Auth security audit follow-up (2026-10-27)
+
+The API applies PostgreSQL-backed fixed-window limits in `AuthRateLimitGuard`. It stores only HMAC-SHA256 bucket identifiers (keyed by `SUPABASE_SECRET_KEY`), not raw IP addresses, emails, or tokens. Limits are per endpoint and per applicable IP/email/token dimension: login 30/IP and 10/email per 15 minutes; signup 20/IP per hour and 5/email per day; email check 60/IP and 10/email per minute; verification 30/IP per hour and 5/email per 10 minutes; resend 20/IP per hour, 1/email per minute and 5/email per hour; refresh 600/IP and 60/refresh token per 5 minutes; password setup request 20/IP and 3/email per hour; password completion 20/IP per hour and 5/token per hour; logout 120/IP per 5 minutes. Limits are enforced across instances through PostgreSQL. The new migration must be applied before deploying this code; limiter storage fails closed with 503 if unavailable. Set `TRUST_PROXY_HOPS` to the exact number of trusted reverse proxies (0 for direct local access); never trust arbitrary forwarded headers.
+
+### Enumeration and UX
+
+`POST /auth/check-email` intentionally reveals whether an address belongs to a local or Supabase account through `nextStep`; duplicate signup also returns `EMAIL_ALREADY_EXISTS`. Rate limiting reduces automated probing but does not remove this account-enumeration signal. The current Next.js sign-in already asks for email and then the same password step for every valid address, and does not call `/auth/check-email`; preserve that UI and deprecate the revealing endpoint after checking other API clients. Login already returns the same generic 401 for unknown email and wrong password. For duplicate signup, use a neutral “If this address can be registered, check your inbox” confirmation and let sign-in/recovery guide the person; pending unverified accounts can receive a resend link. This changes the duplicate-signup API response contract, so check Swagger and other clients before shipping it. Do not use a different public message, status, or response timing for known and unknown addresses.
+
+### Local verification checklist
+
+Use a dedicated local Supabase stack or a disposable development Supabase project and a non-production PostgreSQL database. Do not run the migration or signup/recovery tests against production. For local Supabase CLI, start the stack with `supabase start`; Auth emails are captured by the local Mailpit UI (normally `http://localhost:54324`). Configure local templates and Auth URL settings in `supabase/config.toml` (the hosted dashboard template editor does not configure CLI-local Auth). For a hosted development project, use Authentication → URL Configuration and Authentication → Email Templates.
+
+1. Set backend environment variables locally without committing them: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `DATABASE_URL`, `FRONTEND_URL`, `PASSWORD_SETUP_URL`, and `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `AUTH_EMAIL_FROM` for backend-sent signup verification codes. Supabase Auth itself sends recovery/invite emails through its Auth SMTP configuration. Keep these two SMTP paths separate. Never print or paste secret values.
+2. Set Auth Site URL to `http://localhost:3000` and add exact redirects for `http://localhost:3000/en/reset-password` and `http://localhost:3000/ar/reset-password` (plus any actual signup callback route). The app sends a locale-specific reset URL; it must be on the allowlist. Hosted Supabase's built-in SMTP is restricted for development, so verify delivery in Mailpit locally or configure a dedicated test SMTP provider for a hosted dev project. Disable click tracking/link rewriting for auth messages.
+3. Inspect the Reset Password and Invite templates in their source view. The Reset Password link should be `<a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=recovery">Reset password</a>`; Invite should use the same link with `type=invite`. `RedirectTo` is the locale-specific URL built from `PASSWORD_SETUP_URL`. Submit the form and verify the app consumes the token only after the user submits the new password. This checkout has no `supabase/config.toml`; if you initialize a local Supabase CLI project, inspect its matching template entries in that project's `supabase/config.toml` and template files.
+4. Inspect `.env` variable names only (never values), then run `pnpm exec prisma migrate status --config prisma7.config.ts` and `pnpm prisma:migrate:deploy` against the dedicated local database. Query `to_regclass('public.auth_rate_limit_bucket')` or inspect Prisma migration status to confirm the rate-limit migration is present. Re-run the lifecycle and DB schema tests against a dedicated test database.
+5. In browser DevTools → Network, inspect login, refresh, and logout responses. `gdg_access` must be HttpOnly, SameSite=Strict and scoped to `/`; `gdg_refresh` must be HttpOnly, SameSite=Strict and scoped to `/auth`; both must be Secure on HTTPS. Confirm the browser sends cookies on refresh and logout, the frontend uses credentials, and backend CORS allows only the frontend origin. Use HTTPS for testing Secure behavior; localhost HTTP development intentionally does not set Secure.
+6. Exercise one success and failure for each route: signup, wrong/expired verification code, login with wrong credentials, refresh then reuse old token, logout then call `/me`, recovery with known and unknown email, expired/reused recovery token, and authorized/unauthorized committee action. Confirm repeated attempts eventually return 429; verify a correct login/recovery still succeeds after the window expires. Use only synthetic accounts and disposable data.
+
+These instructions describe checks to perform; no live Supabase, SMTP delivery, browser cookie behavior, or local database migration is claimed verified by the mocked HTTP tests in this audit.
 
 ## TBD before implementation
 
