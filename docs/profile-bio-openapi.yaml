@@ -1,0 +1,250 @@
+openapi: 3.1.0
+info:
+  title: GDG Main Platform Profile API
+  version: 1.0.0
+  description: Contract for reading the current user's profile and updating their optional bio and social links.
+servers:
+  - url: http://localhost:3001
+paths:
+  /me:
+    get:
+      operationId: getMyProfile
+      summary: Read the current user's profile
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Current profile, including optional social links.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeSuccess'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+  /me/bio:
+    patch:
+      operationId: updateMyBio
+      summary: Update the current user's bio
+      description: Updates only the authenticated person's bio. Other profile fields are read-only through this operation.
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBioRequest'
+            example:
+              bio: Learning web development and building community projects.
+      responses:
+        '200':
+          description: Bio updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateBioSuccess'
+        '400':
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '429':
+          description: Request limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '503':
+          description: Authentication rate-limit storage is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+  /me/social-links:
+    patch:
+      operationId: updateMySocialLinks
+      summary: Update the current user's optional social links
+      description: Only the authenticated person's GitHub, portfolio, and X URLs can be changed. Send null to clear a link.
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSocialLinksRequest'
+            example:
+              githubUrl: https://github.com/example
+              portfolioUrl: https://example.dev
+              xUrl: https://x.com/example
+      responses:
+        '200':
+          description: Links updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialLinksSuccess'
+        '400':
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '429':
+          description: Request limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '503':
+          description: Authentication rate-limit storage is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+components:
+  securitySchemes:
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: gdg_access
+  schemas:
+    MeSuccess:
+      type: object
+      additionalProperties: false
+      required: [success, message, data, error]
+      properties:
+        success:
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+          required: [socialLinks]
+          properties:
+            socialLinks:
+              $ref: '#/components/schemas/SocialLinks'
+        error:
+          type: 'null'
+    SocialLinks:
+      type: object
+      additionalProperties: false
+      required: [github, portfolio, x]
+      properties:
+        github:
+          type: [string, 'null']
+          maxLength: 2048
+        portfolio:
+          type: [string, 'null']
+          maxLength: 2048
+        x:
+          type: [string, 'null']
+          maxLength: 2048
+    UpdateSocialLinksRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        githubUrl:
+          type: [string, 'null']
+          maxLength: 2048
+          format: uri
+          pattern: '^https?://(?:www\.)?github\.com(?:[/:?#]|$)'
+        portfolioUrl:
+          type: [string, 'null']
+          maxLength: 2048
+          format: uri
+        xUrl:
+          type: [string, 'null']
+          maxLength: 2048
+          format: uri
+          pattern: '^https?://(?:www\.)?x\.com(?:[/:?#]|$)'
+    SocialLinksSuccess:
+      type: object
+      additionalProperties: false
+      required: [success, message, data, error]
+      properties:
+        success:
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          additionalProperties: false
+          required: [socialLinks]
+          properties:
+            socialLinks:
+              $ref: '#/components/schemas/SocialLinks'
+        error:
+          type: 'null'
+    UpdateBioRequest:
+      type: object
+      additionalProperties: false
+      required: [bio]
+      properties:
+        bio:
+          type: string
+          maxLength: 500
+          description: Empty or whitespace-only values clear the bio.
+    UpdateBioSuccess:
+      type: object
+      additionalProperties: false
+      required: [success, message, data, error]
+      properties:
+        success:
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          additionalProperties: false
+          required: [bio]
+          properties:
+            bio:
+              type: [string, 'null']
+        error:
+          type: 'null'
+    ApiFailure:
+      type: object
+      additionalProperties: false
+      required: [success, message, data, error]
+      properties:
+        success:
+          const: false
+        message:
+          type: string
+        data:
+          type: 'null'
+        error:
+          type: object
+          required: [code, details]
+          properties:
+            code:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                required: [pointer, message]
+                properties:
+                  pointer:
+                    type: string
+                  message:
+                    type: string

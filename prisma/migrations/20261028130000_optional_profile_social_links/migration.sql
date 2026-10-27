@@ -1,0 +1,8 @@
+BEGIN;
+
+ALTER TABLE "person"
+  ADD COLUMN "github_url" VARCHAR(2048),
+  ADD COLUMN "portfolio_url" VARCHAR(2048),
+  ADD COLUMN "x_url" VARCHAR(2048);
+
+COMMIT;

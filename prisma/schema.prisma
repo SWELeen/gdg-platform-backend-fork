@@ -71,6 +71,9 @@ model Person {
   gender          String?  @db.VarChar(20)
   profileImageUrl String?  @map("profile_image_url") @db.Text
   bio             String?  @db.VarChar(1000)
+  githubUrl       String?  @map("github_url") @db.VarChar(2048)
+  portfolioUrl    String?  @map("portfolio_url") @db.VarChar(2048)
+  xUrl            String?  @map("x_url") @db.VarChar(2048)
   isActive        Boolean  @default(true) @map("is_active")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
