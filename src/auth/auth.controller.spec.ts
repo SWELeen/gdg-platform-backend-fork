@@ -597,6 +597,7 @@ describe('GET /me', () => {
         email: 'noura@example.test',
         committees: [{ code: 'DATA', name: 'Data', position: 'Leader' }],
         roles: ['ADVISOR'],
+        membershipRequestPending: false,
       },
     });
   });
@@ -613,7 +614,16 @@ describe('GET /me', () => {
       email: null,
       committees: [],
       roles: [],
+      membershipRequestPending: false,
     });
+  });
+
+  it('tells an applicant apart from a non-member while their membership request waits', async () => {
+    findUniqueOrThrow.mockResolvedValue({ fullName: 'Applicant', member: null, membershipRequest: { status: 'PENDING' } });
+
+    const response = await meAs({ personId: 12, memberId: null });
+
+    expect(response.data).toMatchObject({ memberId: null, membershipRequestPending: true });
   });
 
   it('hides committees and roles of an inactive member', async () => {
