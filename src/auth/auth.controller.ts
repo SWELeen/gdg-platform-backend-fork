@@ -19,6 +19,7 @@ import { CompleteSetupPasswordDto, RequestSetupLinkDto, SetupPasswordDto } from 
 import { SignupDto } from './signup.dto.js';
 import { VerifySignupEmailDto } from './verify-signup-email.dto.js';
 import { ResendPersonalVerificationDto } from './resend-verification.dto.js';
+import { AuthRateLimit } from './auth-rate-limit.guard.js';
 
 @Controller()
 export class AuthController {
@@ -26,6 +27,10 @@ export class AuthController {
 
   @Post('auth/login')
   @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'login', dimension: 'ip', limit: 30, windowSeconds: 900 },
+    { scope: 'login', dimension: 'email', limit: 10, windowSeconds: 900 },
+  )
   async login(@Body() body: LoginDto, @Res({ passthrough: true }) response?: Response) {
     this.setSessionCookies(response, await this.auth.login(body));
     return apiSuccess({ authenticated: true });
@@ -33,17 +38,30 @@ export class AuthController {
 
   @Post('auth/check-email')
   @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'check-email', dimension: 'ip', limit: 60, windowSeconds: 60 },
+    { scope: 'check-email', dimension: 'email', limit: 10, windowSeconds: 60 },
+  )
   async checkEmail(@Body() body: CheckEmailDto) {
     return apiSuccess(await this.auth.checkEmail(body));
   }
 
   @Post('auth/signup')
+  @AuthRateLimit(
+    { scope: 'signup', dimension: 'ip', limit: 20, windowSeconds: 3600 },
+    { scope: 'signup', dimension: 'email', limit: 5, windowSeconds: 86400 },
+  )
   async signup(@Body() body: SignupDto) {
     return apiSuccess(await this.auth.signup(body));
   }
 
   @Post('auth/resend-personal-verification')
   @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'resend-verification', dimension: 'ip', limit: 20, windowSeconds: 3600 },
+    { scope: 'resend-verification-minute', dimension: 'email', limit: 1, windowSeconds: 60 },
+    { scope: 'resend-verification-hour', dimension: 'email', limit: 5, windowSeconds: 3600 },
+  )
   async resendPersonalVerification(@Body() body: ResendPersonalVerificationDto) {
     await this.auth.resendPersonalVerification(body.email);
     return apiSuccess({ sent: true });
@@ -51,6 +69,10 @@ export class AuthController {
 
   @Post('auth/verify-email')
   @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'verify-email', dimension: 'ip', limit: 30, windowSeconds: 3600 },
+    { scope: 'verify-email', dimension: 'email', limit: 5, windowSeconds: 600 },
+  )
   async verifySignupEmail(@Body() body: VerifySignupEmailDto, @Res({ passthrough: true }) response?: Response) {
     const result = await this.auth.verifySignupEmail(body.email, body.token);
     if ('accessToken' in result) {
@@ -62,6 +84,10 @@ export class AuthController {
 
   @Post('auth/refresh')
   @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'refresh', dimension: 'ip', limit: 600, windowSeconds: 300 },
+    { scope: 'refresh-token', dimension: 'refreshToken', limit: 60, windowSeconds: 300 },
+  )
   async refresh(@Req() request: Request, @Res({ passthrough: true }) response?: Response) {
     const refreshToken = this.cookieValue(request, 'gdg_refresh');
     if (!refreshToken) throw new UnauthorizedException();
@@ -71,12 +97,18 @@ export class AuthController {
 
   @Post('auth/logout')
   @HttpCode(200)
-  async logout(@Req() request: Request, @Res({ passthrough: true }) response?: Response) {
+  @AuthRateLimit({ scope: 'logout', dimension: 'ip', limit: 120, windowSeconds: 300 })
+  async logout(
+    @Req() request: Request & { verifiedAccessTokenExpiresAt?: number },
+    @Res({ passthrough: true }) response?: Response,
+  ) {
     const refreshToken = this.cookieValue(request, 'gdg_refresh');
-    const accessToken = this.cookieValue(request, 'gdg_access')
-      ?? (/^Bearer\s+(\S+)$/i.exec(request.headers.authorization ?? '')?.[1]);
+    const accessToken = (/^Bearer\s+(\S+)$/i.exec(request.headers.authorization ?? '')?.[1])
+      ?? this.cookieValue(request, 'gdg_access');
     try {
-      if (refreshToken || accessToken) await this.auth.logout(refreshToken, accessToken);
+      if (refreshToken || accessToken) {
+        await this.auth.logout(refreshToken, accessToken, request.verifiedAccessTokenExpiresAt);
+      }
     } finally {
       response?.clearCookie('gdg_access', { path: '/', sameSite: 'strict', secure: process.env.NODE_ENV === 'production' });
       response?.clearCookie('gdg_refresh', { path: '/auth', sameSite: 'strict', secure: process.env.NODE_ENV === 'production' });
@@ -86,6 +118,10 @@ export class AuthController {
 
   @Post('auth/setup-password/request')
   @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'setup-password-request', dimension: 'ip', limit: 20, windowSeconds: 3600 },
+    { scope: 'setup-password-request', dimension: 'email', limit: 3, windowSeconds: 3600 },
+  )
   async requestSetupLink(@Body() body: RequestSetupLinkDto) {
     await this.auth.requestSetupLink(body);
     return apiSuccess(null, 'A link to set your password was sent by email.');
@@ -93,6 +129,7 @@ export class AuthController {
 
   @Post('auth/setup-password')
   @HttpCode(200)
+  @AuthRateLimit({ scope: 'setup-password-legacy', dimension: 'ip', limit: 10, windowSeconds: 3600 })
   async setupPassword(
     @Req() request: { user?: RequestUser },
     @Body() body: SetupPasswordDto,
@@ -105,6 +142,10 @@ export class AuthController {
 
   @Post('auth/setup-password/complete')
   @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'setup-password-complete', dimension: 'ip', limit: 20, windowSeconds: 3600 },
+    { scope: 'setup-password-token', dimension: 'verificationToken', limit: 5, windowSeconds: 3600 },
+  )
   async completeSetupPassword(
     @Body() body: CompleteSetupPasswordDto,
   ) {

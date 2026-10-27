@@ -31,9 +31,15 @@ export class ConfirmationExpiryJob {
         });
       }
     } catch (error) {
+      const errorCode =
+        error && typeof error === 'object' && 'code' in error &&
+        typeof error.code === 'string'
+          ? error.code
+          : undefined;
       this.logger.error({
         event: 'registration_expiry_job_failed',
         error: error instanceof Error ? error.name : 'UNKNOWN',
+        ...(errorCode ? { errorCode } : {}),
       });
     } finally {
       this.running = false;

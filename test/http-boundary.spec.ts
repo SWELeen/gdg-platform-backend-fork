@@ -178,8 +178,8 @@ describe('HTTP error boundary', () => {
     },
     ...[413, 429, 503].map((status) => ({
       status,
-      code: 'HTTP_ERROR',
-      message: 'The request could not be completed.',
+      code: status === 429 ? 'TOO_MANY_REQUESTS' : 'HTTP_ERROR',
+      message: status === 429 ? 'Too many requests. Please try again later.' : 'The request could not be completed.',
     })),
   ])(
     'formats HTTP $status through AppModule registration',

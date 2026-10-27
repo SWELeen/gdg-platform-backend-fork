@@ -3,7 +3,6 @@ import {
   ConflictException,
   ForbiddenException,
   HttpException,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
@@ -80,6 +79,8 @@ const signupDeleteMany = vi.fn();
 const updateMany = vi.fn();
 const update = vi.fn();
 const deletePerson = vi.fn();
+const revokedUpsert = vi.fn();
+const revokedDeleteMany = vi.fn();
 const transaction = vi.fn();
 const cookie = vi.fn();
 const response = { cookie, clearCookie: vi.fn() };
@@ -95,6 +96,7 @@ const controller = new AuthController(
         delete: signupDelete,
         deleteMany: signupDeleteMany,
       },
+      revokedAuthToken: { upsert: revokedUpsert, deleteMany: revokedDeleteMany },
       $transaction: transaction,
     } as unknown as PrismaService,
     { getOrThrow: () => 'http://localhost:3000/en/reset-password' } as unknown as ConfigService,
@@ -451,12 +453,51 @@ describe('POST /auth/verify-email', () => {
 
 describe('POST /auth/refresh', () => {
   beforeEach(() => {
-    refreshSession.mockReset().mockResolvedValue({ data: { session: SESSION }, error: null });
+    refreshSession.mockReset().mockResolvedValue({ data: { session: SESSION, user: { id: 'linked-auth-user' } }, error: null });
+    findUnique.mockReset().mockResolvedValue({ isActive: true });
+    signOut.mockReset().mockResolvedValue({ error: null });
   });
 
   it('returns a refreshed Supabase session', async () => {
     await expect(controller.refresh({ headers: { cookie: 'gdg_refresh=refresh' } } as never, response as never)).resolves.toMatchObject({ data: { authenticated: true } });
     expect(refreshSession).toHaveBeenCalledWith({ refresh_token: 'refresh' });
+  });
+
+  it('rejects and revokes a refreshed session for an inactive local person', async () => {
+    refreshSession.mockResolvedValue({
+      data: { session: { ...SESSION, user: { id: 'inactive-auth-user' } }, user: { id: 'inactive-auth-user' } },
+      error: null,
+    });
+    findUnique.mockResolvedValue({ isActive: false });
+
+    await expect(controller.refresh({ headers: { cookie: 'gdg_refresh=refresh' } } as never, response as never))
+      .rejects.toThrow(UnauthorizedException);
+    expect(signOut).toHaveBeenCalledWith(SESSION.access_token, 'local');
+  });
+});
+
+describe('POST /auth/logout', () => {
+  it('revokes the bearer token through its verified JWT expiry and clears cookies', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 1800;
+    refreshSession.mockReset().mockResolvedValue({ data: { session: SESSION }, error: null });
+    revokedUpsert.mockReset().mockResolvedValue({});
+    revokedDeleteMany.mockReset().mockResolvedValue({ count: 0 });
+    signOut.mockReset().mockResolvedValue({ error: null });
+
+    await controller.logout({
+      headers: {
+        authorization: 'Bearer bearer-token',
+        cookie: 'gdg_access=cookie-token; gdg_refresh=refresh',
+      },
+      verifiedAccessTokenExpiresAt: expiresAt,
+    } as never, response as never);
+
+    expect(revokedUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ expiresAt: new Date(expiresAt * 1000) }),
+    }));
+    expect(response.clearCookie).toHaveBeenCalledWith('gdg_access', expect.anything());
+    expect(response.clearCookie).toHaveBeenCalledWith('gdg_refresh', expect.anything());
+    expect(signOut).toHaveBeenCalledWith(SESSION.access_token, 'local');
   });
 });
 
@@ -521,13 +562,15 @@ describe('POST /auth/setup-password/request', () => {
     expect(updateMany).not.toHaveBeenCalled();
   });
 
-  it('answers 404 for an email nobody has', async () => {
+  it('uses the same successful response for an email nobody has', async () => {
     findFirst.mockResolvedValue(null);
 
-    await expect(controller.requestSetupLink(body)).rejects.toThrow(
-      NotFoundException,
-    );
+    await expect(controller.requestSetupLink(body)).resolves.toMatchObject({
+      success: true,
+      data: null,
+    });
     expect(inviteUserByEmail).not.toHaveBeenCalled();
+    expect(resetPasswordForEmail).not.toHaveBeenCalled();
   });
 
   it('never links an existing supabase account by matching emails', async () => {
@@ -629,6 +672,45 @@ describe('POST /auth/setup-password', () => {
         { type: 'body', metatype: SetupPasswordDto },
       ),
     ).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('POST /auth/setup-password/complete', () => {
+  const body = { tokenHash: 'one-time-token-hash', type: 'invite' as const, password: 'new-password-1' };
+
+  beforeEach(() => {
+    verifyOtp.mockReset().mockResolvedValue({
+      data: {
+        user: { id: 'linked-auth-user', email_confirmed_at: new Date().toISOString() },
+        session: { access_token: 'recovery-access', refresh_token: 'recovery-refresh' },
+      },
+      error: null,
+    });
+    findUnique.mockReset().mockResolvedValue({ personId: 8, isActive: true });
+    setSession.mockReset().mockResolvedValue({ error: null });
+    updateUser.mockReset().mockResolvedValue({ data: { user: { id: 'linked-auth-user' } }, error: null });
+    updateMany.mockReset().mockResolvedValue({ count: 1 });
+  });
+
+  it('sets the password and synchronizes local email verification after a valid invite', async () => {
+    await expect(controller.completeSetupPassword(body)).resolves.toMatchObject({
+      data: { passwordUpdated: true },
+    });
+
+    expect(verifyOtp).toHaveBeenCalledWith({ token_hash: body.tokenHash, type: body.type });
+    expect(updateUser).toHaveBeenCalledWith({ password: body.password });
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { personId: 8, emailPersonalVerifiedAt: null },
+      data: { emailPersonalVerifiedAt: expect.any(Date) },
+    }));
+  });
+
+  it('rejects an inactive local account and does not change its password', async () => {
+    findUnique.mockResolvedValue({ personId: 8, isActive: false });
+
+    await expect(controller.completeSetupPassword(body)).rejects.toThrow(UnauthorizedException);
+    expect(updateUser).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });
 

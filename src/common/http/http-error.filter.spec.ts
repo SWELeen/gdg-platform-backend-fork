@@ -119,8 +119,8 @@ describe('HttpErrorFilter', () => {
     ...[413, 429, 503].map((status) => ({
       exception: new HttpException(secret, status),
       status,
-      code: 'HTTP_ERROR',
-      message: 'The request could not be completed.',
+      code: status === 429 ? 'TOO_MANY_REQUESTS' : 'HTTP_ERROR',
+      message: status === 429 ? 'Too many requests. Please try again later.' : 'The request could not be completed.',
     })),
   ])('formats $status as $code', ({ exception, status, code, message }) => {
     h.filter.catch(exception, h.host);
@@ -267,8 +267,8 @@ describe('HttpErrorFilter', () => {
     {
       status: 429,
       expose: false,
-      code: 'HTTP_ERROR',
-      message: 'The request could not be completed.',
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Too many requests. Please try again later.',
     },
     {
       status: 500,

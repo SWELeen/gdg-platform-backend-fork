@@ -7,7 +7,6 @@ import {
   Inject,
   Injectable,
   Logger,
-  NotFoundException,
   UnauthorizedException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -199,14 +198,25 @@ export class AuthService {
     const { data, error } = await this.client().auth.refreshSession({
       refresh_token: refreshToken,
     });
-    if (error || !data.session) throw new UnauthorizedException();
+    if (error || !data.session || !data.user) throw new UnauthorizedException();
+    const person = await this.prisma.person.findUnique({
+      where: { authUserId: data.user.id },
+      select: { isActive: true },
+    });
+    if (!person?.isActive) {
+      await this.admin().signOut(data.session.access_token, 'local');
+      throw new UnauthorizedException();
+    }
     return tokens(data.session);
   }
 
-  async logout(refreshToken?: string, accessToken?: string) {
+  async logout(refreshToken?: string, accessToken?: string, accessTokenExpiresAt?: number) {
     if (accessToken) {
       const tokenHash = createHash('sha256').update(accessToken).digest('hex');
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = accessTokenExpiresAt && accessTokenExpiresAt > now
+        ? new Date(accessTokenExpiresAt * 1000)
+        : new Date((now + 24 * 60 * 60) * 1000);
       await this.prisma.revokedAuthToken.upsert({
         where: { tokenHash },
         create: { tokenHash, expiresAt },
@@ -519,7 +529,8 @@ export class AuthService {
   // step 1: email them a link to choose a password
   async requestSetupLink({ email, locale = 'en' }: RequestSetupLinkDto) {
     const person = await this.findPersonByEmail(email);
-    if (!person) throw new NotFoundException();
+    // Keep account-recovery responses identical for known and unknown emails.
+    if (!person) return;
 
     // linked already = invite expired or password forgotten, a reset email does the same job
     if (person.authUserId) {
@@ -587,7 +598,7 @@ export class AuthService {
       stage = 'find_person';
       const person = await this.prisma.person.findUnique({
         where: { authUserId: data.user.id },
-        select: { isActive: true },
+        select: { personId: true, isActive: true },
       });
       if (!person?.isActive) throw new UnauthorizedException();
 
@@ -615,6 +626,13 @@ export class AuthService {
       }
       if (updateError?.status === 401 || updateError?.status === 403) throw new UnauthorizedException();
       if (updateError || !updated.user?.id) throw updateError ?? new UnauthorizedException();
+
+      // A valid invite/recovery token proves control of the personal address.
+      // Keep the local verification status aligned with Supabase Auth.
+      await this.prisma.person.updateMany({
+        where: { personId: person.personId, emailPersonalVerifiedAt: null },
+        data: { emailPersonalVerifiedAt: new Date() },
+      });
 
       return;
     } catch (error) {

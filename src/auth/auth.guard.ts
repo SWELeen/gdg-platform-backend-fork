@@ -21,6 +21,7 @@ interface AuthRequest {
   headers: { authorization?: string; cookie?: string; origin?: string };
   method: string;
   user?: RequestUser;
+  verifiedAccessTokenExpiresAt?: number;
 }
 
 // runs before every route, only works out who's calling. never blocks, routes that need a login check request.user
@@ -47,6 +48,7 @@ export class AuthGuard implements CanActivate {
 
     const identity = await this.verifier.verify(token);
     if (!identity) return true;
+    request.verifiedAccessTokenExpiresAt = identity.expiresAt;
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const revoked = await this.prisma.revokedAuthToken.findUnique({ where: { tokenHash }, select: { expiresAt: true } });
     if (revoked && revoked.expiresAt > new Date()) return true;

@@ -375,6 +375,16 @@ model RevokedAuthToken {
   @@map("revoked_auth_token")
 }
 
+model AuthRateLimitBucket {
+  bucketHash      String   @id @map("bucket_hash") @db.VarChar(64)
+  windowStartedAt DateTime @map("window_started_at") @db.Timestamptz(6)
+  requestCount    Int      @default(1) @map("request_count")
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([windowStartedAt])
+  @@map("auth_rate_limit_bucket")
+}
+
 model PersonEmailIdentity {
   personEmailIdentityId Int      @id @default(autoincrement()) @map("person_email_identity_id")
   personId              Int      @map("person_id")
