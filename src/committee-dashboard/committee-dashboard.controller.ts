@@ -17,6 +17,7 @@ import {
   CreateCommitteeEventDto,
   CreateCommitteeMemberDto,
   CreateCommitteeTaskDto,
+  ReviewCommitteeTaskDto,
   UpdateCommitteePointsDto,
   UpdateCommitteeTaskDto,
 } from './committee-dashboard.dto.js';
@@ -100,6 +101,17 @@ export class CommitteeDashboardController {
     @Body() body: UpdateCommitteeTaskDto,
   ) {
     return apiSuccess(await this.dashboard.updateTask(request.user, committeeCode, taskId, body));
+  }
+
+  @Post('tasks/:taskId/review')
+  @HttpCode(200)
+  async reviewTask(
+    @Req() request: { user?: RequestUser },
+    @Param('committeeCode') committeeCode: string,
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Body() body: ReviewCommitteeTaskDto,
+  ) {
+    return apiSuccess(await this.dashboard.reviewTask(request.user, committeeCode, taskId, body.decision));
   }
 
   @Delete('tasks/:taskId')

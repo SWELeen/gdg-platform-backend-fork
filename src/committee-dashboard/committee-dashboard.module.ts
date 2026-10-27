@@ -5,10 +5,11 @@ import { CommitteeDashboardController } from './committee-dashboard.controller.j
 import { DeveloperCommitteesDashboardController } from './developer-committees-dashboard.controller.js';
 import { ClubLeadershipDashboardController } from './club-leadership-dashboard.controller.js';
 import { CommitteeDashboardService } from './committee-dashboard.service.js';
+import { MyTasksController } from './my-tasks.controller.js';
 
 @Module({
   imports: [PrismaModule, RegistrationsModule],
-  controllers: [CommitteeDashboardController, DeveloperCommitteesDashboardController, ClubLeadershipDashboardController],
+  controllers: [CommitteeDashboardController, DeveloperCommitteesDashboardController, ClubLeadershipDashboardController, MyTasksController],
   providers: [CommitteeDashboardService],
 })
 export class CommitteeDashboardModule {}
