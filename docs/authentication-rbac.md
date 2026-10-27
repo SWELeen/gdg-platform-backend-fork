@@ -44,7 +44,7 @@ Code lives in `src/auth/`.
 
 The guard never rejects a request. No token, a bad or expired token, an unlinked account or a deactivated person all continue as a visitor with no `request.user`, so public pages keep working. Routes that need a login must return 401 when `request.user` is missing, and each route still checks its own permissions. If Supabase's keys can't be reached, the request fails with 500.
 
-**`GET /me`**: 401 without a login. Otherwise returns `personId`, `memberId`, `fullName`, `email`, `committees` (`code`, `name`, `position`) and `roles` (club roles current today, Saudi date). Inactive members get empty `committees` and `roles`.
+**`GET /me`**: 401 without a login. Otherwise returns `personId`, `memberId`, `fullName`, personal `email`, optional `universityEmail`, `phoneNumber`, `university`, `branch`, `college`, `major`, `level`, `gender`, `bio`, `profileImageUrl`, `joinDate`, `committees` (`code`, `name`, `position`), `roles` (club roles current today, Saudi date), and `membershipRequestPending`. College and level are read from the saved membership application or non-member registration data. Inactive members get empty `committees` and `roles`; fields not collected or not set are null.
 
 **Protecting a route** (`src/auth/current-user.ts`): `@UseGuards(AuthRequiredGuard)` returns 401 for visitors; `@CurrentUser()` gives `{ personId, memberId, email }`; `@OptionalUser()` gives the user or `null` on public routes. Each route checks its own permissions with `memberId` (for example against `member_committee` / `committee_permission`, like the registration review routes).
 
@@ -126,7 +126,7 @@ The following must be confirmed before coding the full auth system:
 - one shared Supabase project for development, so every backend trusts the same logins;
 - who sets up Swagger/OpenAPI for the project;
 - signup email verification: with "Confirm email" off, anyone can sign up with an email they don't own, which blocks the real owner and sends them our registration emails; decide whether signup must verify the email first;
-- optional signup fields from the Backend Workflow form (phone, university/student ID, college/major): not collected until the team says they're required;
+- optional signup/profile fields from the Backend Workflow form are collected only where present in the signup contract; no student or university ID is requested or exposed as a profile field;
 - check-email reveals whether an email is registered (part of the email-first login flow); confirm that's acceptable;
 - `SIGNUP_REQUIRED` is a proposed name; the task list only names `PASSWORD_REQUIRED` and `PASSWORD_SETUP_REQUIRED`;
 - which email column existing members log in with (`email_personal` or `email_university`); check-email and signup look in both for now;

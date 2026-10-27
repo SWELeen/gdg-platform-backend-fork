@@ -662,8 +662,18 @@ export class AuthService {
       where: { personId: user.personId },
       select: {
         fullName: true,
+        emailPersonal: true,
+        emailUniversity: true,
+        phoneNumber: true,
+        university: true,
+        branch: true,
+        major: true,
+        gender: true,
+        bio: true,
+        profileImageUrl: true,
         member: {
           select: {
+            joinDate: true,
             committees: {
               select: {
                 role: true,
@@ -684,18 +694,39 @@ export class AuthService {
             },
           },
         },
-        membershipRequest: { select: { status: true } },
+        membershipRequest: { select: { status: true, applicationData: true } },
+        nonMemberRegistration: { select: { applicationData: true } },
       },
     });
 
     // an inactive member sees the same as a non-member
     const member = user.memberId ? person.member : null;
+    const applicationData = (
+      person.membershipRequest?.applicationData ??
+      person.nonMemberRegistration?.applicationData ??
+      {}
+    ) as Record<string, unknown>;
+    const applicationText = (key: string) =>
+      typeof applicationData[key] === 'string' && applicationData[key].trim()
+        ? applicationData[key].trim()
+        : null;
 
     return {
       personId: user.personId,
       memberId: user.memberId,
       fullName: person.fullName,
-      email: user.email ?? null,
+      email: person.emailPersonal ?? user.email ?? null,
+      universityEmail: person.emailUniversity,
+      phoneNumber: person.phoneNumber,
+      university: person.university,
+      branch: person.branch,
+      college: applicationText('college'),
+      major: person.major,
+      level: applicationText('level'),
+      gender: person.gender,
+      bio: person.bio,
+      profileImageUrl: person.profileImageUrl,
+      joinDate: member?.joinDate ?? null,
       committees:
         member?.committees.map(({ role, committee }) => ({
           code: committee.committeeCode,

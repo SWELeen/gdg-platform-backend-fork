@@ -147,7 +147,10 @@ export class RegistrationListService {
         registrationId: row.registrationId,
         name: row.person.fullName,
         email: row.person.emailPersonal ?? row.person.emailUniversity,
-        profile: registrantProfile(row.person, event.requiredRegistrantFields),
+        profile: registrantProfile(
+          row.person,
+          event.requiredRegistrantFields.filter((field) => field !== 'universityId'),
+        ),
         status: row.status,
         registeredAt: row.registeredAt,
         waitlistPosition: row.waitlistPosition,

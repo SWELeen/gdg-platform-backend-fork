@@ -60,8 +60,12 @@ function isRegistrationOpen(event: PublicEvent, now = new Date()): boolean {
 }
 
 function toPublicEvent(event: PublicEvent) {
-  const { status: _status, ...fields } = event;
-  return { ...fields, registrationOpen: isRegistrationOpen(event) };
+  const { status: _status, requiredRegistrantFields, ...fields } = event;
+  return {
+    ...fields,
+    requiredRegistrantFields: requiredRegistrantFields.filter((field) => field !== 'universityId'),
+    registrationOpen: isRegistrationOpen(event),
+  };
 }
 
 @Injectable()

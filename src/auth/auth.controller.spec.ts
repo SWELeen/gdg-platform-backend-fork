@@ -716,7 +716,21 @@ describe('POST /auth/setup-password/complete', () => {
 
 const NOURA = {
   fullName: 'Noura Demo',
+  emailPersonal: 'noura@example.test',
+  emailUniversity: 'noura@university.example',
+  phoneNumber: '+966500000000',
+  university: 'University of Jeddah',
+  branch: 'Main Campus',
+  major: 'Software Engineering',
+  gender: 'female',
+  bio: null,
+  profileImageUrl: null,
+  membershipRequest: {
+    status: 'APPROVED',
+    applicationData: { college: 'College of Computer Science', level: 'Third Year' },
+  },
   member: {
+    joinDate: new Date('2025-09-01T00:00:00.000Z'),
     committees: [
       {
         role: 'Leader',
@@ -760,6 +774,17 @@ describe('GET /me', () => {
         memberId: 10000005,
         fullName: 'Noura Demo',
         email: 'noura@example.test',
+        universityEmail: 'noura@university.example',
+        phoneNumber: '+966500000000',
+        university: 'University of Jeddah',
+        branch: 'Main Campus',
+        college: 'College of Computer Science',
+        major: 'Software Engineering',
+        level: 'Third Year',
+        gender: 'female',
+        bio: null,
+        profileImageUrl: null,
+        joinDate: new Date('2025-09-01T00:00:00.000Z'),
         committees: [{ code: 'DATA', name: 'Data', position: 'Leader' }],
         roles: ['ADVISOR'],
         membershipRequestPending: false,
@@ -768,7 +793,22 @@ describe('GET /me', () => {
   });
 
   it('returns no committees or roles for someone who is not a member', async () => {
-    findUniqueOrThrow.mockResolvedValue({ fullName: 'Visitor', member: null });
+    findUniqueOrThrow.mockResolvedValue({
+      ...NOURA,
+      fullName: 'Visitor',
+      emailPersonal: null,
+      emailUniversity: null,
+      phoneNumber: null,
+      university: null,
+      branch: null,
+      major: null,
+      gender: null,
+      bio: null,
+      profileImageUrl: null,
+      member: null,
+      membershipRequest: null,
+      nonMemberRegistration: null,
+    });
 
     const response = await meAs({ personId: 11, memberId: null });
 
@@ -777,6 +817,17 @@ describe('GET /me', () => {
       memberId: null,
       fullName: 'Visitor',
       email: null,
+      universityEmail: null,
+      phoneNumber: null,
+      university: null,
+      branch: null,
+      college: null,
+      major: null,
+      level: null,
+      gender: null,
+      bio: null,
+      profileImageUrl: null,
+      joinDate: null,
       committees: [],
       roles: [],
       membershipRequestPending: false,
