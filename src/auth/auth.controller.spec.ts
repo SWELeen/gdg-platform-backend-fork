@@ -381,6 +381,37 @@ describe('POST /auth/signup', () => {
     expect(signupCreate).not.toHaveBeenCalled();
   });
 
+  it('preserves committee-specific skill selections in applicationData', async () => {
+    const transformed = await new ApiValidationPipe().transform({
+      ...body,
+      registrationType: 'MEMBER',
+      applicationData: {
+        phoneNumber: '+966500000000',
+        university: 'University of Jeddah',
+        college: 'College of Computer Science and Engineering',
+        major: 'Computer Science',
+        level: 'Level 4',
+        gender: 'female',
+        skillsByCommittee: {
+          DATA: ['SQL', 'Python'],
+          PM: ['Planning', 'Documentation'],
+        },
+      },
+      committees: [{ committeeCode: 'DATA', requestedRole: 'Member' }],
+    }, {
+      type: 'body',
+      metatype: SignupDto,
+    });
+
+    expect(transformed.applicationData).toMatchObject({
+      phoneNumber: '+966500000000',
+      skillsByCommittee: {
+        DATA: ['SQL', 'Python'],
+        PM: ['Planning', 'Documentation'],
+      },
+    });
+  });
+
   it.each([
     { name: 'blank fullName', input: { ...body, fullName: '   ' } },
     { name: 'short password', input: { ...body, password: 'short' } },
