@@ -487,7 +487,7 @@ export class AuthService {
   }
 
   private verificationHash(personId: number | string, code: string, purpose: string) {
-    return createHmac('sha256', this.config.getOrThrow<string>('SUPABASE_SECRET_KEY'))
+    return createHmac('sha256', this.config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY'))
       .update(`${personId}:${purpose}:${code}`).digest('hex');
   }
 
@@ -813,7 +813,7 @@ export class AuthService {
 
   // secret key client, only for deleting/inviting accounts, nobody logs in here
   private admin() {
-    this.supabaseAdmin ??= this.connect('SUPABASE_SECRET_KEY');
+    this.supabaseAdmin ??= this.connect('SUPABASE_SERVICE_ROLE_KEY');
     return this.supabaseAdmin.auth.admin;
   }
 
