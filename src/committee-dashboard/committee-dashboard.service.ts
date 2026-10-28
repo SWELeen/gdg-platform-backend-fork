@@ -5,6 +5,8 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { EventStatus, Prisma, QuestionType } from '../generated/prisma/client.js';
 import { apiValidationError, type ApiErrorDetail } from '../common/http/api-response.js';
@@ -12,6 +14,8 @@ import type { RequestUser } from '../auth/auth.guard.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { DEVELOPER_COMMITTEES_CODE } from '../committees/committee-catalog.js';
 import { CommitteeAccessService } from '../registrations/committee-access.service.js';
+import { SEAT_HOLDING_STATUSES } from '../registrations/event-seats.js';
+import { CommitteeEventImageStorageService } from './committee-event-image-storage.service.js';
 import {
   AddMemberToCommitteeDto,
   CreateCommitteeEventDto,
@@ -20,6 +24,7 @@ import {
   MEMBER_TASK_STATUSES,
   CreateCommitteeTaskDto,
   UpdateCommitteePointsDto,
+  UpdateCommitteeEventDto,
   UpdateCommitteeTaskDto,
 } from './committee-dashboard.dto.js';
 
@@ -37,6 +42,8 @@ export class CommitteeDashboardService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(CommitteeAccessService)
     private readonly access: CommitteeAccessService,
+    @Inject(CommitteeEventImageStorageService)
+    @Optional() private readonly eventImageStorage?: CommitteeEventImageStorageService,
   ) {}
 
   async getDeveloperOverview(user: RequestUser | undefined) {
@@ -143,7 +150,7 @@ export class CommitteeDashboardService {
       members: mappedMembers,
       events: (events as any[]).map((event: any) => ({
         id: String(event.eventId), title: event.name, date: event.startsAt.toISOString(), endsAt: event.endsAt.toISOString(),
-        location: event.location, status: event.status, registered: event._count.registrations,
+        location: event.location, imageUrl: event.imageUrl, status: event.status, registered: event._count.registrations,
         confirmed: 0, checkedIn: 0, capacity: event.capacity, createdAt: event.createdAt.toISOString(),
       })),
       tasks: (tasks as any[]).map((task: any) => ({
@@ -323,6 +330,7 @@ export class CommitteeDashboardService {
         eventType: event.eventType,
         endsAt: event.endsAt.toISOString(),
         location: event.location,
+        imageUrl: event.imageUrl,
         status: event.status,
         registered: event._count.registrations,
         confirmed: (registrationGroups as any[]).filter((group: any) => group.eventId === event.eventId && ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(group.status)).reduce((sum: number, group: any) => sum + group._count._all, 0),
@@ -443,6 +451,7 @@ export class CommitteeDashboardService {
         location: dto.location.trim(),
         mapsLink: dto.mapsLink?.trim() || null,
         capacity: dto.capacity,
+        imageUrl: dto.imageUrl?.trim() || null,
         speakers: dto.speakers?.trim() || null,
         requirements: dto.requirements?.trim() || null,
         requiredRegistrantFields: [...new Set(dto.requiredRegistrantFields ?? [])],
@@ -463,6 +472,14 @@ export class CommitteeDashboardService {
       select: { eventId: true, name: true, status: true, startsAt: true, registrationDeadline: true },
     });
     return { id: String(event.eventId), ...event };
+  }
+
+  async uploadEventImage(user: RequestUser | undefined, committeeCode: string, file: { buffer: Buffer; mimetype: string; size: number } | undefined) {
+    const { committee, memberId } = await this.requireMembership(user, committeeCode);
+    await this.requirePermission(memberId, EVENTS_PERMISSION, committee.committeeId);
+    if (!file) throw new BadRequestException('An image file is required.');
+    if (!this.eventImageStorage) throw new ServiceUnavailableException('Event image storage is unavailable.');
+    return this.eventImageStorage.upload(file);
   }
 
   // Full details of one of the committee's events, drafts included, for the people who create them.
@@ -487,6 +504,119 @@ export class CommitteeDashboardService {
       ...event,
       requiredRegistrantFields: event.requiredRegistrantFields.filter((field: string) => field !== 'universityId'),
     };
+  }
+
+  async updateEvent(user: RequestUser | undefined, committeeCode: string, eventId: number, dto: UpdateCommitteeEventDto) {
+    const { committee, memberId } = await this.requireMembership(user, committeeCode);
+    await this.requirePermission(memberId, EVENTS_PERMISSION, committee.committeeId);
+    const existing = await this.prisma.event.findFirst({
+      where: { eventId, committeeId: committee.committeeId },
+      select: {
+        startsAt: true,
+        endsAt: true,
+        registrationDeadline: true,
+        questions: {
+          orderBy: { position: 'asc' },
+          select: { questionText: true, questionType: true, isRequired: true, position: true, options: true },
+        },
+      },
+    });
+    if (!existing) throw new NotFoundException();
+
+    const questions = (dto.questions ?? []).map((question) => ({
+      ...question,
+      text: question.text.trim(),
+      options: question.type === 'TEXT' ? [] : [...new Set((question.options ?? []).map((option) => option.trim()).filter(Boolean))],
+    }));
+    const questionErrors: ApiErrorDetail[] = [];
+    questions.forEach((question, index) => {
+      if (!question.text) questionErrors.push({ pointer: `/questions/${index}/text`, message: 'Question text is required.' });
+      if (question.type !== 'TEXT' && question.options.length < 2) {
+        questionErrors.push({ pointer: `/questions/${index}/options`, message: 'Choice questions need at least two different options.' });
+      }
+    });
+    if (questionErrors.length) throw apiValidationError(questionErrors);
+    const questionsChanged = dto.questions !== undefined && (
+      existing.questions.length !== questions.length || questions.some((question, index) => {
+        const current = existing.questions[index];
+        if (!current) return true;
+        const currentOptions = Array.isArray(current.options) ? current.options : [];
+        return current.questionText !== question.text
+          || current.questionType !== QuestionType[question.type]
+          || current.isRequired !== question.required
+          || current.position !== index + 1
+          || JSON.stringify(currentOptions) !== JSON.stringify(question.options);
+      })
+    );
+
+    const startsAt = dto.startsAt === undefined ? existing.startsAt : new Date(dto.startsAt);
+    const endsAt = dto.endsAt === undefined ? existing.endsAt : new Date(dto.endsAt);
+    const registrationDeadline = dto.registrationDeadline === undefined
+      ? existing.registrationDeadline
+      : new Date(dto.registrationDeadline);
+    const errors: ApiErrorDetail[] = [];
+    if (endsAt.getTime() <= startsAt.getTime()) errors.push({ pointer: '/endsAt', message: 'The event must end after it starts.' });
+    if (registrationDeadline.getTime() > startsAt.getTime()) errors.push({ pointer: '/registrationDeadline', message: 'Registration must close before the event starts.' });
+    if (errors.length) throw apiValidationError(errors);
+
+    const event = await this.prisma.$transaction(async (transaction) => {
+      const locked = await transaction.$queryRaw<Array<{ eventId: number; status: EventStatus }>>`
+        SELECT event_id AS "eventId", status
+        FROM events
+        WHERE event_id = ${eventId} AND committee_id = ${committee.committeeId}
+        FOR UPDATE
+      `;
+      if (!locked.length) throw new NotFoundException();
+      if (locked[0].status === EventStatus.PUBLISHED) {
+        const attemptedFields = Object.keys(dto).filter((field) => field !== 'registrationDeadline');
+        if (attemptedFields.length > 0) {
+          throw new BadRequestException('Only the registration deadline can be changed after an event is published.');
+        }
+      }
+      if (questionsChanged) {
+        const registrationCount = await transaction.eventRegistration.count({ where: { eventId } });
+        if (registrationCount > 0) throw new ConflictException('Registration questions cannot be changed after people register.');
+      }
+      if (dto.capacity !== undefined) {
+        const heldSeats = await transaction.eventRegistration.count({
+          where: { eventId, status: { in: SEAT_HOLDING_STATUSES } },
+        });
+        if (dto.capacity < heldSeats) {
+          throw apiValidationError([{ pointer: '/capacity', message: `Capacity cannot be lower than the ${heldSeats} seats already held.` }]);
+        }
+      }
+      return transaction.event.update({
+        where: { eventId },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+          ...(dto.description !== undefined ? { description: dto.description.trim() } : {}),
+          ...(dto.eventType !== undefined ? { eventType: dto.eventType } : {}),
+          ...(dto.startsAt !== undefined ? { startsAt } : {}),
+          ...(dto.endsAt !== undefined ? { endsAt } : {}),
+          ...(dto.registrationDeadline !== undefined ? { registrationDeadline } : {}),
+          ...(dto.location !== undefined ? { location: dto.location.trim() } : {}),
+          ...(dto.capacity !== undefined ? { capacity: dto.capacity } : {}),
+          ...(dto.mapsLink !== undefined ? { mapsLink: dto.mapsLink?.trim() || null } : {}),
+          ...(dto.speakers !== undefined ? { speakers: dto.speakers.trim() || null } : {}),
+          ...(dto.requirements !== undefined ? { requirements: dto.requirements.trim() || null } : {}),
+          ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl?.trim() || null } : {}),
+          ...(questionsChanged ? {
+            questions: {
+              deleteMany: {},
+              create: questions.map((question, index) => ({
+                questionText: question.text,
+                questionType: QuestionType[question.type],
+                isRequired: question.required,
+                position: index + 1,
+                options: question.type === 'TEXT' ? Prisma.DbNull : question.options,
+              })),
+            },
+          } : {}),
+        },
+        select: { eventId: true, name: true, status: true, startsAt: true, endsAt: true, location: true, capacity: true, updatedAt: true },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+    return { id: String(event.eventId), ...event };
   }
 
   // Only drafts can be deleted: nobody can register for a draft, so no registration is lost.
