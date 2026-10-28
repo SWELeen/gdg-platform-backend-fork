@@ -13,13 +13,15 @@ const prisma = {
   $transaction: vi.fn((callback: (arg: typeof tx) => unknown) => callback(tx)),
 } as unknown as PrismaService;
 const access = { hasCommitteePermission, hasGlobalPermission } as unknown as CommitteeAccessService;
-const service = new MembershipRequestService(prisma, access);
+const emailService = { sendDecisionEmail: vi.fn().mockResolvedValue(undefined) };
+const service = new MembershipRequestService(prisma, access, emailService as any);
 const actor = { personId: 8, memberId: 17 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   hasCommitteePermission.mockResolvedValue(true);
   hasGlobalPermission.mockResolvedValue(true);
+  emailService.sendDecisionEmail.mockResolvedValue(undefined);
   findUniqueCommittee.mockResolvedValue({ committeeId: 3 });
   tx.$queryRaw = vi.fn().mockResolvedValue([{ membership_request_id: 40 }]);
   tx.membershipRequestCommittee = {
@@ -107,6 +109,12 @@ describe('MembershipRequestService.decide', () => {
       where: { membershipRequestId: 40 },
       data: { status: 'PENDING' },
     });
+    expect(emailService.sendDecisionEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'noura@example.test',
+      decision: 'APPROVED',
+      committeeName: 'Data',
+      roleName: 'Leader',
+    }));
     expect(result).toMatchObject({
       status: 'PENDING',
       committeeDecision: { committeeCode: 'DATA', status: 'APPROVED' },
@@ -259,7 +267,7 @@ describe('MembershipRequestService approval routing', () => {
       membershipRequestGlobalRole: { findMany: vi.fn().mockResolvedValue([]) },
       memberCommittee: tx.memberCommittee,
       memberRole: tx.memberRole,
-    } as unknown as PrismaService, access);
+    } as unknown as PrismaService, access, emailService as any);
 
     const result = await listing.listLeadership('CLUB', actor);
 

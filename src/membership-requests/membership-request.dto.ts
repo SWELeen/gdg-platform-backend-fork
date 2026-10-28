@@ -4,6 +4,7 @@ import {
   IsArray,
   IsEmail,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -47,6 +48,10 @@ export class MembershipApplicationDataDto {
 
   @IsIn(['female', 'male'])
   gender: string;
+
+  @IsOptional()
+  @IsObject()
+  skillsByCommittee?: Record<string, string[]>;
 }
 
 export class MembershipCommitteeApplicationDto {

@@ -42,24 +42,24 @@ export class CommitteeDashboardService {
   async getDeveloperOverview(user: RequestUser | undefined) {
     if (!user?.memberId) throw new ForbiddenException();
     if (!(await this.access.hasGlobalPermission(user.memberId, 'developer_committees.dashboard.view'))) throw new ForbiddenException();
-    const committees = await this.prisma.committee.findMany({
+    const committees = (await this.prisma.committee.findMany({
       where: { parent: { committeeCode: DEVELOPER_COMMITTEES_CODE } },
       select: { committeeId: true, committeeCode: true, committeeName: true, _count: { select: { members: true } } },
       orderBy: { committeeName: 'asc' },
-    });
-    const leaders = await this.prisma.memberCommittee.groupBy({
+    })) as Array<{ committeeId: number; committeeCode: string; committeeName: string; _count: { members: number } }>;
+    const leaders = (await (this.prisma.memberCommittee as any).groupBy({
       by: ['committeeId'],
       where: { committeeId: { in: committees.map(({ committeeId }) => committeeId) }, role: { in: ['Leader', 'Co-Leader'] }, member: { isActive: true } },
       _count: { _all: true },
-    });
-    const activeTasks = await Promise.all(committees.map((committee) => this.prisma.committeeTask.count({
+    })) as Array<{ committeeId: number; _count: { _all: number } }>;
+    const activeTasks = await Promise.all(committees.map((committee: any) => this.prisma.committeeTask.count({
       where: { committeeId: committee.committeeId, status: { in: ACTIVE_TASK_STATUSES } },
     })));
-    return committees.map((committee, index) => ({
+    return committees.map((committee: any, index: number) => ({
       code: committee.committeeCode,
       name: committee.committeeName,
       memberCount: committee._count.members,
-      leaderCount: leaders.find((row) => row.committeeId === committee.committeeId)?._count._all ?? 0,
+      leaderCount: leaders.find((row: any) => row.committeeId === committee.committeeId)?._count._all ?? 0,
       activeTaskCount: activeTasks[index],
     }));
   }
@@ -67,7 +67,7 @@ export class CommitteeDashboardService {
   async getClubLeadershipOverview(user: RequestUser | undefined) {
     if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, 'club.dashboard.view'))) throw new ForbiddenException();
     const today = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }));
-    const [person, members, tasks, points, pointTotals, monthPoints, completedTasks, activeTasks, tasksDueThisWeek, events, registrationGroups, committees, committeePointTotals, canAddMembers] = await Promise.all([
+    const [person, members, tasks, points, pointTotals, monthPoints, completedTasks, activeTasks, tasksDueThisWeek, events, registrationGroups, committees, committeePointTotals, canAddMembers]: any[] = await Promise.all([
       this.prisma.person.findUnique({ where: { personId: user.personId }, select: { fullName: true } }),
       this.prisma.member.findMany({
         where: { isActive: true, person: { isActive: true } },
@@ -94,34 +94,34 @@ export class CommitteeDashboardService {
         },
         orderBy: [{ createdAt: 'desc' }, { pointEntryId: 'desc' }], take: 200,
       }),
-      this.prisma.committeePointEntry.groupBy({ by: ['memberId'], _sum: { pointsDelta: true } }),
+      (this.prisma.committeePointEntry as any).groupBy({ by: ['memberId'], _sum: { pointsDelta: true } }),
       this.prisma.committeePointEntry.aggregate({ where: { createdAt: { gte: riyadhPeriodStart(new Date(), 'month') } }, _sum: { pointsDelta: true } }),
-      this.prisma.committeeTask.groupBy({ by: ['assignedMemberId'], where: { status: CommitteeTaskStatus.COMPLETED }, _count: { _all: true } }),
+      (this.prisma.committeeTask as any).groupBy({ by: ['assignedMemberId'], where: { status: CommitteeTaskStatus.COMPLETED }, _count: { _all: true } }),
       this.prisma.committeeTask.count({ where: { status: { in: ACTIVE_TASK_STATUSES } } }),
       this.prisma.committeeTask.count({ where: { status: { in: ACTIVE_TASK_STATUSES }, dueAt: { gte: riyadhPeriodStart(new Date(), 'week'), lt: new Date(riyadhPeriodStart(new Date(), 'week').getTime() + 7 * 86400000) } } }),
       this.prisma.event.findMany({
         include: { _count: { select: { registrations: true } } },
         orderBy: { startsAt: 'asc' },
       }),
-      this.prisma.eventRegistration.groupBy({ by: ['status'], _count: { _all: true } }),
+      (this.prisma.eventRegistration as any).groupBy({ by: ['status'], _count: { _all: true } }),
       this.prisma.committee.findMany({ select: { committeeCode: true, committeeName: true }, orderBy: { committeeName: 'asc' } }),
-      this.prisma.committeePointEntry.groupBy({ by: ['memberId', 'committeeId'], _sum: { pointsDelta: true } }),
+      (this.prisma.committeePointEntry as any).groupBy({ by: ['memberId', 'committeeId'], _sum: { pointsDelta: true } }),
       this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION),
     ]);
-    const memberPoints = new Map(pointTotals.map((row) => [row.memberId, row._sum.pointsDelta ?? 0]));
-    const memberCommitteePoints = new Map(committeePointTotals.map((row) => [`${row.memberId}:${row.committeeId}`, row._sum.pointsDelta ?? 0]));
-    const memberCompletedTasks = new Map(completedTasks.map((row) => [row.assignedMemberId, row._count._all]));
-    const mappedMembers = members.map((member) => ({
+    const memberPoints = new Map((pointTotals as any[]).map((row: any) => [row.memberId, row._sum.pointsDelta ?? 0]));
+    const memberCommitteePoints = new Map((committeePointTotals as any[]).map((row: any) => [`${row.memberId}:${row.committeeId}`, row._sum.pointsDelta ?? 0]));
+    const memberCompletedTasks = new Map((completedTasks as any[]).map((row: any) => [row.assignedMemberId, row._count._all]));
+    const mappedMembers = (members as any[]).map((member: any) => ({
       id: String(member.memberId), name: member.person.fullName,
       email: member.person.emailUniversity ?? member.person.emailPersonal ?? '',
-      role: [...new Set([...member.committees.map(({ role }) => role), ...member.roleAssignments.map(({ roleCode }) => roleCode)])].join(' / ') || 'Member',
+      role: [...new Set([...member.committees.map(({ role }: { role: string }) => role), ...member.roleAssignments.map(({ roleCode }: { roleCode: string }) => roleCode)])].join(' / ') || 'Member',
       status: 'Active' as const, points: memberPoints.get(member.memberId) ?? 0,
       tasksCompleted: memberCompletedTasks.get(member.memberId) ?? 0, lastActivity: null,
-      committees: member.committees.map(({ role, committeeId, committee }) => ({
+      committees: member.committees.map(({ role, committeeId, committee }: { role: string; committeeId: number; committee: any }) => ({
         code: committee.committeeCode, name: committee.committeeName, role,
         points: memberCommitteePoints.get(`${member.memberId}:${committeeId}`) ?? 0,
       })),
-      globalRoles: member.roleAssignments.map(({ roleCode }) => roleCode),
+      globalRoles: member.roleAssignments.map(({ roleCode }: { roleCode: string }) => roleCode),
     }));
     const now = new Date();
     return {
@@ -129,31 +129,31 @@ export class CommitteeDashboardService {
       currentMember: user.memberId ? { id: String(user.memberId), name: person?.fullName ?? '', role: 'Club Leadership' } : null,
       stats: {
         committeeMembers: mappedMembers.length, activeMembers: mappedMembers.length, awayMembers: 0,
-        upcomingEvents: events.filter((event) => event.status === 'PUBLISHED' && event.startsAt >= now).length,
-        upcomingEventsInNext30Days: events.filter((event) => event.status === 'PUBLISHED' && event.startsAt >= now && event.startsAt < new Date(now.getTime() + 30 * 86400000)).length,
-        totalPoints: [...memberPoints.values()].reduce((sum, value) => sum + value, 0), pointsThisMonth: monthPoints._sum.pointsDelta ?? 0,
+        upcomingEvents: (events as any[]).filter((event: any) => event.status === 'PUBLISHED' && event.startsAt >= now).length,
+        upcomingEventsInNext30Days: (events as any[]).filter((event: any) => event.status === 'PUBLISHED' && event.startsAt >= now && event.startsAt < new Date(now.getTime() + 30 * 86400000)).length,
+        totalPoints: [...memberPoints.values()].reduce((sum: number, value: number) => sum + value, 0), pointsThisMonth: monthPoints._sum.pointsDelta ?? 0,
         activeTasks, tasksDueThisWeek, eventsCreated: events.length,
-        eventsPublishedThisYear: events.filter((event) => event.status === 'PUBLISHED' && event.createdAt.getUTCFullYear() === now.getUTCFullYear()).length,
-        pendingRegistrations: registrationGroups.find(({ status }) => status === 'PENDING')?._count._all ?? 0,
-        acceptedRegistrations: registrationGroups.filter(({ status }) => ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(status)).reduce((sum, row) => sum + row._count._all, 0),
-        rejectedRegistrations: registrationGroups.filter(({ status }) => ['REJECTED', 'NOT_SELECTED'].includes(status)).reduce((sum, row) => sum + row._count._all, 0),
+        eventsPublishedThisYear: (events as any[]).filter((event: any) => event.status === 'PUBLISHED' && event.createdAt.getUTCFullYear() === now.getUTCFullYear()).length,
+        pendingRegistrations: (registrationGroups as any[]).find(({ status }: { status: string }) => status === 'PENDING')?._count._all ?? 0,
+        acceptedRegistrations: (registrationGroups as any[]).filter(({ status }: { status: string }) => ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(status)).reduce((sum: number, row: any) => sum + row._count._all, 0),
+        rejectedRegistrations: (registrationGroups as any[]).filter(({ status }: { status: string }) => ['REJECTED', 'NOT_SELECTED'].includes(status)).reduce((sum: number, row: any) => sum + row._count._all, 0),
       },
       permissions: { canManageTasks: false, canManagePoints: false, canManageRegistrations: false, canAddMembers },
-      committees: committees.map(({ committeeCode, committeeName }) => ({ code: committeeCode, name: committeeName })),
+      committees: (committees as any[]).map(({ committeeCode, committeeName }: { committeeCode: string; committeeName: string }) => ({ code: committeeCode, name: committeeName })),
       members: mappedMembers,
-      events: events.map((event) => ({
+      events: (events as any[]).map((event: any) => ({
         id: String(event.eventId), title: event.name, date: event.startsAt.toISOString(), endsAt: event.endsAt.toISOString(),
         location: event.location, status: event.status, registered: event._count.registrations,
         confirmed: 0, checkedIn: 0, capacity: event.capacity, createdAt: event.createdAt.toISOString(),
       })),
-      tasks: tasks.map((task) => ({
+      tasks: (tasks as any[]).map((task: any) => ({
         id: String(task.taskId), title: task.title, description: task.description,
         assignedMemberId: String(task.assignedMemberId), assignedMemberName: task.assignee.member.person.fullName,
         createdByMemberId: String(task.createdByMemberId), dueAt: task.dueAt.toISOString(), priority: task.priority,
         status: task.status, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
         committeeCode: task.committee.committeeCode, committeeName: task.committee.committeeName,
       })),
-      pointHistory: points.map((entry) => ({
+      pointHistory: (points as any[]).map((entry: any) => ({
         id: String(entry.pointEntryId), memberId: String(entry.memberId), memberName: entry.recipient.member.person.fullName,
         pointsDelta: entry.pointsDelta, reason: entry.reason, createdAt: entry.createdAt.toISOString(),
         committeeCode: entry.recipient.committee.committeeCode, committeeName: entry.recipient.committee.committeeName,
@@ -195,72 +195,71 @@ export class CommitteeDashboardService {
     const monthStart = riyadhPeriodStart(now, 'month');
     const weekStart = riyadhPeriodStart(now, 'week');
 
-    const [memberships, events, tasks, pointEntries, pointTotals, registrationGroups, checkInGroups, totalPoints, pointsThisMonth, tasksDueThisWeek] =
-      await Promise.all([
-        this.prisma.memberCommittee.findMany({
-          where: { committeeId: committee.committeeId },
-          include: { member: { include: { person: true } } },
-          orderBy: [{ role: 'asc' }, { member: { person: { fullName: 'asc' } } }],
-        }),
-        this.prisma.event.findMany({
-          where: { committeeId: committee.committeeId },
-          include: {
-            _count: {
-              select: {
-                registrations: true,
-              },
+    const [memberships, events, tasks, pointEntries, pointTotals, registrationGroups, checkInGroups, totalPoints, pointsThisMonth, tasksDueThisWeek]: any[] = await Promise.all([
+      this.prisma.memberCommittee.findMany({
+        where: { committeeId: committee.committeeId },
+        include: { member: { include: { person: true } } },
+        orderBy: [{ role: 'asc' }, { member: { person: { fullName: 'asc' } } }],
+      }),
+      this.prisma.event.findMany({
+        where: { committeeId: committee.committeeId },
+        include: {
+          _count: {
+            select: {
+              registrations: true,
             },
           },
-          orderBy: { startsAt: 'asc' },
-        }),
-        this.prisma.committeeTask.findMany({
-          where: { committeeId: committee.committeeId },
-          include: { assignee: { include: { member: { include: { person: true } } } } },
-          orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }],
-        }),
-        this.prisma.committeePointEntry.findMany({
-          where: { committeeId: committee.committeeId },
-          include: { recipient: { include: { member: { include: { person: true } } } } },
-          orderBy: [{ createdAt: 'desc' }, { pointEntryId: 'desc' }],
-          take: 50,
-        }),
-        this.prisma.committeePointEntry.groupBy({
-          by: ['memberId'],
-          where: { committeeId: committee.committeeId },
-          _sum: { pointsDelta: true },
-        }),
-        this.prisma.eventRegistration.groupBy({
-          by: ['eventId', 'status'],
-          where: { event: { committeeId: committee.committeeId } },
-          _count: { _all: true },
-        }),
-        this.prisma.eventRegistration.groupBy({
-          by: ['eventId'],
-          where: { event: { committeeId: committee.committeeId }, checkedInAt: { not: null } },
-          _count: { _all: true },
-        }),
-        this.prisma.committeePointEntry.aggregate({
-          where: { committeeId: committee.committeeId },
-          _sum: { pointsDelta: true },
-        }),
-        this.prisma.committeePointEntry.aggregate({
-          where: { committeeId: committee.committeeId, createdAt: { gte: monthStart } },
-          _sum: { pointsDelta: true },
-        }),
-        this.prisma.committeeTask.count({
-          where: { committeeId: committee.committeeId, status: { not: CommitteeTaskStatus.COMPLETED }, dueAt: { gte: weekStart, lt: new Date(weekStart.getTime() + 7 * 86400000) } },
-        }),
-      ]);
+        },
+        orderBy: { startsAt: 'asc' },
+      }),
+      this.prisma.committeeTask.findMany({
+        where: { committeeId: committee.committeeId },
+        include: { assignee: { include: { member: { include: { person: true } } } } },
+        orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }],
+      }),
+      this.prisma.committeePointEntry.findMany({
+        where: { committeeId: committee.committeeId },
+        include: { recipient: { include: { member: { include: { person: true } } } } },
+        orderBy: [{ createdAt: 'desc' }, { pointEntryId: 'desc' }],
+        take: 50,
+      }),
+      (this.prisma.committeePointEntry as any).groupBy({
+        by: ['memberId'],
+        where: { committeeId: committee.committeeId },
+        _sum: { pointsDelta: true },
+      }),
+      (this.prisma.eventRegistration as any).groupBy({
+        by: ['eventId', 'status'],
+        where: { event: { committeeId: committee.committeeId } },
+        _count: { _all: true },
+      }),
+      (this.prisma.eventRegistration as any).groupBy({
+        by: ['eventId'],
+        where: { event: { committeeId: committee.committeeId }, checkedInAt: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.committeePointEntry.aggregate({
+        where: { committeeId: committee.committeeId },
+        _sum: { pointsDelta: true },
+      }),
+      this.prisma.committeePointEntry.aggregate({
+        where: { committeeId: committee.committeeId, createdAt: { gte: monthStart } },
+        _sum: { pointsDelta: true },
+      }),
+      this.prisma.committeeTask.count({
+        where: { committeeId: committee.committeeId, status: { not: CommitteeTaskStatus.COMPLETED }, dueAt: { gte: weekStart, lt: new Date(weekStart.getTime() + 7 * 86400000) } },
+      }),
+    ]);
 
-    const memberPoints = new Map(pointTotals.map((item) => [item.memberId, item._sum.pointsDelta ?? 0]));
+    const memberPoints = new Map((pointTotals as any[]).map((item: any) => [item.memberId, item._sum.pointsDelta ?? 0]));
     const memberCompletedTasks = new Map<number, number>();
-    for (const task of tasks) {
+    for (const task of tasks as any[]) {
       if (task.status === CommitteeTaskStatus.COMPLETED) {
         memberCompletedTasks.set(task.assignedMemberId, (memberCompletedTasks.get(task.assignedMemberId) ?? 0) + 1);
       }
     }
-    const activeMemberships = memberships.filter(({ member }) => member.isActive);
-    const members = activeMemberships.map(({ member, role }) => ({
+    const activeMemberships = (memberships as any[]).filter(({ member }: { member: any }) => member.isActive);
+    const members = activeMemberships.map(({ member, role }: { member: any; role: string }) => ({
       id: String(member.memberId),
       name: member.person.fullName,
       email: member.person.emailUniversity ?? member.person.emailPersonal ?? '',
@@ -270,7 +269,7 @@ export class CommitteeDashboardService {
       tasksCompleted: memberCompletedTasks.get(member.memberId) ?? 0,
       lastActivity: null,
     }));
-    const mappedTasks = tasks.map((task) => ({
+    const mappedTasks = (tasks as any[]).map((task: any) => ({
       id: String(task.taskId),
       title: task.title,
       description: task.description,
@@ -283,7 +282,7 @@ export class CommitteeDashboardService {
       createdAt: task.createdAt.toISOString(),
       updatedAt: task.updatedAt.toISOString(),
     }));
-    const mappedPointHistory = pointEntries.map((entry) => ({
+    const mappedPointHistory = (pointEntries as any[]).map((entry: any) => ({
       id: String(entry.pointEntryId),
       memberId: String(entry.memberId),
       memberName: entry.recipient.member.person.fullName,
@@ -291,8 +290,8 @@ export class CommitteeDashboardService {
       reason: entry.reason,
       createdAt: entry.createdAt.toISOString(),
     }));
-    const registrationCount = (status: string) => registrationGroups.filter((group) => group.status === status).reduce((sum, group) => sum + group._count._all, 0);
-    const publishedEvents = events.filter((event) => event.status === 'PUBLISHED');
+    const registrationCount = (status: string) => (registrationGroups as any[]).filter((group: any) => group.status === status).reduce((sum: number, group: any) => sum + group._count._all, 0);
+    const publishedEvents = (events as any[]).filter((event: any) => event.status === 'PUBLISHED');
 
     return {
       committee: { id: committee.committeeId, code: committee.committeeCode, name: committee.committeeName },
@@ -303,21 +302,21 @@ export class CommitteeDashboardService {
         committeeMembers: memberships.length,
         activeMembers: members.length,
         awayMembers: memberships.length - members.length,
-        upcomingEvents: publishedEvents.filter((event) => event.startsAt >= now).length,
-        upcomingEventsInNext30Days: publishedEvents.filter((event) => event.startsAt >= now && event.startsAt < in30Days).length,
+        upcomingEvents: publishedEvents.filter((event: any) => event.startsAt >= now).length,
+        upcomingEventsInNext30Days: publishedEvents.filter((event: any) => event.startsAt >= now && event.startsAt < in30Days).length,
         totalPoints: totalPoints._sum.pointsDelta ?? 0,
         pointsThisMonth: pointsThisMonth._sum.pointsDelta ?? 0,
-        activeTasks: tasks.filter((task) => task.status !== CommitteeTaskStatus.COMPLETED).length,
+        activeTasks: (tasks as any[]).filter((task: any) => task.status !== CommitteeTaskStatus.COMPLETED).length,
         tasksDueThisWeek,
         eventsCreated: events.length,
-        eventsPublishedThisYear: publishedEvents.filter((event) => event.createdAt >= new Date(Date.UTC(now.getUTCFullYear(), 0, 1))).length,
+        eventsPublishedThisYear: publishedEvents.filter((event: any) => event.createdAt >= new Date(Date.UTC(now.getUTCFullYear(), 0, 1))).length,
         pendingRegistrations: registrationCount('PENDING'),
         acceptedRegistrations: registrationCount('CONFIRMED') + registrationCount('AWAITING_CONFIRMATION'),
         rejectedRegistrations: registrationCount('REJECTED') + registrationCount('NOT_SELECTED'),
       },
       permissions: { canManageTasks, canManagePoints, canManageRegistrations, canAddMembers, canCreateEvents },
       members,
-      events: events.map((event) => ({
+      events: (events as any[]).map((event: any) => ({
         id: String(event.eventId),
         title: event.name,
         date: event.startsAt.toISOString(),
@@ -326,22 +325,22 @@ export class CommitteeDashboardService {
         location: event.location,
         status: event.status,
         registered: event._count.registrations,
-        confirmed: registrationGroups.filter((group) => group.eventId === event.eventId && ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(group.status)).reduce((sum, group) => sum + group._count._all, 0),
-        checkedIn: checkInGroups.find((group) => group.eventId === event.eventId)?._count._all ?? 0,
+        confirmed: (registrationGroups as any[]).filter((group: any) => group.eventId === event.eventId && ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(group.status)).reduce((sum: number, group: any) => sum + group._count._all, 0),
+        checkedIn: (checkInGroups as any[]).find((group: any) => group.eventId === event.eventId)?._count._all ?? 0,
         capacity: event.capacity,
         createdAt: event.createdAt.toISOString(),
       })),
       tasks: mappedTasks,
       pointHistory: mappedPointHistory,
       recentActivities: [
-        ...mappedPointHistory.slice(0, 10).map((entry) => ({
+        ...mappedPointHistory.slice(0, 10).map((entry: any) => ({
           id: `point-${entry.id}`, type: 'points_awarded', title: entry.pointsDelta >= 0 ? 'Points awarded' : 'Points deducted',
           description: `${entry.pointsDelta >= 0 ? '+' : ''}${entry.pointsDelta} points to ${entry.memberName} for ${entry.reason}.`, createdAt: entry.createdAt,
         })),
-        ...mappedTasks.slice(0, 10).map((task) => ({
+        ...mappedTasks.slice(0, 10).map((task: any) => ({
           id: `task-${task.id}`, type: 'details_updated', title: 'Task updated', description: task.title, createdAt: task.updatedAt,
         })),
-      ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10),
+      ].sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10),
     };
   }
 
@@ -398,7 +397,7 @@ export class CommitteeDashboardService {
           status: 'Active',
         };
       });
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictException('A person or membership with this email already exists.');
       }
@@ -486,7 +485,7 @@ export class CommitteeDashboardService {
     return {
       id: String(event.eventId),
       ...event,
-      requiredRegistrantFields: event.requiredRegistrantFields.filter((field) => field !== 'universityId'),
+      requiredRegistrantFields: event.requiredRegistrantFields.filter((field: string) => field !== 'universityId'),
     };
   }
 
@@ -543,7 +542,7 @@ export class CommitteeDashboardService {
         memberId: String(member.memberId),
         committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role, points: 0 },
       };
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictException('This person is already a member of the committee.');
       }
@@ -609,7 +608,7 @@ export class CommitteeDashboardService {
       });
       if (count === 0) throw new ConflictException('The task changed; reload and try again.');
     }
-    return (await this.getMyTasks(memberId)).find((item) => item.id === String(taskId));
+    return (await this.getMyTasks(memberId)).find((item: any) => item.id === String(taskId));
   }
 
   // A committee leader confirms a task the member marked done, or sends it back.
@@ -685,7 +684,7 @@ export class CommitteeDashboardService {
   // The signed-in member's own tasks in every committee they belong to; the id comes from the token only.
   async getMyTasks(memberId: number | null | undefined) {
     if (!memberId) return [];
-    const tasks = await this.prisma.committeeTask.findMany({
+    const tasks: any[] = await this.prisma.committeeTask.findMany({
       where: { assignedMemberId: memberId, assignee: { member: { isActive: true } } },
       include: {
         assignee: { include: { member: { include: { person: true } } } },
@@ -694,7 +693,7 @@ export class CommitteeDashboardService {
       orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }],
       take: 500,
     });
-    return tasks.map((task) => ({
+    return tasks.map((task: any) => ({
       ...this.mapTask(task),
       committeeCode: task.committee.committeeCode,
       committeeName: task.committee.committeeName,

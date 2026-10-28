@@ -3,6 +3,7 @@ import {
   IsArray,
   IsEmail,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -21,6 +22,7 @@ class SignupApplicationDataDto {
   @IsString() @MaxLength(255) major: string;
   @IsString() @MaxLength(30) level: string;
   @IsIn(['female', 'male']) gender: string;
+  @IsOptional() @IsObject() skillsByCommittee?: Record<string, string[]>;
 }
 
 class SignupCommitteeDto {
