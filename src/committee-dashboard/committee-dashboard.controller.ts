@@ -10,7 +10,10 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { apiSuccess } from '../common/http/api-response.js';
 import type { RequestUser } from '../auth/auth.guard.js';
 import {
@@ -19,6 +22,7 @@ import {
   CreateCommitteeTaskDto,
   ReviewCommitteeTaskDto,
   UpdateCommitteePointsDto,
+  UpdateCommitteeEventDto,
   UpdateCommitteeTaskDto,
 } from './committee-dashboard.dto.js';
 import { CommitteeDashboardService } from './committee-dashboard.service.js';
@@ -56,6 +60,19 @@ export class CommitteeDashboardController {
     return apiSuccess(await this.dashboard.createEvent(request.user, committeeCode, body));
   }
 
+  @Post('events/images')
+  @UseInterceptors(FileInterceptor('file', {
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_request, file, callback) => callback(null, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)),
+  }))
+  async uploadEventImage(
+    @Req() request: { user?: RequestUser },
+    @Param('committeeCode') committeeCode: string,
+    @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined,
+  ) {
+    return apiSuccess(await this.dashboard.uploadEventImage(request.user, committeeCode, file));
+  }
+
   @Get('events/:eventId')
   async getEvent(
     @Req() request: { user?: RequestUser },
@@ -63,6 +80,16 @@ export class CommitteeDashboardController {
     @Param('eventId', ParseIntPipe) eventId: number,
   ) {
     return apiSuccess(await this.dashboard.getCommitteeEvent(request.user, committeeCode, eventId));
+  }
+
+  @Patch('events/:eventId')
+  async updateEvent(
+    @Req() request: { user?: RequestUser },
+    @Param('committeeCode') committeeCode: string,
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Body() body: UpdateCommitteeEventDto,
+  ) {
+    return apiSuccess(await this.dashboard.updateEvent(request.user, committeeCode, eventId, body));
   }
 
   @Delete('events/:eventId')

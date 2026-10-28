@@ -17,6 +17,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -103,7 +104,7 @@ export class UpdateCommitteeTaskDto {
   @MaxLength(5000)
   description?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsInt()
   @Min(1)
   assignedMemberId?: number;
@@ -130,7 +131,7 @@ export class UpdateCommitteePointsDto {
   reason!: string;
 }
 
-export const EVENT_TYPES = ['Workshop', 'Conference', 'Talk', 'Panel', 'Hackathon'] as const;
+export const EVENT_TYPES = ['Workshop', 'Conference', 'Talk', 'Panel', 'Hackathon', 'Trip'] as const;
 export const REGISTRANT_FIELDS = ['fullName', 'college', 'major', 'phone', 'email', 'membership'] as const;
 export const EVENT_QUESTION_TYPES = ['TEXT', 'SELECT', 'RADIO', 'CHECKBOX'] as const;
 
@@ -193,6 +194,11 @@ export class CreateCommitteeEventDto {
   capacity!: number;
 
   @IsOptional()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(2000)
+  imageUrl?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   speakers?: string;
@@ -211,6 +217,76 @@ export class CreateCommitteeEventDto {
   status!: 'PUBLISHED' | 'DRAFT';
 
   @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventQuestionDto)
+  questions?: CreateEventQuestionDto[];
+}
+
+/** Editable event details. Publishing state and registration questions are managed separately. */
+export class UpdateCommitteeEventDto {
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @MinLength(3)
+  @MaxLength(150)
+  name?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @MaxLength(5000)
+  description?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsIn(EVENT_TYPES)
+  eventType?: (typeof EVENT_TYPES)[number];
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsDateString()
+  startsAt?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsDateString()
+  endsAt?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsDateString()
+  registrationDeadline?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @MinLength(3)
+  @MaxLength(120)
+  location?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(5000)
+  capacity?: number;
+
+  @IsOptional()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(500)
+  mapsLink?: string | null;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  speakers?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @MaxLength(5000)
+  requirements?: string;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsOptional()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(2000)
+  imageUrl?: string | null;
+
+  @ValidateIf((_object, value) => value !== undefined)
   @IsArray()
   @ArrayMaxSize(50)
   @ValidateNested({ each: true })

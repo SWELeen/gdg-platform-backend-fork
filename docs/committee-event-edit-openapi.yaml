@@ -1,0 +1,302 @@
+﻿openapi: 3.1.0
+info:
+  title: GDG Main Platform Committee Event Editing API
+  version: 1.0.0
+  description: Contract for updating committee event details from the committee dashboard.
+servers:
+  - url: http://localhost:3001
+paths:
+  /committees/{committeeCode}/events/images:
+    post:
+      operationId: uploadCommitteeEventImage
+      summary: Upload an event image
+      description: Uploads an image to the public event image bucket. An active committee member with events.create permission is required.
+      security:
+        - accessCookie: []
+      parameters:
+        - name: committeeCode
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Image uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventImageUploadSuccess'
+        '400':
+          description: Missing, unsupported, or oversized image.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '413':
+          description: Image exceeds the 5 MB upload limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '403':
+          description: Active committee membership or event management permission is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '502':
+          description: Public image storage is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+  /committees/{committeeCode}/events/{eventId}:
+    patch:
+      operationId: updateCommitteeEvent
+      summary: Update an event's details
+      description: >-
+        Updates supplied event details for an event owned by the selected committee.
+        The authenticated active committee member must have events.create permission.
+        For published events only registrationDeadline may be changed. Draft events may have their name,
+        description, type, schedule, location, capacity, maps link, speakers, requirements, image URL,
+        and registration questions changed.
+        Event publication status, registration questions, and immutable event ownership are unchanged.
+        Capacity cannot be reduced below seats already held by confirmed attendees.
+      security:
+        - accessCookie: []
+      parameters:
+        - name: committeeCode
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommitteeEventRequest'
+            examples:
+              publishedEvent:
+                summary: Change the registration deadline for a published event
+                value:
+                  registrationDeadline: '2026-11-19T20:59:00.000Z'
+              draftEvent:
+                summary: Update a draft before publishing
+                value:
+                  name: GDG UJ Product Design Workshop
+                  description: An updated hands-on workshop description.
+                  eventType: Workshop
+                  startsAt: '2026-11-20T15:00:00.000Z'
+                  endsAt: '2026-11-20T17:00:00.000Z'
+                  registrationDeadline: '2026-11-19T20:59:00.000Z'
+                  location: University of Jeddah
+                  capacity: 80
+      responses:
+        '200':
+          description: Event details were updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCommitteeEventSuccess'
+        '400':
+          description: Invalid field values or an invalid schedule/capacity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '403':
+          description: Active committee membership or event management permission is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '404':
+          description: Committee or event not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+components:
+  securitySchemes:
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: gdg_access
+  schemas:
+    EventImageUploadSuccess:
+      type: object
+      required: [success, message, data, error]
+      properties:
+        success:
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          required: [imageUrl]
+          properties:
+            imageUrl:
+              type: string
+              format: uri
+        error:
+          type: 'null'
+    UpdateCommitteeEventRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 150
+        description:
+          type: string
+          maxLength: 5000
+        eventType:
+          type: string
+          enum: [Workshop, Conference, Talk, Panel, Hackathon]
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        registrationDeadline:
+          type: string
+          format: date-time
+        location:
+          type: string
+          minLength: 3
+          maxLength: 120
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 5000
+        mapsLink:
+          type: [string, 'null']
+          maxLength: 500
+          format: uri
+        speakers:
+          type: string
+          maxLength: 2000
+        requirements:
+          type: string
+          maxLength: 5000
+        imageUrl:
+          type: [string, 'null']
+          maxLength: 2000
+          format: uri
+        questions:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/EventQuestion'
+    EventQuestion:
+      type: object
+      additionalProperties: false
+      required: [text, type, required]
+      properties:
+        text:
+          type: string
+          maxLength: 500
+        type:
+          type: string
+          enum: [TEXT, SELECT, RADIO, CHECKBOX]
+        required:
+          type: boolean
+        options:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 200
+    UpdateCommitteeEventSuccess:
+      type: object
+      required: [success, message, data, error]
+      properties:
+        success:
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          required: [id, eventId, name, status, startsAt, endsAt, location, capacity, updatedAt]
+          properties:
+            id:
+              type: string
+            eventId:
+              type: integer
+            name:
+              type: string
+            status:
+              type: string
+            startsAt:
+              type: string
+              format: date-time
+            endsAt:
+              type: string
+              format: date-time
+            location:
+              type: [string, 'null']
+            capacity:
+              type: integer
+            updatedAt:
+              type: string
+              format: date-time
+        error:
+          type: 'null'
+    ApiFailure:
+      type: object
+      required: [success, message, data, error]
+      properties:
+        success:
+          const: false
+        message:
+          type: string
+        data:
+          type: 'null'
+        error:
+          type: object
+          required: [code, details]
+          properties:
+            code:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                required: [pointer, message]
+                properties:
+                  pointer:
+                    type: string
+                  message:
+                    type: string
