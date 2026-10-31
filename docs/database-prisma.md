@@ -115,18 +115,18 @@ gdg backend status
 docker compose exec -T backend pnpm exec prisma migrate status --config prisma7.config.ts
 ```
 
-The services should be healthy and Prisma should report that the database schema is up to date. Open `http://localhost:3001`; `Hello World!` confirms NestJS started after migration and its connection check. `migrate status` checks migration history; it does not prove that nobody changed tables manually.
+The services should be healthy and Prisma should report that the database schema is up to date. `GET /health/live` confirms only that NestJS can answer requests. `GET /health/ready` executes `SELECT 1` against PostgreSQL and returns 503 when the database is unavailable; configure the hosted service health-check path as `/health/ready`. `migrate status` checks migration history; it does not prove that nobody changed tables manually.
 
 In pgAdmin, expand **GDG Local PostgreSQL → Databases → gdg_platform → Schemas → public → Tables** and refresh **Tables**. Use your `POSTGRES_DB` value if you changed the default database name.
 
 Expect these sixteen project tables, plus `_prisma_migrations`:
 
-| Area | Tables |
-| --- | --- |
-| People and access registries | `person`, `role`, `skill`, `permission`, `role_permission` |
-| Group membership | `member`, `committee`, `member_committee`, `member_role`, `member_skill`, `committee_permission` |
-| Events and applications | `events`, `event_questions`, `event_registrations`, `registration_answers` |
-| Attendance incidents | `registration_blacklist_entries` |
+| Area                         | Tables                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| People and access registries | `person`, `role`, `skill`, `permission`, `role_permission`                                       |
+| Group membership             | `member`, `committee`, `member_committee`, `member_role`, `member_skill`, `committee_permission` |
+| Events and applications      | `events`, `event_questions`, `event_registrations`, `registration_answers`                       |
+| Attendance incidents         | `registration_blacklist_entries`                                                                 |
 
 Fresh role contains ADVISOR, GROUP_LEADER and GROUP_CO_LEADER with their approved descriptions and is_privileged=true. Skill contains the 32 user-approved production reference values. Permission contains the 30 approved definitions described above. Committee contains DATA and PR references; committee_permission contains eight approved rules. Role_permission contains the two approved members.manage links for GROUP_LEADER and GROUP_CO_LEADER; ADVISOR has none. Other project tables, including all memberships, are empty on fresh setup. These definitions grant no member any role or permission. Do not create tables manually or insert privileged accounts to test authentication.
 
@@ -166,18 +166,18 @@ This extends the existing disposable schema runner with exact graph/count/defaul
 
 Run `gdg logs backend` to read the error; press Ctrl+C to stop following logs. Keep `.env` and connection strings private when sharing an error.
 
-| Symptom | Next step |
-| --- | --- |
-| Connection refused / authentication failed | Check Docker, the database service and your local credentials. Editing `.env` alone does not change an existing PostgreSQL user's password. |
-| P3005 / database is not empty | The initial migration expects an empty project schema. If you already created tables manually, stop and ask the schema owner to inspect them and plan preservation/transfer. Do not reset or baseline them yourself. |
-| people_membership_requires_empty_database | Preserve the populated database; provision a separate empty one. Do not delete records or mark this migration applied to bypass its precondition. Prisma may record a failed attempt even though domain DDL rolled back. |
-| role_registry_requires_empty_role_tables | Preserve the old role tables and request review; do not delete records or bypass the guard. |
-| permission_registry_requires_empty_permission_tables | Preserve old permissions/role links for review; do not delete rows or bypass the guard. |
-| role_permission_requires_empty_link_table | Preserve existing role links for review; do not delete rows or bypass the guard. |
-| permission_pkey during permission-reference migration | Preserve existing definitions and links; inspect the duplicate code and failed migration state before any reviewed recovery. Do not overwrite/delete the existing definition or skip the migration. |
-| committee_permission_requires_matching_committees | Preserve DATA/PR definitions and memberships; inspect the differing name/parent before a reviewed recovery. No definitions are overwritten. |
-| P3009 / a previous migration failed | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back. |
-| Backend is healthy but tables are missing in pgAdmin | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above. |
+| Symptom                                               | Next step                                                                                                                                                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connection refused / authentication failed            | Check Docker, the database service and your local credentials. Editing `.env` alone does not change an existing PostgreSQL user's password.                                                                              |
+| P3005 / database is not empty                         | The initial migration expects an empty project schema. If you already created tables manually, stop and ask the schema owner to inspect them and plan preservation/transfer. Do not reset or baseline them yourself.     |
+| people_membership_requires_empty_database             | Preserve the populated database; provision a separate empty one. Do not delete records or mark this migration applied to bypass its precondition. Prisma may record a failed attempt even though domain DDL rolled back. |
+| role_registry_requires_empty_role_tables              | Preserve the old role tables and request review; do not delete records or bypass the guard.                                                                                                                              |
+| permission_registry_requires_empty_permission_tables  | Preserve old permissions/role links for review; do not delete rows or bypass the guard.                                                                                                                                  |
+| role_permission_requires_empty_link_table             | Preserve existing role links for review; do not delete rows or bypass the guard.                                                                                                                                         |
+| permission_pkey during permission-reference migration | Preserve existing definitions and links; inspect the duplicate code and failed migration state before any reviewed recovery. Do not overwrite/delete the existing definition or skip the migration.                      |
+| committee_permission_requires_matching_committees     | Preserve DATA/PR definitions and memberships; inspect the differing name/parent before a reviewed recovery. No definitions are overwritten.                                                                              |
+| P3009 / a previous migration failed                   | Stop and ask the schema owner to inspect migration history and the actual database state. Do not delete `_prisma_migrations` or blindly mark a migration applied/rolled back.                                            |
+| Backend is healthy but tables are missing in pgAdmin  | Refresh **Tables** and verify you opened the same database/server that Docker uses. Then check migration status above.                                                                                                   |
 
 The initial migration wraps domain DDL in a transaction. Its tested failure case rolls back tables/enums, but Prisma still records failed migration history. The schema owner must verify rollback before any `migrate resolve --rolled-back` recovery. Future migration failures need their own state inspection; do not assume all changes rolled back.
 
@@ -213,6 +213,7 @@ Teammates apply committed files using `migrate deploy`; they do not generate the
    ```
 
    `--create-only` creates a draft instead of applying the new migration, but the development command still connects to databases and may request a reset on drift. Stop if it asks to reset; inspect the mismatch first.
+
 4. Inspect the SQL, including data loss/locking and custom PostgreSQL checks. Do not assume Prisma generates custom CHECK constraints. Update the isolated test fixtures/expectations for the new migration. The runner sorts migration directories and verifies rollback/recovery for the initial migration and the latest migration after its predecessors. Keep each tested migration inside one explicit `BEGIN;` / standalone final `COMMIT;` transaction; the failure injector masks SQL comments, quoted literals/identifiers, and dollar-quoted bodies before checking outer transaction boundaries; it rejects unsupported transaction layouts and incomplete tokens for manual review. Update the explicit `initialTables` and `expectedTables` manifests in `test/run-schema-tests.mjs` only for their respective schema snapshots, and update fixtures when adding migrations.
 5. Run the checks below, review the final diff, and commit the schema, migration and relevant tests/docs together. Keep `.env`, real data and generated client files out of Git. Test and review official deployment separately.
 
