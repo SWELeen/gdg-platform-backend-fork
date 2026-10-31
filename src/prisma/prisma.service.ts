@@ -30,7 +30,7 @@ export class PrismaService
         {
           connectionString: config.getOrThrow<string>('DATABASE_URL'),
           connectionTimeoutMillis: 10_000,
-          idleTimeoutMillis: 30_000,
+          idleTimeoutMillis: 10_000,
           keepAlive: true,
           keepAliveInitialDelayMillis: 10_000,
           max: 5,
