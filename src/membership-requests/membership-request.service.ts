@@ -31,10 +31,9 @@ const DEVELOPER_LEADERS_DECIDE = 'applications.developer_leaders.decide';
 type ApprovalScope = 'COMMITTEE' | 'DEVELOPER_COMMITTEES' | 'CLUB';
 type ScopedRequest = {
   committeeId: number;
-  personId: number;
   requestedRole: string;
 };
-type Reader = Pick<Prisma.TransactionClient, 'committee' | 'memberCommittee'>;
+type Reader = Pick<Prisma.TransactionClient, 'committee'>;
 
 const requestInclude = {
   person: {
@@ -555,28 +554,17 @@ export class MembershipRequestService {
       throw new ForbiddenException();
   }
 
-  // Leadership applications follow the committee tree even when the applicant
-  // is the only current developer leader. Ordinary member requests stay with
-  // their committee when another active committee leader can review them.
+  // Leadership applications follow the committee tree. Ordinary member
+  // requests always stay with their selected committee, even before it has a leader.
   private async approvalScopeResolver(db: Reader, committeeIds: number[]) {
     const uniqueIds = [...new Set(committeeIds)];
-    const [committeeLeaders, committees] = await Promise.all([
-      db.memberCommittee.findMany({
-        where: {
-          committeeId: { in: uniqueIds },
-          role: { in: ['Leader', 'Co-Leader'] },
-          member: { isActive: true },
-        },
-        select: { committeeId: true, member: { select: { personId: true } } },
-      }),
-      db.committee.findMany({
-        where: { committeeId: { in: uniqueIds } },
-        select: {
-          committeeId: true,
-          parent: { select: { committeeCode: true } },
-        },
-      }),
-    ]);
+    const committees = await db.committee.findMany({
+      where: { committeeId: { in: uniqueIds } },
+      select: {
+        committeeId: true,
+        parent: { select: { committeeCode: true } },
+      },
+    });
     const developerCommitteeIds = new Set(
       committees
         .filter(
@@ -584,24 +572,14 @@ export class MembershipRequestService {
         )
         .map(({ committeeId }) => committeeId),
     );
-    const someoneElse = (personIds: number[], applicant: number) =>
-      personIds.some((personId) => personId !== applicant);
-
-    return ({
-      committeeId,
-      personId,
-      requestedRole,
-    }: ScopedRequest): ApprovalScope => {
+    return ({ committeeId, requestedRole }: ScopedRequest): ApprovalScope => {
       if (requestedRole === 'Leader' || requestedRole === 'Co-Leader') {
         return developerCommitteeIds.has(committeeId)
           ? 'DEVELOPER_COMMITTEES'
           : 'CLUB';
       }
 
-      const leaders = committeeLeaders
-        .filter((row) => row.committeeId === committeeId)
-        .map((row) => row.member.personId);
-      return someoneElse(leaders, personId) ? 'COMMITTEE' : 'CLUB';
+      return 'COMMITTEE';
     };
   }
   private async refreshAggregateStatus(

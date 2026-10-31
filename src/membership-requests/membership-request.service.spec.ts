@@ -427,7 +427,7 @@ describe('MembershipRequestService approval routing', () => {
         }),
       }),
     );
-    // Committee 3 has its own leader; committee 9 has none, so only it reaches club leadership.
-    expect(result.map((item) => item.id)).toEqual([62]);
+    // Ordinary committee requests are never promoted to the club leadership queue.
+    expect(result.map((item) => item.id)).toEqual([]);
   });
 });
