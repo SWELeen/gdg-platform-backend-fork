@@ -307,7 +307,7 @@ export class MembershipRequestService {
     );
     const rows = pending.filter(
       (row) =>
-        scopeOf({ ...row, personId: row.membershipRequest.personId }) === scope,
+        scopeOf(row) === scope,
     );
     const globalRoleRows =
       scope === 'CLUB'
@@ -364,10 +364,7 @@ export class MembershipRequestService {
         },
       });
       if (!row) throw new NotFoundException('Leadership request not found.');
-      const scope = (await this.approvalScopeResolver(tx, [row.committeeId]))({
-        ...row,
-        personId: row.membershipRequest.personId,
-      });
+      const scope = (await this.approvalScopeResolver(tx, [row.committeeId]))(row);
       // Requests the committee can still decide stay with its leaders.
       if (scope === 'COMMITTEE')
         throw new NotFoundException('Leadership request not found.');
