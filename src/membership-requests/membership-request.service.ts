@@ -13,10 +13,12 @@ import {
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthenticatedUser } from '../auth/current-user.js';
-import { approvalScopeFor, findApplicableCommittees } from '../committees/committee-catalog.js';
 import {
-  CommitteeAccessService,
-} from '../registrations/committee-access.service.js';
+  approvalScopeFor,
+  DEVELOPER_COMMITTEES_CODE,
+  findApplicableCommittees,
+} from '../committees/committee-catalog.js';
+import { CommitteeAccessService } from '../registrations/committee-access.service.js';
 import type {
   CreateMembershipRequestDto,
   DecideMembershipRequestDto,
@@ -27,8 +29,12 @@ export const APPLICATIONS_DECIDE = 'applications.decide';
 const DEVELOPER_LEADERS_DECIDE = 'applications.developer_leaders.decide';
 
 type ApprovalScope = 'COMMITTEE' | 'DEVELOPER_COMMITTEES' | 'CLUB';
-type ScopedRequest = { approvalScope: string; committeeId: number; personId: number };
-type Reader = Pick<Prisma.TransactionClient, 'memberCommittee' | 'memberRole'>;
+type ScopedRequest = {
+  committeeId: number;
+  personId: number;
+  requestedRole: string;
+};
+type Reader = Pick<Prisma.TransactionClient, 'committee' | 'memberCommittee'>;
 
 const requestInclude = {
   person: {
@@ -39,10 +45,14 @@ const requestInclude = {
     },
   },
   committees: {
-    include: { committee: { select: { committeeCode: true, committeeName: true } } },
+    include: {
+      committee: { select: { committeeCode: true, committeeName: true } },
+    },
     orderBy: { committeeId: 'asc' as const },
   },
-  globalRoles: { include: { role: { select: { roleCode: true, description: true } } } },
+  globalRoles: {
+    include: { role: { select: { roleCode: true, description: true } } },
+  },
 } as const;
 
 @Injectable()
@@ -51,8 +61,10 @@ export class MembershipRequestService {
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(CommitteeAccessService) private readonly access: CommitteeAccessService,
-    @Inject(MembershipRequestEmailService) private readonly emails?: MembershipRequestEmailService,
+    @Inject(CommitteeAccessService)
+    private readonly access: CommitteeAccessService,
+    @Inject(MembershipRequestEmailService)
+    private readonly emails?: MembershipRequestEmailService,
   ) {}
 
   async create(user: AuthenticatedUser, body: CreateMembershipRequestDto) {
@@ -60,9 +72,18 @@ export class MembershipRequestService {
       where: { personId: user.personId },
       select: { emailPersonalVerifiedAt: true },
     });
-    if (!person?.emailPersonalVerifiedAt) throw new ForbiddenException('Verify your personal email before submitting a membership request.');
-    const committees = await findApplicableCommittees(this.prisma, body.committees.map(({ committeeCode }) => committeeCode));
-    if (!committees) throw new NotFoundException('One or more selected committees are unavailable.');
+    if (!person?.emailPersonalVerifiedAt)
+      throw new ForbiddenException(
+        'Verify your personal email before submitting a membership request.',
+      );
+    const committees = await findApplicableCommittees(
+      this.prisma,
+      body.committees.map(({ committeeCode }) => committeeCode),
+    );
+    if (!committees)
+      throw new NotFoundException(
+        'One or more selected committees are unavailable.',
+      );
 
     const existing = await this.prisma.membershipRequest.findUnique({
       where: { personId: user.personId },
@@ -78,7 +99,9 @@ export class MembershipRequestService {
           applicationData,
           committees: {
             create: body.committees.map((item) => {
-              const committee = committees.find((c) => c.committeeCode === item.committeeCode)!;
+              const committee = committees.find(
+                (c) => c.committeeCode === item.committeeCode,
+              )!;
               return {
                 committeeId: committee.committeeId,
                 requestedRole: item.requestedRole,
@@ -110,7 +133,11 @@ export class MembershipRequestService {
     if (!committee) throw new NotFoundException('Committee not found.');
 
     const rows = await this.prisma.membershipRequestCommittee.findMany({
-      where: { committeeId: committee.committeeId, approvalScope: 'COMMITTEE', requestedRole: 'Member' },
+      where: {
+        committeeId: committee.committeeId,
+        approvalScope: 'COMMITTEE',
+        requestedRole: 'Member',
+      },
       orderBy: [
         { status: 'asc' },
         { membershipRequest: { createdAt: 'asc' } },
@@ -152,32 +179,64 @@ export class MembershipRequestService {
         SELECT membership_request_id FROM membership_request
         WHERE membership_request_id = ${requestId}
         FOR UPDATE`;
-      if (!locked.length) throw new NotFoundException('Membership request not found.');
+      if (!locked.length)
+        throw new NotFoundException('Membership request not found.');
 
       const application = await tx.membershipRequestCommittee.findFirst({
-        where: { membershipRequestId: requestId, committeeId: committee.committeeId },
+        where: {
+          membershipRequestId: requestId,
+          committeeId: committee.committeeId,
+        },
       });
-      if (!application) throw new NotFoundException('Membership request not found.');
-      if (application.approvalScope !== 'COMMITTEE' || application.requestedRole !== 'Member') throw new ForbiddenException('Leadership applications require the leadership approval route.');
-      const requestOwner = await tx.membershipRequest.findUniqueOrThrow({ where: { membershipRequestId: requestId }, select: { personId: true } });
-      if (requestOwner.personId === actor.personId) throw new ForbiddenException('You cannot approve your own request.');
+      if (!application)
+        throw new NotFoundException('Membership request not found.');
+      if (
+        application.approvalScope !== 'COMMITTEE' ||
+        application.requestedRole !== 'Member'
+      )
+        throw new ForbiddenException(
+          'Leadership applications require the leadership approval route.',
+        );
+      const requestOwner = await tx.membershipRequest.findUniqueOrThrow({
+        where: { membershipRequestId: requestId },
+        select: { personId: true },
+      });
+      if (requestOwner.personId === actor.personId)
+        throw new ForbiddenException('You cannot approve your own request.');
       if (application.status !== MembershipCommitteeDecision.PENDING) {
-        throw new ConflictException('This committee has already decided this request.');
+        throw new ConflictException(
+          'This committee has already decided this request.',
+        );
       }
 
       if (decision === MembershipCommitteeDecision.APPROVED) {
-        const member = await this.getOrCreateActiveMember(tx, requestOwner.personId);
+        const member = await this.getOrCreateActiveMember(
+          tx,
+          requestOwner.personId,
+        );
         // The selected role is only a preference. Never promote an applicant
         // into a privileged committee position through this decision endpoint.
         await tx.memberCommittee.upsert({
-          where: { memberId_committeeId: { memberId: member.memberId, committeeId: committee.committeeId } },
-          create: { memberId: member.memberId, committeeId: committee.committeeId, role: 'Member' },
+          where: {
+            memberId_committeeId: {
+              memberId: member.memberId,
+              committeeId: committee.committeeId,
+            },
+          },
+          create: {
+            memberId: member.memberId,
+            committeeId: committee.committeeId,
+            role: 'Member',
+          },
           update: {},
         });
       }
 
       await tx.membershipRequestCommittee.update({
-        where: { membershipRequestCommitteeId: application.membershipRequestCommitteeId },
+        where: {
+          membershipRequestCommitteeId:
+            application.membershipRequestCommitteeId,
+        },
         data: {
           status: decision,
           decidedByMemberId: actorMemberId,
@@ -191,7 +250,9 @@ export class MembershipRequestService {
         where: { membershipRequestId: requestId },
         include: requestInclude,
       });
-      const ownDecision = updated.committees.find((row) => row.committeeId === committee.committeeId)!;
+      const ownDecision = updated.committees.find(
+        (row) => row.committeeId === committee.committeeId,
+      )!;
       return {
         response: {
           ...this.serialize(updated),
@@ -202,193 +263,400 @@ export class MembershipRequestService {
             decidedAt: ownDecision.decidedAt,
           },
         },
-        email: { updated, committeeName: ownDecision.committee.committeeName, requestedRole: ownDecision.requestedRole, status: ownDecision.status },
+        email: {
+          updated,
+          committeeName: ownDecision.committee.committeeName,
+          requestedRole: ownDecision.requestedRole,
+          status: ownDecision.status,
+        },
       };
     });
-    await this.sendCommitteeDecisionEmail(
-      outcome.email.updated,
-      outcome.email.committeeName,
-      outcome.email.requestedRole,
+    this.dispatchDecisionEmail(
+      () =>
+        this.sendCommitteeDecisionEmail(
+          outcome.email.updated,
+          outcome.email.committeeName,
+          outcome.email.requestedRole,
+          outcome.email.status,
+        ),
       outcome.email.status,
+      outcome.email.committeeName,
     );
     return outcome.response;
   }
 
-  async listLeadership(scope: 'CLUB' | 'DEVELOPER_COMMITTEES', actor: AuthenticatedUser) {
+  async listLeadership(
+    scope: 'CLUB' | 'DEVELOPER_COMMITTEES',
+    actor: AuthenticatedUser,
+  ) {
     if (!actor.memberId) throw new ForbiddenException();
     await this.assertLeadershipPermission(actor.memberId, scope);
     // Nobody decides their own request; club leadership also picks up requests
     // that have nobody else to decide them at their own level.
     const notOwn = { membershipRequest: { personId: { not: actor.personId } } };
     const pending = await this.prisma.membershipRequestCommittee.findMany({
-      where: { status: MembershipCommitteeDecision.PENDING, ...notOwn, ...(scope === 'CLUB' ? {} : { approvalScope: scope }) },
+      where: { status: MembershipCommitteeDecision.PENDING, ...notOwn },
       orderBy: { membershipRequest: { createdAt: 'asc' } },
-      include: { membershipRequest: { include: requestInclude }, committee: { select: { committeeCode: true, committeeName: true } } },
+      include: {
+        membershipRequest: { include: requestInclude },
+        committee: { select: { committeeCode: true, committeeName: true } },
+      },
     });
-    const scopeOf = await this.approvalScopeResolver(this.prisma, pending.map((row) => row.committeeId));
-    const rows = pending.filter((row) => scopeOf({ ...row, personId: row.membershipRequest.personId }) === scope);
-    const globalRoleRows = scope === 'CLUB'
-      ? await this.prisma.membershipRequestGlobalRole.findMany({
-          where: { status: MembershipCommitteeDecision.PENDING, ...notOwn },
-          orderBy: { membershipRequest: { createdAt: 'asc' } },
-          include: { membershipRequest: { include: requestInclude }, role: { select: { roleCode: true, description: true } } },
-        })
-      : [];
+    const scopeOf = await this.approvalScopeResolver(
+      this.prisma,
+      pending.map((row) => row.committeeId),
+    );
+    const rows = pending.filter(
+      (row) =>
+        scopeOf({ ...row, personId: row.membershipRequest.personId }) === scope,
+    );
+    const globalRoleRows =
+      scope === 'CLUB'
+        ? await this.prisma.membershipRequestGlobalRole.findMany({
+            where: { status: MembershipCommitteeDecision.PENDING, ...notOwn },
+            orderBy: { membershipRequest: { createdAt: 'asc' } },
+            include: {
+              membershipRequest: { include: requestInclude },
+              role: { select: { roleCode: true, description: true } },
+            },
+          })
+        : [];
     return [
-      ...rows.map((row) => ({ type: 'COMMITTEE_LEADERSHIP', ...this.serialize(row.membershipRequest), committee: row.committee, requestedRole: row.requestedRole, decisionStatus: row.status })),
-      ...globalRoleRows.map((row) => ({ type: 'GLOBAL_ROLE', ...this.serialize(row.membershipRequest), role: row.role, decisionStatus: row.status })),
+      ...rows.map((row) => ({
+        type: 'COMMITTEE_LEADERSHIP',
+        ...this.serialize(row.membershipRequest),
+        committee: row.committee,
+        requestedRole: row.requestedRole,
+        decisionStatus: row.status,
+      })),
+      ...globalRoleRows.map((row) => ({
+        type: 'GLOBAL_ROLE',
+        ...this.serialize(row.membershipRequest),
+        role: row.role,
+        decisionStatus: row.status,
+      })),
     ].sort((a, b) => a.submittedAt.getTime() - b.submittedAt.getTime());
   }
 
-  async decideLeadershipCommittee(requestId: number, committeeCode: string, decision: DecideMembershipRequestDto['decision'], actor: AuthenticatedUser) {
+  async decideLeadershipCommittee(
+    requestId: number,
+    committeeCode: string,
+    decision: DecideMembershipRequestDto['decision'],
+    actor: AuthenticatedUser,
+  ) {
     if (!actor.memberId) throw new ForbiddenException();
-    const committee = await this.prisma.committee.findUnique({ where: { committeeCode }, select: { committeeId: true } });
+    const committee = await this.prisma.committee.findUnique({
+      where: { committeeCode },
+      select: { committeeId: true },
+    });
     if (!committee) throw new NotFoundException('Committee not found.');
     const outcome = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT membership_request_id FROM membership_request WHERE membership_request_id = ${requestId} FOR UPDATE`;
       const row = await tx.membershipRequestCommittee.findUnique({
-        where: { membershipRequestId_committeeId: { membershipRequestId: requestId, committeeId: committee.committeeId } },
+        where: {
+          membershipRequestId_committeeId: {
+            membershipRequestId: requestId,
+            committeeId: committee.committeeId,
+          },
+        },
         include: {
           membershipRequest: { select: { personId: true } },
           committee: { select: { committeeName: true } },
         },
       });
       if (!row) throw new NotFoundException('Leadership request not found.');
-      const scope = (await this.approvalScopeResolver(tx, [row.committeeId]))({ ...row, personId: row.membershipRequest.personId });
+      const scope = (await this.approvalScopeResolver(tx, [row.committeeId]))({
+        ...row,
+        personId: row.membershipRequest.personId,
+      });
       // Requests the committee can still decide stay with its leaders.
-      if (scope === 'COMMITTEE') throw new NotFoundException('Leadership request not found.');
+      if (scope === 'COMMITTEE')
+        throw new NotFoundException('Leadership request not found.');
       await this.assertLeadershipPermission(actor.memberId!, scope);
-      if (row.membershipRequest.personId === actor.personId) throw new ForbiddenException('You cannot approve your own request.');
-      if (row.status !== MembershipCommitteeDecision.PENDING) throw new ConflictException('This request has already been decided.');
+      if (row.membershipRequest.personId === actor.personId)
+        throw new ForbiddenException('You cannot approve your own request.');
+      if (row.status !== MembershipCommitteeDecision.PENDING)
+        throw new ConflictException('This request has already been decided.');
       if (decision === MembershipCommitteeDecision.APPROVED) {
-        const member = await this.getOrCreateActiveMember(tx, row.membershipRequest.personId);
+        const member = await this.getOrCreateActiveMember(
+          tx,
+          row.membershipRequest.personId,
+        );
         // A committee-level request that moved up still only grants membership.
-        const role = row.approvalScope === 'COMMITTEE' ? 'Member' : row.requestedRole;
+        const role =
+          row.approvalScope === 'COMMITTEE' ? 'Member' : row.requestedRole;
         await tx.memberCommittee.upsert({
-          where: { memberId_committeeId: { memberId: member.memberId, committeeId: committee.committeeId } },
-          create: { memberId: member.memberId, committeeId: committee.committeeId, role },
+          where: {
+            memberId_committeeId: {
+              memberId: member.memberId,
+              committeeId: committee.committeeId,
+            },
+          },
+          create: {
+            memberId: member.memberId,
+            committeeId: committee.committeeId,
+            role,
+          },
           update: { role },
         });
       }
-      await tx.membershipRequestCommittee.update({ where: { membershipRequestCommitteeId: row.membershipRequestCommitteeId }, data: { status: decision, decidedByMemberId: actor.memberId, decidedAt: new Date() } });
+      await tx.membershipRequestCommittee.update({
+        where: {
+          membershipRequestCommitteeId: row.membershipRequestCommitteeId,
+        },
+        data: {
+          status: decision,
+          decidedByMemberId: actor.memberId,
+          decidedAt: new Date(),
+        },
+      });
       await this.refreshAggregateStatus(tx, requestId);
-      const updated = await tx.membershipRequest.findUniqueOrThrow({ where: { membershipRequestId: requestId }, include: requestInclude });
+      const updated = await tx.membershipRequest.findUniqueOrThrow({
+        where: { membershipRequestId: requestId },
+        include: requestInclude,
+      });
       return {
         response: { id: row.membershipRequestId, committeeCode, decision },
-        email: { request: updated, committeeName: row.committee?.committeeName ?? committeeCode, requestedRole: row.requestedRole },
+        email: {
+          request: updated,
+          committeeName: row.committee?.committeeName ?? committeeCode,
+          requestedRole: row.requestedRole,
+        },
       };
     });
-    await this.sendCommitteeDecisionEmail(
-      outcome.email.request,
-      outcome.email.committeeName,
-      outcome.email.requestedRole,
+    this.dispatchDecisionEmail(
+      () =>
+        this.sendCommitteeDecisionEmail(
+          outcome.email.request,
+          outcome.email.committeeName,
+          outcome.email.requestedRole,
+          decision,
+        ),
       decision,
+      outcome.email.committeeName,
     );
     return outcome.response;
   }
 
-  async decideGlobalRole(requestId: number, roleCode: string, decision: DecideMembershipRequestDto['decision'], actor: AuthenticatedUser) {
+  async decideGlobalRole(
+    requestId: number,
+    roleCode: string,
+    decision: DecideMembershipRequestDto['decision'],
+    actor: AuthenticatedUser,
+  ) {
     if (!actor.memberId) throw new ForbiddenException();
     await this.assertLeadershipPermission(actor.memberId, 'CLUB');
     const outcome = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT membership_request_id FROM membership_request WHERE membership_request_id = ${requestId} FOR UPDATE`;
       const row = await tx.membershipRequestGlobalRole.findUnique({
-        where: { membershipRequestId_roleCode: { membershipRequestId: requestId, roleCode } },
+        where: {
+          membershipRequestId_roleCode: {
+            membershipRequestId: requestId,
+            roleCode,
+          },
+        },
         include: {
           membershipRequest: { select: { personId: true } },
           role: { select: { description: true } },
         },
       });
       if (!row) throw new NotFoundException('Leadership request not found.');
-      if (row.membershipRequest.personId === actor.personId) throw new ForbiddenException('You cannot approve your own request.');
-      if (row.status !== MembershipCommitteeDecision.PENDING) throw new ConflictException('This request has already been decided.');
+      if (row.membershipRequest.personId === actor.personId)
+        throw new ForbiddenException('You cannot approve your own request.');
+      if (row.status !== MembershipCommitteeDecision.PENDING)
+        throw new ConflictException('This request has already been decided.');
       if (decision === MembershipCommitteeDecision.APPROVED) {
-        const member = await this.getOrCreateActiveMember(tx, row.membershipRequest.personId);
-        const existing = await tx.memberRole.findFirst({ where: { memberId: member.memberId, roleCode, endsOn: null } });
-        if (!existing) await tx.memberRole.create({ data: { memberId: member.memberId, roleCode, assignedBy: actor.memberId } });
+        const member = await this.getOrCreateActiveMember(
+          tx,
+          row.membershipRequest.personId,
+        );
+        const existing = await tx.memberRole.findFirst({
+          where: { memberId: member.memberId, roleCode, endsOn: null },
+        });
+        if (!existing)
+          await tx.memberRole.create({
+            data: {
+              memberId: member.memberId,
+              roleCode,
+              assignedBy: actor.memberId,
+            },
+          });
       }
-      await tx.membershipRequestGlobalRole.update({ where: { membershipRequestGlobalRoleId: row.membershipRequestGlobalRoleId }, data: { status: decision, decidedByMemberId: actor.memberId, decidedAt: new Date() } });
+      await tx.membershipRequestGlobalRole.update({
+        where: {
+          membershipRequestGlobalRoleId: row.membershipRequestGlobalRoleId,
+        },
+        data: {
+          status: decision,
+          decidedByMemberId: actor.memberId,
+          decidedAt: new Date(),
+        },
+      });
       await this.refreshAggregateStatus(tx, requestId);
-      const updated = await tx.membershipRequest.findUniqueOrThrow({ where: { membershipRequestId: requestId }, include: requestInclude });
+      const updated = await tx.membershipRequest.findUniqueOrThrow({
+        where: { membershipRequestId: requestId },
+        include: requestInclude,
+      });
       const roleName = row.role?.description ?? row.roleCode;
       return {
         response: { id: row.membershipRequestId, roleCode, decision },
         email: { request: updated, roleName },
       };
     });
-    await this.sendGlobalRoleDecisionEmail(outcome.email.request, outcome.email.roleName, decision);
+    this.dispatchDecisionEmail(
+      () =>
+        this.sendGlobalRoleDecisionEmail(
+          outcome.email.request,
+          outcome.email.roleName,
+          decision,
+        ),
+      decision,
+      outcome.email.roleName,
+    );
     return outcome.response;
   }
 
   private async assertCanDecide(memberId: number, committeeCode: string) {
-    if (!(await this.access.hasCommitteePermission(memberId, APPLICATIONS_DECIDE, committeeCode))) {
+    if (
+      !(await this.access.hasCommitteePermission(
+        memberId,
+        APPLICATIONS_DECIDE,
+        committeeCode,
+      ))
+    ) {
       throw new ForbiddenException();
     }
   }
 
-  private async getOrCreateActiveMember(tx: Prisma.TransactionClient, personId: number) {
-    const member = await tx.member.findUnique({ where: { personId } })
-      ?? await tx.member.create({ data: { personId } });
+  private async getOrCreateActiveMember(
+    tx: Prisma.TransactionClient,
+    personId: number,
+  ) {
+    const member =
+      (await tx.member.findUnique({ where: { personId } })) ??
+      (await tx.member.create({ data: { personId } }));
     if (!member.isActive) {
-      throw new ConflictException('The member account must be reactivated before approval.');
+      throw new ConflictException(
+        'The member account must be reactivated before approval.',
+      );
     }
     return member;
   }
 
-  private async assertLeadershipPermission(memberId: number, scope: 'CLUB' | 'DEVELOPER_COMMITTEES') {
-    const permission = scope === 'CLUB' ? 'applications.club_leaders.decide' : DEVELOPER_LEADERS_DECIDE;
-    if (!(await this.access.hasGlobalPermission(memberId, permission))) throw new ForbiddenException();
+  private async assertLeadershipPermission(
+    memberId: number,
+    scope: 'CLUB' | 'DEVELOPER_COMMITTEES',
+  ) {
+    const permission =
+      scope === 'CLUB'
+        ? 'applications.club_leaders.decide'
+        : DEVELOPER_LEADERS_DECIDE;
+    if (!(await this.access.hasGlobalPermission(memberId, permission)))
+      throw new ForbiddenException();
   }
 
-  // Who actually decides a request. It moves up to club leadership when no one
-  // other than the applicant can decide it where it was filed: a committee with
-  // no active Leader or Co-Leader, or no other developer-committees leader.
+  // Leadership applications follow the committee tree even when the applicant
+  // is the only current developer leader. Ordinary member requests stay with
+  // their committee when another active committee leader can review them.
   private async approvalScopeResolver(db: Reader, committeeIds: number[]) {
-    const today = new Date(new Date().toISOString().slice(0, 10));
-    const [committeeLeaders, developerLeaders] = await Promise.all([
-      // Committee Leaders and Co-Leaders hold applications.decide for their committee.
+    const uniqueIds = [...new Set(committeeIds)];
+    const [committeeLeaders, committees] = await Promise.all([
       db.memberCommittee.findMany({
-        where: { committeeId: { in: [...new Set(committeeIds)] }, role: { in: ['Leader', 'Co-Leader'] }, member: { isActive: true } },
+        where: {
+          committeeId: { in: uniqueIds },
+          role: { in: ['Leader', 'Co-Leader'] },
+          member: { isActive: true },
+        },
         select: { committeeId: true, member: { select: { personId: true } } },
       }),
-      db.memberRole.findMany({
-        where: {
-          member: { isActive: true },
-          role: { permissions: { some: { code: DEVELOPER_LEADERS_DECIDE } } },
-          AND: [{ OR: [{ startsOn: null }, { startsOn: { lte: today } }] }, { OR: [{ endsOn: null }, { endsOn: { gte: today } }] }],
+      db.committee.findMany({
+        where: { committeeId: { in: uniqueIds } },
+        select: {
+          committeeId: true,
+          parent: { select: { committeeCode: true } },
         },
-        select: { member: { select: { personId: true } } },
       }),
     ]);
-    const someoneElse = (personIds: number[], applicant: number) => personIds.some((personId) => personId !== applicant);
-    return ({ approvalScope, committeeId, personId }: ScopedRequest): ApprovalScope => {
-      if (approvalScope === 'COMMITTEE') {
-        const leaders = committeeLeaders.filter((row) => row.committeeId === committeeId).map((row) => row.member.personId);
-        return someoneElse(leaders, personId) ? 'COMMITTEE' : 'CLUB';
+    const developerCommitteeIds = new Set(
+      committees
+        .filter(
+          ({ parent }) => parent?.committeeCode === DEVELOPER_COMMITTEES_CODE,
+        )
+        .map(({ committeeId }) => committeeId),
+    );
+    const someoneElse = (personIds: number[], applicant: number) =>
+      personIds.some((personId) => personId !== applicant);
+
+    return ({
+      committeeId,
+      personId,
+      requestedRole,
+    }: ScopedRequest): ApprovalScope => {
+      if (requestedRole === 'Leader' || requestedRole === 'Co-Leader') {
+        return developerCommitteeIds.has(committeeId)
+          ? 'DEVELOPER_COMMITTEES'
+          : 'CLUB';
       }
-      if (approvalScope === 'DEVELOPER_COMMITTEES') {
-        return someoneElse(developerLeaders.map((row) => row.member.personId), personId) ? 'DEVELOPER_COMMITTEES' : 'CLUB';
-      }
-      return 'CLUB';
+
+      const leaders = committeeLeaders
+        .filter((row) => row.committeeId === committeeId)
+        .map((row) => row.member.personId);
+      return someoneElse(leaders, personId) ? 'COMMITTEE' : 'CLUB';
     };
   }
-
-  private async refreshAggregateStatus(tx: Prisma.TransactionClient, requestId: number) {
+  private async refreshAggregateStatus(
+    tx: Prisma.TransactionClient,
+    requestId: number,
+  ) {
     const [committees, roles] = await Promise.all([
-      tx.membershipRequestCommittee.findMany({ where: { membershipRequestId: requestId }, select: { status: true } }),
-      tx.membershipRequestGlobalRole.findMany({ where: { membershipRequestId: requestId }, select: { status: true } }),
+      tx.membershipRequestCommittee.findMany({
+        where: { membershipRequestId: requestId },
+        select: { status: true },
+      }),
+      tx.membershipRequestGlobalRole.findMany({
+        where: { membershipRequestId: requestId },
+        select: { status: true },
+      }),
     ]);
     const decisions = [...committees, ...roles];
-    const status = decisions.some((item) => item.status === MembershipCommitteeDecision.PENDING)
+    const status = decisions.some(
+      (item) => item.status === MembershipCommitteeDecision.PENDING,
+    )
       ? MembershipRequestStatus.PENDING
-      : decisions.some((item) => item.status === MembershipCommitteeDecision.APPROVED)
-        ? MembershipRequestStatus.APPROVED : MembershipRequestStatus.REJECTED;
-    await tx.membershipRequest.update({ where: { membershipRequestId: requestId }, data: { status } });
+      : decisions.some(
+            (item) => item.status === MembershipCommitteeDecision.APPROVED,
+          )
+        ? MembershipRequestStatus.APPROVED
+        : MembershipRequestStatus.REJECTED;
+    await tx.membershipRequest.update({
+      where: { membershipRequestId: requestId },
+      data: { status },
+    });
   }
 
+  private dispatchDecisionEmail(
+    send: () => Promise<void>,
+    decision: MembershipCommitteeDecision,
+    targetName: string,
+  ) {
+    void Promise.resolve()
+      .then(send)
+      .catch((error: unknown) => {
+        this.logger.error({
+          event: 'membership_decision_email_dispatch_failed',
+          decision,
+          targetName,
+          errorName: error instanceof Error ? error.name : 'unknown',
+        });
+      });
+  }
   private async sendCommitteeDecisionEmail(
     request: {
-      person?: { fullName?: string; emailPersonal?: string | null; emailUniversity?: string | null };
+      person?: {
+        fullName?: string;
+        emailPersonal?: string | null;
+        emailUniversity?: string | null;
+      };
     },
     committeeName: string,
     requestedRole: string,
@@ -402,7 +670,10 @@ export class MembershipRequestService {
       await this.emails.sendDecisionEmail({
         to,
         recipientName: person.fullName ?? 'Applicant',
-        decision: decision === MembershipCommitteeDecision.APPROVED ? 'APPROVED' : 'REJECTED',
+        decision:
+          decision === MembershipCommitteeDecision.APPROVED
+            ? 'APPROVED'
+            : 'REJECTED',
         committeeName,
         roleName: requestedRole,
       });
@@ -411,14 +682,21 @@ export class MembershipRequestService {
         event: 'membership_decision_email_failed',
         decision,
         targetName: committeeName,
-        error: error instanceof Error ? error.message : 'Unknown email delivery error',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unknown email delivery error',
       });
     }
   }
 
   private async sendGlobalRoleDecisionEmail(
     request: {
-      person?: { fullName?: string; emailPersonal?: string | null; emailUniversity?: string | null };
+      person?: {
+        fullName?: string;
+        emailPersonal?: string | null;
+        emailUniversity?: string | null;
+      };
     },
     roleName: string,
     decision: MembershipCommitteeDecision,
@@ -431,7 +709,10 @@ export class MembershipRequestService {
       await this.emails.sendDecisionEmail({
         to,
         recipientName: person.fullName ?? 'Applicant',
-        decision: decision === MembershipCommitteeDecision.APPROVED ? 'APPROVED' : 'REJECTED',
+        decision:
+          decision === MembershipCommitteeDecision.APPROVED
+            ? 'APPROVED'
+            : 'REJECTED',
         globalRoleName: roleName,
         roleName,
       });
@@ -440,7 +721,10 @@ export class MembershipRequestService {
         event: 'membership_decision_email_failed',
         decision,
         targetName: roleName,
-        error: error instanceof Error ? error.message : 'Unknown email delivery error',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unknown email delivery error',
       });
     }
   }
@@ -451,7 +735,11 @@ export class MembershipRequestService {
     status: MembershipRequestStatus;
     applicationData: unknown;
     createdAt: Date;
-    person: { fullName: string; emailPersonal: string | null; emailUniversity: string | null };
+    person: {
+      fullName: string;
+      emailPersonal: string | null;
+      emailUniversity: string | null;
+    };
     committees: Array<{
       status: MembershipCommitteeDecision;
       requestedRole: string;
