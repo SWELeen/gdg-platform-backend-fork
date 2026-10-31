@@ -17,6 +17,7 @@ const ERROR_CATALOG: Partial<Record<number, readonly [string, string]>> = {
   409: ['CONFLICT', 'The request conflicts with the current state.'],
   429: ['TOO_MANY_REQUESTS', 'Too many requests. Please try again later.'],
   500: ['INTERNAL_ERROR', 'An unexpected error occurred.'],
+  503: ['SERVICE_UNAVAILABLE', 'The service is temporarily unavailable.'],
 };
 // Domain codes an endpoint may send instead of the generic code for its
 // status. Only these pass through, together with their exception message.
@@ -40,6 +41,28 @@ const DOMAIN_ERROR_CODES: ReadonlyMap<string, number> = new Map([
   ['EMAIL_ADDRESS_NOT_AUTHORIZED', 403],
   ['SIGNUP_WEAK_PASSWORD', 400],
 ]);
+function safeErrorMetadata(error: unknown) {
+  const value =
+    typeof error === 'object' && error !== null
+      ? (error as { name?: unknown; code?: unknown; cause?: unknown })
+      : undefined;
+  const cause =
+    typeof value?.cause === 'object' && value.cause !== null
+      ? (value.cause as { code?: unknown })
+      : undefined;
+  const code = [value?.code, cause?.code].find(
+    (candidate): candidate is string =>
+      typeof candidate === 'string' && /^[A-Z0-9_]{1,32}$/.test(candidate),
+  );
+
+  return {
+    errorName:
+      error instanceof Error && /^[A-Za-z0-9_.$]{1,80}$/.test(error.name)
+        ? error.name
+        : 'unknown',
+    errorCode: code,
+  };
+}
 const DIAGNOSTIC_METHODS = new Set([
   'GET',
   'POST',
@@ -140,6 +163,7 @@ export class HttpErrorFilter implements ExceptionFilter {
             : 'OTHER',
         status,
         code,
+        ...safeErrorMetadata(exception),
       });
     }
 
