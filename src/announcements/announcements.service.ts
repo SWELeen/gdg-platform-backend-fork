@@ -117,7 +117,7 @@ export class AnnouncementsService {
       throw new BadRequestException('Provide both an action label and its URL, or clear both.');
     }
 
-    const result = await this.prisma.announcement.updateMany({
+    const [row] = await this.prisma.announcement.updateManyAndReturn({
       where: {
         announcementId,
         status: existing.status,
@@ -146,15 +146,11 @@ export class AnnouncementsService {
         ...(body.actionHref !== undefined ? { actionHref } : {}),
         ...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
       },
-    });
-    if (result.count !== 1) {
-      throw new ConflictException('This announcement changed while you were editing it. Reload it and try again.');
-    }
-    const row = await this.prisma.announcement.findUnique({
-      where: { announcementId },
       include: { publisher: { include: { person: { select: { fullName: true } } } } },
     });
-    if (!row) throw new NotFoundException('Announcement not found.');
+    if (!row) {
+      throw new ConflictException('This announcement changed while you were editing it. Reload it and try again.');
+    }
     return this.serialize(row);
   }
 
