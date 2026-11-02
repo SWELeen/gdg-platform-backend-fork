@@ -49,7 +49,12 @@ export class EventRegistrationsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return apiSuccess(
-      await this.service.register(eventId, user.personId, body.answers ?? []),
+      await this.service.register(
+        eventId,
+        user.personId,
+        body.discoverySource,
+        body.answers ?? [],
+      ),
       'Registered.',
     );
   }

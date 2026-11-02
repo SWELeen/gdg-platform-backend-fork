@@ -25,6 +25,7 @@ The auth layer sets `request.user = { personId, memberId? }` (see `src/auth/curr
 | Route | Permission | Granted to |
 | --- | --- | --- |
 | `GET /events/:eventId/registrations` | `registrants.view` | PR Leader, Co-Leader, Member |
+| `GET /registrations/blacklist` | `registrations.review` | PR Leader, Co-Leader, Member |
 | `PATCH /registrations/:registrationId` | `registrations.review` | PR Leader, Co-Leader, Member |
 | `PUT /events/:eventId/waitlist` | `registrations.review` | PR Leader, Co-Leader, Member |
 | `POST /events/:eventId/check-in` | `registrations.review` | PR Leader, Co-Leader, Member |
@@ -37,7 +38,7 @@ Anyone else receives 403 `FORBIDDEN`.
 | --- | --- | --- |
 | `GET /events` | none | Published events with `registrationOpen` |
 | `GET /events/:eventId` | optional | Published event, its questions, `registrationOpen`, and `myRegistration` when signed in |
-| `POST /events/:eventId/registrations` | required | Body `{ "answers": [{ "questionId": 1, "answer": "text" }] }`; checkbox answers are a list of options. Creates a `PENDING` registration; capacity never blocks it |
+| `POST /events/:eventId/registrations` | required | Body `{ "discoverySource": "WHATSAPP", "answers": [{ "questionId": 1, "answer": "text" }] }`; `discoverySource` is required and must be one of `WHATSAPP`, `X`, `LINKEDIN`, `ME_QR`, `LUMA_FEED`, `GOOGLE`, `INSTAGRAM`, or `TECH`. Checkbox answers are a list of options. Creates a `PENDING` registration; capacity never blocks it |
 | `GET /my/registrations` | required | All my registrations with `secondsToConfirm`, `canConfirm`, `canDecline`, and `attendanceToken` (QR payload) once confirmed |
 | `POST /registrations/:id/confirm` | owner | `AWAITING_CONFIRMATION` before the deadline → `CONFIRMED`, issues the QR token |
 | `POST /registrations/:id/decline` | owner | `AWAITING_CONFIRMATION` → `DECLINED` and promotes waitlist #1; `WAITLISTED` → `DECLINED` and renumbers |
@@ -50,7 +51,7 @@ Answers are stored as text; checkbox choices as a JSON array string. The QR toke
 
 Query: `page` (default 1), `pageSize` (1–100, default 20), `search` (name or email, case-insensitive), `status` (a registration status).
 
-`data` contains `event`, `summary` (`accepted`, `capacity`, `confirmed`, `awaitingConfirmation`, `waitlisted`, `pending`), `items` (`registrationId`, `name`, `email`, `status`, `registeredAt`, `waitlistPosition`, `confirmationDeadline`, `answers[]`) and `pagination` (`page`, `pageSize`, `total`, `totalPages`). Items are ordered by registration time.
+`data` contains `event`, `summary` (`accepted`, `capacity`, `confirmed`, `awaitingConfirmation`, `waitlisted`, `pending`), `items` (`registrationId`, `name`, `email`, `status`, `registeredAt`, `waitlistPosition`, `confirmationDeadline`, `discoverySource`, `answers[]`) and `pagination` (`page`, `pageSize`, `total`, `totalPages`). `discoverySource` is the attendee's required answer to “Where did you hear about this event?”. Items are ordered by registration time.
 
 ### PATCH /registrations/:registrationId
 
@@ -61,6 +62,10 @@ Body: `{ "status": "ACCEPTED" }` or `{ "status": "REJECTED" }`. Only `PENDING` o
 Body: `{ "token": "<value read from the QR>" }`. PR staff (`registrations.review`) scan a confirmed guest's QR on the attendance page. The backend matches the token's SHA-256 hash, then requires the same event, status `CONFIRMED`, no earlier check-in, and the approved window (one hour before start until the event ends). Success records `checked_in_at` / `checked_in_by_member_id` once and returns `registrationId`, `name`, `checkedInAt`. Errors: `INVALID_QR_CODE` (400; unknown token, other event, or not confirmed), `ALREADY_CHECKED_IN` (409), `CHECK_IN_CLOSED` (409).
 
 The registrants list also reports attendance: `summary.checkedIn`, `summary.notCheckedIn`, and each item's `checkedInAt`.
+
+### GET /registrations/blacklist
+
+Query: `page` (default 1), `pageSize` (1–100, default 20). Returns paginated attendance incidents with their reason (`NO_CHECK_IN`, `CONFIRMATION_EXPIRED`, or `LATE_CANCELLATION`), creation/resolution timestamps, attendee name/email, registration status, and event details. Requires `registrations.review`.
 
 ### PUT /events/:eventId/waitlist
 
@@ -89,6 +94,8 @@ Domain codes are allow-listed in `src/common/http/http-error.filter.ts` (`DOMAIN
 `RegistrationReviewService.promoteNextFromWaitlist(eventId)` gives waitlist #1 a seat when one is free, renumbers the rest and sends the promotion email. The member decline flow calls it after a decline; `RegistrationsModule` exports the service.
 
 `ConfirmationExpiryJob` runs every minute: overdue `AWAITING_CONFIRMATION` rows become `EXPIRED`, then each freed seat is offered to waitlist #1. A row only expires if it is still awaiting confirmation once the event is locked, so overlapping runs never promote the same person twice.
+
+The same job marks a still-confirmed registration `NO_CHECK_IN` once the event has ended for 24 hours without a recorded scan, and creates a `NO_CHECK_IN` blacklist entry. Cancelled events are excluded. Both transitions are conditional and idempotent.
 
 ## Tests
 

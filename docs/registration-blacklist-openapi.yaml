@@ -1,0 +1,93 @@
+openapi: 3.1.0
+info:
+  title: GDG Main Platform Registration Blacklist API
+  version: 1.0.0
+  description: PR-only paginated view of registration attendance incidents.
+servers:
+  - url: /
+paths:
+  /registrations/blacklist:
+    get:
+      operationId: listRegistrationBlacklist
+      summary: List registration attendance incidents
+      description: Requires the registrations.review permission. Includes no-shows, expired confirmation offers, and late cancellations.
+      security:
+        - bearerAuth: []
+        - accessCookie: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Paginated registration incident history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlacklistResponse'
+        '401': { description: Authentication required. }
+        '403': { description: Caller lacks registration review permission. }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: gdg_access
+  schemas:
+    BlacklistResponse:
+      type: object
+      required: [success, message, data, error]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        error: { type: 'null' }
+        data:
+          type: object
+          required: [items, pagination]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/BlacklistEntry' }
+            pagination: { $ref: '#/components/schemas/Pagination' }
+    BlacklistEntry:
+      type: object
+      required: [entryId, reason, createdAt, resolvedAt, resolutionReason, registration]
+      properties:
+        entryId: { type: integer }
+        reason:
+          type: string
+          enum: [NO_CHECK_IN, CONFIRMATION_EXPIRED, LATE_CANCELLATION]
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+        resolutionReason: { type: [string, 'null'] }
+        registration:
+          type: object
+          required: [registrationId, status, registeredAt, checkedInAt, name, email, event]
+          properties:
+            registrationId: { type: integer }
+            status: { type: string }
+            registeredAt: { type: string, format: date-time }
+            checkedInAt: { type: [string, 'null'], format: date-time }
+            name: { type: string }
+            email: { type: [string, 'null'], format: email }
+            event:
+              type: object
+              required: [eventId, name, startsAt]
+              properties:
+                eventId: { type: integer }
+                name: { type: string }
+                startsAt: { type: string, format: date-time }
+    Pagination:
+      type: object
+      required: [page, pageSize, total, totalPages]
+      properties:
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
