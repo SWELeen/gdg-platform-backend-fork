@@ -531,7 +531,7 @@ try {
         {
           email: 'LeenAlghamdi@gmail.com',
           role_code: 'GROUP_LEADER',
-          permissions: ['members.manage'],
+          permissions: ['announcements.manage', 'members.manage'],
         },
         {
           email: 'club.advisor@example.test',
@@ -541,12 +541,12 @@ try {
         {
           email: 'club.coleader@example.test',
           role_code: 'GROUP_CO_LEADER',
-          permissions: ['members.manage'],
+          permissions: ['announcements.manage', 'members.manage'],
         },
       ].sort((a, b) =>
         a.email.toLowerCase().localeCompare(b.email.toLowerCase()),
       ),
-      'Only the club leader and co-leader match members.manage; the advisor has no permissions and committee leadership adds no global role',
+      'Only the club leader and co-leader match members.manage and announcements.manage; the advisor has no permissions and committee leadership adds no global role',
     );
     const first = domainRows(seedDatabase);
     seed(seedDatabase);

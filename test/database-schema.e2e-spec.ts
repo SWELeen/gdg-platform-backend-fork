@@ -263,7 +263,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       expect(key.definition).toBe('PRIMARY KEY (role_code, code)');
     });
 
-    it('resolves only members.manage for club leaders and leaves ADVISOR without permissions', async () => {
+    it('resolves approved global permissions for club leaders and leaves ADVISOR without permissions', async () => {
       const roles = await db.role.findMany({
         orderBy: { roleCode: 'asc' },
         select: {
@@ -279,6 +279,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         ...['GROUP_CO_LEADER', 'GROUP_LEADER'].map((roleCode) => ({
           roleCode,
           permissions: [
+            { code: 'announcements.manage', permission: { scope: 'global' } },
             { code: 'members.manage', permission: { scope: 'global' } },
           ],
         })),
