@@ -79,12 +79,12 @@ export class UpdateAnnouncementDto {
   @IsOptional()
   @IsString()
   @MaxLength(80)
-  actionLabel?: string;
+  actionLabel?: string | null;
 
   @IsOptional()
   @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   @MaxLength(2048)
-  actionHref?: string;
+  actionHref?: string | null;
 
   @ValidateIf((_object, value) => value !== undefined)
   @IsBoolean()

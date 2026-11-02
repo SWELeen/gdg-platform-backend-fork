@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConflictException } from '@nestjs/common';
 import { AnnouncementsService } from './announcements.service.js';
 
 const hasGlobalPermission = vi.fn();
 const create = vi.fn();
 const findMany = vi.fn();
 const findUnique = vi.fn();
+const updateMany = vi.fn();
 const uploadAnnouncementImage = vi.fn();
 
 const service = new AnnouncementsService(
   {
-    announcement: { create, findMany, findUnique },
+    announcement: { create, findMany, findUnique, updateMany },
   } as never,
   { hasGlobalPermission } as never,
   { uploadAnnouncementImage } as never,
@@ -91,5 +93,69 @@ describe('AnnouncementsService', () => {
     )).rejects.toMatchObject({ status: 400 });
 
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('updates only supplied fields and conditionally matches the state it validated', async () => {
+    const existing = {
+      announcementId: 7,
+      slug: 'old-workshop-12345678',
+      title: 'Old workshop',
+      excerpt: 'Join our next developer workshop.',
+      category: 'workshops',
+      status: 'PUBLISHED',
+      body: 'Original details',
+      imageUrl: null,
+      actionLabel: 'Register',
+      actionHref: 'https://example.com/register',
+      pinned: false,
+      publishedAt: new Date('2026-11-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-11-01T00:00:00.000Z'),
+      publisher: { person: { fullName: 'Group Leader' } },
+    };
+    const updated = { ...existing, title: 'Updated workshop' };
+    findUnique.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
+    updateMany.mockResolvedValue({ count: 1 });
+
+    await service.update({ personId: 1, memberId: 12 }, 7, { title: 'Updated workshop' });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        announcementId: 7,
+        status: existing.status,
+        title: existing.title,
+        excerpt: existing.excerpt,
+        category: existing.category,
+        body: existing.body,
+        imageUrl: existing.imageUrl,
+        actionLabel: existing.actionLabel,
+        actionHref: existing.actionHref,
+        pinned: existing.pinned,
+      },
+      data: { title: 'Updated workshop' },
+    });
+  });
+
+  it('rejects an update when the validated announcement state changed concurrently', async () => {
+    findUnique.mockResolvedValueOnce({
+      announcementId: 7,
+      title: 'Old workshop',
+      excerpt: 'Join our next developer workshop.',
+      category: 'workshops',
+      status: 'PUBLISHED',
+      body: null,
+      imageUrl: null,
+      actionLabel: null,
+      actionHref: null,
+      pinned: false,
+    });
+    updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.update(
+      { personId: 1, memberId: 12 },
+      7,
+      { title: 'Concurrent edit attempt' },
+    )).rejects.toBeInstanceOf(ConflictException);
+
+    expect(findUnique).toHaveBeenCalledTimes(1);
   });
 });
