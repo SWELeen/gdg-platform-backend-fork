@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: GDG Main Platform Announcements API
   version: 1.0.0
-      description: Public published announcements and group-leadership publishing, drafts, and management.
+  description: Public published announcements and group-leadership publishing, drafts, and management.
 servers:
   - url: /
 paths:
@@ -120,6 +120,7 @@ paths:
         '401': { description: Authentication required. }
         '403': { description: Caller lacks group leadership publishing permission. }
         '404': { description: Announcement not found. }
+        '409': { description: Announcement changed concurrently; reload before updating. }
     delete:
       operationId: deleteAnnouncement
       summary: Delete a published announcement
@@ -195,8 +196,8 @@ components:
         excerpt: { type: string }
         category: { $ref: '#/components/schemas/AnnouncementCategory' }
         publicationStatus: { $ref: '#/components/schemas/AnnouncementStatus' }
-        draftActionLabel: { type: [string, 'null'], description: Present only in authorized management results for incomplete drafts. }
-        draftActionHref: { type: [string, 'null'], format: uri, description: Present only in authorized management results for incomplete drafts. }
+        draftActionLabel: { type: [string, 'null'], description: Authorized management results include each draft action field independently; either may be null. }
+        draftActionHref: { type: [string, 'null'], format: uri, description: Authorized management results include each draft action field independently; either may be null. }
         media:
           oneOf:
             - type: object

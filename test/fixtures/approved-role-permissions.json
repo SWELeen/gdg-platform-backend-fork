@@ -1,4 +1,6 @@
 [
+  { "role_code": "GROUP_CO_LEADER", "code": "announcements.manage" },
   { "role_code": "GROUP_CO_LEADER", "code": "members.manage" },
+  { "role_code": "GROUP_LEADER", "code": "announcements.manage" },
   { "role_code": "GROUP_LEADER", "code": "members.manage" }
 ]

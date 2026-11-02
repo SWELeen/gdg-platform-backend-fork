@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AnnouncementCategory, AnnouncementStatus } from '../generated/prisma/client.js';
 import type { AuthenticatedUser } from '../auth/current-user.js';
@@ -117,8 +117,19 @@ export class AnnouncementsService {
       throw new BadRequestException('Provide both an action label and its URL, or clear both.');
     }
 
-    const row = await this.prisma.announcement.update({
-      where: { announcementId },
+    const [row] = await this.prisma.announcement.updateManyAndReturn({
+      where: {
+        announcementId,
+        status: existing.status,
+        title: existing.title,
+        excerpt: existing.excerpt,
+        category: existing.category,
+        body: existing.body,
+        imageUrl: existing.imageUrl,
+        actionLabel: existing.actionLabel,
+        actionHref: existing.actionHref,
+        pinned: existing.pinned,
+      },
       data: {
         ...(body.title !== undefined ? { title: body.title.trim() } : {}),
         ...(body.excerpt !== undefined ? { excerpt: body.excerpt.trim() } : {}),
@@ -131,12 +142,15 @@ export class AnnouncementsService {
         } : {}),
         ...(body.body !== undefined ? { body: body.body.trim() || null } : {}),
         ...(body.imageUrl !== undefined ? { imageUrl: body.imageUrl?.trim() || null } : {}),
-        actionLabel,
-        actionHref,
+        ...(body.actionLabel !== undefined ? { actionLabel } : {}),
+        ...(body.actionHref !== undefined ? { actionHref } : {}),
         ...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
       },
       include: { publisher: { include: { person: { select: { fullName: true } } } } },
     });
+    if (!row) {
+      throw new ConflictException('This announcement changed while you were editing it. Reload it and try again.');
+    }
     return this.serialize(row);
   }
 

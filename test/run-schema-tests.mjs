@@ -61,6 +61,10 @@ const approvedCommitteePolicy = JSON.parse(
 const approvedRolePermissions = JSON.parse(
   readFileSync('test/fixtures/approved-role-permissions.json', 'utf8'),
 );
+// The historical club-role migration predates announcement management grants.
+const clubRoleMigrationPermissions = approvedRolePermissions.filter(
+  ({ code }) => code !== 'announcements.manage',
+);
 const approvedPermissions = JSON.parse(
   readFileSync('test/fixtures/approved-permissions.json', 'utf8'),
 );
@@ -531,7 +535,7 @@ try {
         {
           email: 'LeenAlghamdi@gmail.com',
           role_code: 'GROUP_LEADER',
-          permissions: ['members.manage'],
+          permissions: ['announcements.manage', 'members.manage'],
         },
         {
           email: 'club.advisor@example.test',
@@ -541,12 +545,12 @@ try {
         {
           email: 'club.coleader@example.test',
           role_code: 'GROUP_CO_LEADER',
-          permissions: ['members.manage'],
+          permissions: ['announcements.manage', 'members.manage'],
         },
       ].sort((a, b) =>
         a.email.toLowerCase().localeCompare(b.email.toLowerCase()),
       ),
-      'Only the club leader and co-leader match members.manage; the advisor has no permissions and committee leadership adds no global role',
+      'Only the club leader and co-leader match members.manage and announcements.manage; the advisor has no permissions and committee leadership adds no global role',
     );
     const first = domainRows(seedDatabase);
     seed(seedDatabase);
@@ -1340,7 +1344,7 @@ try {
     ),
     [
       { role_code: 'ADVISOR', code: 'test.preserved' },
-      ...approvedRolePermissions,
+      ...clubRoleMigrationPermissions,
     ],
     'Insert only two approved pairs and retain unrelated local policy',
   );
