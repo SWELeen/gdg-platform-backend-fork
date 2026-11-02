@@ -61,6 +61,10 @@ const approvedCommitteePolicy = JSON.parse(
 const approvedRolePermissions = JSON.parse(
   readFileSync('test/fixtures/approved-role-permissions.json', 'utf8'),
 );
+// The historical club-role migration predates announcement management grants.
+const clubRoleMigrationPermissions = approvedRolePermissions.filter(
+  ({ code }) => code !== 'announcements.manage',
+);
 const approvedPermissions = JSON.parse(
   readFileSync('test/fixtures/approved-permissions.json', 'utf8'),
 );
@@ -1340,7 +1344,7 @@ try {
     ),
     [
       { role_code: 'ADVISOR', code: 'test.preserved' },
-      ...approvedRolePermissions,
+      ...clubRoleMigrationPermissions,
     ],
     'Insert only two approved pairs and retain unrelated local policy',
   );

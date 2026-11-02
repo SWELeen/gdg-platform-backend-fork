@@ -6,12 +6,12 @@ const hasGlobalPermission = vi.fn();
 const create = vi.fn();
 const findMany = vi.fn();
 const findUnique = vi.fn();
-const updateMany = vi.fn();
+const updateManyAndReturn = vi.fn();
 const uploadAnnouncementImage = vi.fn();
 
 const service = new AnnouncementsService(
   {
-    announcement: { create, findMany, findUnique, updateMany },
+    announcement: { create, findMany, findUnique, updateManyAndReturn },
   } as never,
   { hasGlobalPermission } as never,
   { uploadAnnouncementImage } as never,
@@ -114,11 +114,11 @@ describe('AnnouncementsService', () => {
     };
     const updated = { ...existing, title: 'Updated workshop' };
     findUnique.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
-    updateMany.mockResolvedValue({ count: 1 });
+    updateManyAndReturn.mockResolvedValue([updated]);
 
     await service.update({ personId: 1, memberId: 12 }, 7, { title: 'Updated workshop' });
 
-    expect(updateMany).toHaveBeenCalledWith({
+    expect(updateManyAndReturn).toHaveBeenCalledWith({
       where: {
         announcementId: 7,
         status: existing.status,
@@ -132,6 +132,7 @@ describe('AnnouncementsService', () => {
         pinned: existing.pinned,
       },
       data: { title: 'Updated workshop' },
+      include: { publisher: { include: { person: { select: { fullName: true } } } } },
     });
   });
 
@@ -148,7 +149,7 @@ describe('AnnouncementsService', () => {
       actionHref: null,
       pinned: false,
     });
-    updateMany.mockResolvedValue({ count: 0 });
+    updateManyAndReturn.mockResolvedValue([]);
 
     await expect(service.update(
       { personId: 1, memberId: 12 },
