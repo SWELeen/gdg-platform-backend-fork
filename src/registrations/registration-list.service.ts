@@ -14,14 +14,27 @@ export interface RegistrationListQuery {
   status?: RegistrationStatus;
 }
 
-// Registrant details come from the account, so nobody can claim to be a
-// member. Contact and study details are shared only when the event asks for them.
+// Membership, university, and committee details come from the account, so
+// attendees cannot self-report them. Phone and major are shared when requested.
 export function registrantProfile(
-  person: { phoneNumber: string | null; major: string | null; member: { isActive: boolean } | null },
+  person: {
+    phoneNumber: string | null;
+    major: string | null;
+    university?: string | null;
+    member: {
+      isActive: boolean;
+      committees?: { committee: { committeeName: string } }[];
+    } | null;
+  },
   requiredFields: string[],
 ) {
+  const committees = person.member?.isActive
+    ? (person.member.committees ?? []).map(({ committee }) => committee.committeeName)
+    : [];
   return {
     membership: person.member?.isActive === true,
+    ...(person.university ? { university: person.university } : {}),
+    ...(committees.length ? { committees: committees.join(', ') } : {}),
     ...(requiredFields.includes('phone') ? { phone: person.phoneNumber } : {}),
     ...(requiredFields.includes('major') ? { major: person.major } : {}),
   };
@@ -97,7 +110,16 @@ export class RegistrationListService {
               emailUniversity: true,
               phoneNumber: true,
               major: true,
-              member: { select: { isActive: true } },
+              university: true,
+              member: {
+                select: {
+                  isActive: true,
+                  committees: {
+                    select: { committee: { select: { committeeName: true } } },
+                    orderBy: { committeeId: 'asc' },
+                  },
+                },
+              },
             },
           },
           answers: {
