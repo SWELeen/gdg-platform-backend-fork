@@ -3,11 +3,25 @@ import {
   ArrayMaxSize,
   IsArray,
   IsDefined,
+  IsIn,
   IsInt,
   IsOptional,
   Min,
   ValidateNested,
 } from 'class-validator';
+
+export const EVENT_DISCOVERY_SOURCES = [
+  'WHATSAPP',
+  'X',
+  'LINKEDIN',
+  'ME_QR',
+  'LUMA_FEED',
+  'GOOGLE',
+  'INSTAGRAM',
+  'TECH',
+] as const;
+
+export type EventDiscoverySource = (typeof EVENT_DISCOVERY_SOURCES)[number];
 
 export class AnswerDto {
   @IsInt({ message: 'questionId must be a whole number.' })
@@ -21,6 +35,11 @@ export class AnswerDto {
 }
 
 export class RegisterForEventDto {
+  @IsIn(EVENT_DISCOVERY_SOURCES, {
+    message: 'discoverySource must be a supported event discovery source.',
+  })
+  discoverySource: EventDiscoverySource;
+
   @IsOptional()
   @IsArray({ message: 'answers must be a list.' })
   @ArrayMaxSize(100, { message: 'answers is too long.' })

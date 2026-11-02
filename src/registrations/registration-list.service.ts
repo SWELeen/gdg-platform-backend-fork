@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   CommitteeAccessService,
   REGISTRANTS_VIEW,
+  REGISTRATIONS_REVIEW,
 } from './committee-access.service.js';
 import { registrationForbidden } from './registration-errors.js';
 
@@ -103,6 +104,7 @@ export class RegistrationListService {
           waitlistPosition: true,
           confirmationDeadline: true,
           checkedInAt: true,
+          discoverySource: true,
           person: {
             select: {
               fullName: true,
@@ -178,11 +180,83 @@ export class RegistrationListService {
         waitlistPosition: row.waitlistPosition,
         confirmationDeadline: row.confirmationDeadline,
         checkedInAt: row.checkedInAt,
+        discoverySource: row.discoverySource,
         answers: row.answers.map((answer) => ({
           questionId: answer.questionId,
           question: answer.question.questionText,
           answer: answer.answerText,
         })),
+      })),
+      pagination: {
+        page: query.page,
+        pageSize: query.pageSize,
+        total,
+        totalPages: Math.ceil(total / query.pageSize),
+      },
+    };
+  }
+
+  async listBlacklist(
+    query: Pick<RegistrationListQuery, 'page' | 'pageSize'>,
+    actorMemberId: number,
+  ) {
+    if (
+      !(await this.access.hasCommitteePermission(
+        actorMemberId,
+        REGISTRATIONS_REVIEW,
+      ))
+    ) {
+      throw registrationForbidden();
+    }
+
+    const [total, entries] = await this.prisma.$transaction([
+      this.prisma.registrationBlacklistEntry.count(),
+      this.prisma.registrationBlacklistEntry.findMany({
+        orderBy: [{ createdAt: 'desc' }, { entryId: 'desc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+        select: {
+          entryId: true,
+          reason: true,
+          createdAt: true,
+          resolvedAt: true,
+          resolutionReason: true,
+          registration: {
+            select: {
+              registrationId: true,
+              status: true,
+              registeredAt: true,
+              checkedInAt: true,
+              person: {
+                select: {
+                  fullName: true,
+                  emailPersonal: true,
+                  emailUniversity: true,
+                },
+              },
+              event: {
+                select: { eventId: true, name: true, startsAt: true },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      items: entries.map(({ registration, ...entry }) => ({
+        ...entry,
+        registration: {
+          registrationId: registration.registrationId,
+          status: registration.status,
+          registeredAt: registration.registeredAt,
+          checkedInAt: registration.checkedInAt,
+          name: registration.person.fullName,
+          email:
+            registration.person.emailPersonal ??
+            registration.person.emailUniversity,
+          event: registration.event,
+        },
       })),
       pagination: {
         page: query.page,

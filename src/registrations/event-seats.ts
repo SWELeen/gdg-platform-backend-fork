@@ -14,6 +14,7 @@ export interface LockedEvent {
   capacity: number;
   confirmationWindowHours: number;
   startsAt: Date;
+  endsAt: Date;
 }
 
 // Only accepted people who have not dropped out hold a seat.
@@ -67,7 +68,8 @@ export async function lockEvent(tx: Tx, eventId: number): Promise<LockedEvent> {
   const rows = await tx.$queryRaw<LockedEvent[]>`
     SELECT event_id AS "eventId", name, capacity,
            confirmation_window_hours AS "confirmationWindowHours",
-           starts_at AS "startsAt"
+           starts_at AS "startsAt",
+           ends_at AS "endsAt"
     FROM events
     WHERE event_id = ${eventId}
     FOR UPDATE`;
