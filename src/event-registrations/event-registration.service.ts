@@ -26,7 +26,10 @@ import { RegistrationReviewService } from '../registrations/registration-review.
 import { RegistrationEmailService } from '../registrations/registration-email.service.js';
 import { checkAnswers } from './answers.js';
 import { AttendanceTokenService } from './attendance-token.service.js';
-import type { AnswerDto } from './event-registration.dto.js';
+import type {
+  AnswerDto,
+  EventDiscoverySource,
+} from './event-registration.dto.js';
 
 const UNIQUE_VIOLATION = 'P2002';
 // Cancelling a confirmed seat within this long of the start is late.
@@ -149,7 +152,12 @@ export class EventRegistrationService {
 
   // Registration is not limited by capacity: everyone enters as PENDING and
   // PR chooses who gets a seat.
-  async register(eventId: number, personId: number, answers: AnswerDto[]) {
+  async register(
+    eventId: number,
+    personId: number,
+    discoverySource: EventDiscoverySource,
+    answers: AnswerDto[],
+  ) {
     const event = await this.prisma.event.findUnique({
       where: { eventId },
       select: {
@@ -179,7 +187,7 @@ export class EventRegistrationService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const registration = await tx.eventRegistration.create({
-          data: { eventId, personId },
+          data: { eventId, personId, discoverySource },
           select: { registrationId: true, status: true, registeredAt: true },
         });
         await tx.registrationAnswer.createMany({

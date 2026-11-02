@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   BlacklistReason,
+  EventStatus,
   RegistrationStatus,
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -36,6 +37,7 @@ const REVIEWABLE_STATUSES: RegistrationStatus[] = [
   RegistrationStatus.PENDING,
   RegistrationStatus.WAITLISTED,
 ];
+const NO_SHOW_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 const recipientSelect = {
   person: {
     select: { fullName: true, emailPersonal: true, emailUniversity: true },
@@ -239,6 +241,63 @@ export class RegistrationReviewService {
       }
     }
     return { expired, promoted };
+  }
+
+  // A confirmed attendee becomes a no-show only after the event has ended
+  // and a full day has passed without a recorded check-in.
+  async markOverdueNoShows(now = new Date()) {
+    const cutoff = new Date(now.getTime() - NO_SHOW_GRACE_PERIOD_MS);
+    const candidates = await this.prisma.eventRegistration.findMany({
+      where: {
+        status: RegistrationStatus.CONFIRMED,
+        checkedInAt: null,
+        event: {
+          is: {
+            endsAt: { lte: cutoff },
+            status: { not: EventStatus.CANCELLED },
+          },
+        },
+      },
+      orderBy: [{ eventId: 'asc' }, { registrationId: 'asc' }],
+      take: 500,
+      select: { registrationId: true, eventId: true },
+    });
+
+    let marked = 0;
+    for (const { registrationId, eventId } of candidates) {
+      const changed = await inEventTransaction(this.prisma, async (tx) => {
+        const event = await lockEvent(tx, eventId);
+        if (event.endsAt.getTime() > cutoff.getTime()) return false;
+        const currentEvent = await tx.event.findUnique({
+          where: { eventId },
+          select: { status: true },
+        });
+        if (!currentEvent || currentEvent.status === EventStatus.CANCELLED) {
+          return false;
+        }
+
+        const result = await tx.eventRegistration.updateMany({
+          where: {
+            registrationId,
+            status: RegistrationStatus.CONFIRMED,
+            checkedInAt: null,
+          },
+          data: { status: RegistrationStatus.NO_CHECK_IN },
+        });
+        if (result.count === 0) return false;
+
+        await tx.registrationBlacklistEntry.createMany({
+          data: {
+            registrationId,
+            reason: BlacklistReason.NO_CHECK_IN,
+          },
+          skipDuplicates: true,
+        });
+        return true;
+      });
+      if (changed) marked += 1;
+    }
+    return { marked };
   }
 
   private async promoteWithin(

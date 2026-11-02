@@ -68,6 +68,21 @@ export class RegistrationsController {
     return apiSuccess(result);
   }
 
+  @Get('registrations/blacklist')
+  async listBlacklist(
+    @Query() query: ListRegistrationsQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const result = await this.listService.listBlacklist(
+      {
+        page: query.page ? Number(query.page) : 1,
+        pageSize: query.pageSize ? Number(query.pageSize) : DEFAULT_PAGE_SIZE,
+      },
+      staffMemberId(user),
+    );
+    return apiSuccess(result);
+  }
+
   @Patch('registrations/:registrationId')
   async review(
     @Param('registrationId', ParseIntPipe) registrationId: number,

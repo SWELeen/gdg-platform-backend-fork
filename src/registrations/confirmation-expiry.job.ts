@@ -23,11 +23,18 @@ export class ConfirmationExpiryJob {
     try {
       const { expired, promoted } =
         await this.reviewService.expireOverdueConfirmations();
+      const { marked } = await this.reviewService.markOverdueNoShows();
       if (expired > 0) {
         this.logger.log({
           event: 'registration_confirmations_expired',
           expired,
           promoted: promoted.length,
+        });
+      }
+      if (marked > 0) {
+        this.logger.log({
+          event: 'registration_no_shows_marked',
+          marked,
         });
       }
     } catch (error) {
