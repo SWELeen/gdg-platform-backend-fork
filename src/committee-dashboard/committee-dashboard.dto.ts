@@ -49,18 +49,38 @@ export class ReviewCommitteeTaskDto {
 }
 
 export class CreateCommitteeMemberDto {
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(3)
-  @MaxLength(255)
-  @Matches(/^[\p{L}\s.'-]+$/u)
-  fullName!: string;
-
   @IsEmail()
   @MaxLength(254)
   email!: string;
 }
 
+export class AssignDeveloperCommitteeMemberDto {
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  committeeCode!: string;
+
+  @IsIn(['Member', 'Leader', 'Co-Leader'])
+  role!: 'Member' | 'Leader' | 'Co-Leader';
+}
+
+export class AssignClubPersonDto {
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  @IsIn(['Member', 'Leader', 'Co-Leader', 'ADVISOR', 'DEVELOPER_COMMITTEES_LEADER'])
+  role!: 'Member' | 'Leader' | 'Co-Leader' | 'ADVISOR' | 'DEVELOPER_COMMITTEES_LEADER';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  committeeCode?: string;
+}
 export class AddMemberToCommitteeDto {
   @IsString()
   @IsNotEmpty()
