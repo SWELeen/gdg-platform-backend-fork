@@ -269,3 +269,14 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Owner/approver: after final review and isolated verification, the user requested PRs to main for their backend branches and explicitly excluded frontend work.
 - Scope: commit the backend setup/architecture/auth/workflow documentation corrections and handoff review; publish the four pending feature branches; reuse the existing database PR to main and avoid duplicate PRs for previously merged branches. All PR bases are main, with their shared history and review order documented.
 - No frontend changes, PR merges, production/Supabase operations or unrelated files are authorized. The untracked member proposal and frontend package lock remain preserved.
+
+
+## 2026-11-04 Committee and group leadership assignment
+
+- Owner/approver: project user in this chat.
+- Status: approved implementation requirement.
+- Decision: committee Leaders and Co-Leaders in CONTENT, PM, PR, DMD, DATA, CYBER, ROBOTICS, WEB, AUTOMATION, and AI may add existing platform accounts as Members to their own committee only. The sole overall Developer Committees Leader may assign existing accounts as Member, Leader, or Co-Leader to any of the six child committees under DEV, and may review developer leader applications; there is no overall Developer Committees Co-Leader role. Group Leaders and Co-Leaders may assign existing accounts as Member, Leader, or Co-Leader to any leaf committee, or assign the global ADVISOR or DEVELOPER_COMMITTEES_LEADER role. Assignment is by the account's personal login email; no account/person is created from an email address.
+- A non-member account is promoted to a Member record only when an authorized assignment is made. A person without an existing authenticated platform account cannot be assigned.
+- Affected repositories: backend and frontend.
+- Migration implications: add developer_committees.members.assign to the existing DEVELOPER_COMMITTEES_LEADER role only; no overall Developer Committees Co-Leader role is created. No existing rows are rewritten.
+- Source: explicit user instruction in this chat on 2026-11-04.

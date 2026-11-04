@@ -18,6 +18,8 @@ import { SEAT_HOLDING_STATUSES } from '../registrations/event-seats.js';
 import { CommitteeEventImageStorageService } from './committee-event-image-storage.service.js';
 import {
   AddMemberToCommitteeDto,
+  AssignClubPersonDto,
+  AssignDeveloperCommitteeMemberDto,
   CreateCommitteeEventDto,
   CreateCommitteeMemberDto,
   CommitteeTaskStatus,
@@ -32,6 +34,7 @@ const VIEW_PERMISSION = 'dashboard.view';
 const TASK_PERMISSION = 'tasks.manage';
 const POINTS_PERMISSION = 'points.manage';
 const MEMBERS_PERMISSION = 'members.manage';
+const MEMBER_ASSIGNABLE_COMMITTEE_CODES = new Set(['CONTENT', 'PM', 'PR', 'DMD', 'DATA', 'CYBER', 'ROBOTICS', 'WEB', 'AUTOMATION', 'AI']);
 const EVENTS_PERMISSION = 'events.create';
 // Tasks still being worked on, including those waiting for a leader to confirm.
 const ACTIVE_TASK_STATUSES = [CommitteeTaskStatus.TODO, CommitteeTaskStatus.IN_PROGRESS, CommitteeTaskStatus.PENDING_REVIEW];
@@ -49,6 +52,7 @@ export class CommitteeDashboardService {
   async getDeveloperOverview(user: RequestUser | undefined) {
     if (!user?.memberId) throw new ForbiddenException();
     if (!(await this.access.hasGlobalPermission(user.memberId, 'developer_committees.dashboard.view'))) throw new ForbiddenException();
+    const canAssignMembers = await this.access.hasGlobalPermission(user.memberId, 'developer_committees.members.assign');
     const committees = (await this.prisma.committee.findMany({
       where: { parent: { committeeCode: DEVELOPER_COMMITTEES_CODE } },
       select: { committeeId: true, committeeCode: true, committeeName: true, _count: { select: { members: true } } },
@@ -62,13 +66,16 @@ export class CommitteeDashboardService {
     const activeTasks = await Promise.all(committees.map((committee: any) => this.prisma.committeeTask.count({
       where: { committeeId: committee.committeeId, status: { in: ACTIVE_TASK_STATUSES } },
     })));
-    return committees.map((committee: any, index: number) => ({
+    return {
+      permissions: { canAssignMembers },
+      committees: committees.map((committee: any, index: number) => ({
       code: committee.committeeCode,
       name: committee.committeeName,
       memberCount: committee._count.members,
       leaderCount: leaders.find((row: any) => row.committeeId === committee.committeeId)?._count._all ?? 0,
       activeTaskCount: activeTasks[index],
-    }));
+      })),
+    };
   }
 
   async getClubLeadershipOverview(user: RequestUser | undefined) {
@@ -355,62 +362,52 @@ export class CommitteeDashboardService {
   async addMember(user: RequestUser | undefined, committeeCode: string, dto: CreateCommitteeMemberDto) {
     const { committee, memberId } = await this.requireMembership(user, committeeCode);
     await this.requirePermission(memberId, MEMBERS_PERMISSION, committee.committeeId);
+    if (!MEMBER_ASSIGNABLE_COMMITTEE_CODES.has(committee.committeeCode)) {
+      throw new ForbiddenException('Members can only be added through the approved committee workspaces.');
+    }
 
     const email = dto.email.trim().toLowerCase();
-    const fullName = dto.fullName.trim();
-    if (!fullName || fullName.length < 3) throw new BadRequestException('A valid member name is required.');
-
     try {
       return await this.prisma.$transaction(async (transaction) => {
-        const person = await transaction.person.findFirst({
-          where: {
-            OR: [
-              { emailUniversity: { equals: email, mode: 'insensitive' } },
-              { emailPersonal: { equals: email, mode: 'insensitive' } },
-            ],
-          },
-        });
-
-        if (person && !person.isActive) {
-          throw new ConflictException('This person is inactive and cannot be added to the committee.');
-        }
-
-        const resolvedPerson = person ?? await transaction.person.create({
-          data: { fullName, emailUniversity: email, isActive: true },
-        });
-        let member = await transaction.member.findUnique({ where: { personId: resolvedPerson.personId } });
-        if (member && !member.isActive) {
-          throw new ConflictException('This member is inactive and cannot be added to the committee.');
-        }
-        if (!member) {
-          member = await transaction.member.create({
-            data: { personId: resolvedPerson.personId, memberType: 'current', isActive: true },
-          });
-        }
-
+        const { person, member } = await this.resolveExistingAccountMember(transaction, email);
         const existingMembership = await transaction.memberCommittee.findUnique({
           where: { memberId_committeeId: { memberId: member.memberId, committeeId: committee.committeeId } },
         });
         if (existingMembership) throw new ConflictException('This person is already a member of the committee.');
-
         await transaction.memberCommittee.create({
           data: { memberId: member.memberId, committeeId: committee.committeeId, role: 'Member' },
         });
-
-        return {
-          id: String(member.memberId),
-          name: resolvedPerson.fullName,
-          email: resolvedPerson.emailUniversity ?? resolvedPerson.emailPersonal ?? email,
-          role: 'Member',
-          status: 'Active',
-        };
+        return { id: String(member.memberId), name: person.fullName, email, role: 'Member', status: 'Active' };
       });
     } catch (error: any) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('A person or membership with this email already exists.');
+        throw new ConflictException('This person is already a member of the committee.');
       }
       throw error;
     }
+  }
+
+  async assignDeveloperCommitteeMember(user: RequestUser | undefined, dto: AssignDeveloperCommitteeMemberDto) {
+    if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, 'developer_committees.members.assign'))) {
+      throw new ForbiddenException();
+    }
+    const committeeCode = dto.committeeCode.trim().toUpperCase();
+    const committee = await this.prisma.committee.findUnique({
+      where: { committeeCode },
+      include: { parent: { select: { committeeCode: true } } },
+    });
+    if (!committee || committee.parent?.committeeCode !== DEVELOPER_COMMITTEES_CODE) {
+      throw new BadRequestException('Choose one of the six developer committees.');
+    }
+    const email = dto.email.trim().toLowerCase();
+    return this.prisma.$transaction(async (transaction) => {
+      const { person, member } = await this.resolveExistingAccountMember(transaction, email);
+      const membership = await this.createAssignedMembership(transaction, member.memberId, committee.committeeId, dto.role);
+      return {
+        memberId: String(member.memberId), name: person.fullName, email,
+        committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
+      };
+    });
   }
 
   async createEvent(user: RequestUser | undefined, committeeCode: string, dto: CreateCommitteeEventDto) {
@@ -657,10 +654,43 @@ export class CommitteeDashboardService {
   }
 
   // club leadership adds an existing member to another committee; new people still join through membership requests
+  async assignClubPerson(user: RequestUser | undefined, dto: AssignClubPersonDto) {
+    if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION))) throw new ForbiddenException();
+    const email = dto.email.trim().toLowerCase();
+    const globalRole = dto.role === 'ADVISOR' || dto.role === 'DEVELOPER_COMMITTEES_LEADER';
+    if (globalRole && dto.committeeCode) throw new BadRequestException('Global roles do not use a committee.');
+    if (!globalRole && !dto.committeeCode?.trim()) throw new BadRequestException('Choose a committee for this role.');
+
+    return this.prisma.$transaction(async (transaction) => {
+      const { person, member } = await this.resolveExistingAccountMember(transaction, email);
+      if (globalRole) {
+        await transaction.memberRole.createMany({
+          data: [{ memberId: member.memberId, roleCode: dto.role, assignedBy: user.memberId! }],
+          skipDuplicates: true,
+        });
+        return { memberId: String(member.memberId), name: person.fullName, email, role: dto.role };
+      }
+
+      const committeeCode = dto.committeeCode!.trim().toUpperCase();
+      const committee = await transaction.committee.findFirst({
+        where: { committeeCode, children: { none: {} } },
+        select: { committeeId: true, committeeCode: true, committeeName: true },
+      });
+      if (!committee) throw new NotFoundException('The selected committee does not exist or cannot have members.');
+      const membership = await this.createAssignedMembership(transaction, member.memberId, committee.committeeId, dto.role);
+      return {
+        memberId: String(member.memberId), name: person.fullName, email,
+        committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
+      };
+    });
+  }
+
   async addMemberToCommittee(user: RequestUser | undefined, targetMemberId: number, dto: AddMemberToCommitteeDto) {
     if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION))) throw new ForbiddenException();
-    const committee = await this.prisma.committee.findUnique({ where: { committeeCode: dto.committeeCode.trim().toUpperCase() } });
-    if (!committee) throw new NotFoundException('The selected committee does not exist.');
+    const committee = await this.prisma.committee.findFirst({
+      where: { committeeCode: dto.committeeCode.trim().toUpperCase(), children: { none: {} } },
+    });
+    if (!committee) throw new NotFoundException('The selected leaf committee does not exist.');
     const member = await this.prisma.member.findUnique({ where: { memberId: targetMemberId }, include: { person: true } });
     if (!member || !member.isActive || !member.person.isActive) throw new NotFoundException('The selected person is not an active member.');
 
@@ -842,6 +872,32 @@ export class CommitteeDashboardService {
       priority: task.priority, status: task.status,
       createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
     };
+  }
+
+  private async createAssignedMembership(transaction: Prisma.TransactionClient, memberId: number, committeeId: number, role: string) {
+    try {
+      return await transaction.memberCommittee.create({ data: { memberId, committeeId, role } });
+    } catch (error: any) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('This person is already assigned to the committee.');
+      }
+      throw error;
+    }
+  }
+
+  private async resolveExistingAccountMember(transaction: Prisma.TransactionClient, email: string) {
+    const person = await transaction.person.findFirst({
+      where: { emailPersonal: { equals: email, mode: 'insensitive' }, authUserId: { not: null } },
+      include: { member: true },
+    });
+    if (!person) throw new NotFoundException('An existing platform account with this login email is required.');
+    if (!person.isActive) throw new ConflictException('This platform account is inactive.');
+    let member = person.member;
+    if (!member) {
+      member = await transaction.member.create({ data: { personId: person.personId } });
+    }
+    if (!member.isActive) throw new ConflictException('This member is inactive and cannot be assigned.');
+    return { person, member };
   }
 
   private async requireMembership(user: RequestUser | undefined, committeeCode: string) {
