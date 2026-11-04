@@ -12,6 +12,16 @@ import {
 } from 'class-validator';
 import { RegistrationStatus } from '../generated/prisma/client.js';
 
+export const DATA_EVENT_REPORT_GROUPS = ['all', 'going', 'checked-in'] as const;
+export type DataEventReportGroup = (typeof DATA_EVENT_REPORT_GROUPS)[number];
+
+export class DataEventReportQueryDto {
+  @IsIn(DATA_EVENT_REPORT_GROUPS, {
+    message: 'group must be all, going, or checked-in.',
+  })
+  group: DataEventReportGroup;
+}
+
 // The global pipe validates but does not transform, so query values stay
 // strings here and the controller converts them after validation.
 export class ListRegistrationsQueryDto {

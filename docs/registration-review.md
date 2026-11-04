@@ -76,6 +76,14 @@ Body (optional): `{ "reason": "text up to 500 characters" }`. PR committee Leade
 
 Body: `{ "registrationIds": [12, 7, 33] }` — the complete waitlist in order; positions become 1..n. Listed registrations must belong to the event and be `PENDING` or `WAITLISTED`. Waitlisted people missing from the list return to `PENDING`. An empty list clears the waitlist.
 
+## Data committee guest reports
+
+The active Data committee Leader and Co-Leader can download guest lists for every non-draft event, regardless of which committee created it. Members and leaders of other committees receive 403. The API returns only name, email, registration status/timestamps, and the stored `discoverySource` answer.
+
+- `GET /data/event-reports/events` lists reportable events and counts.
+- `GET /data/event-reports/events/:eventId?group=all|going|checked-in` returns one event's rows. `all` includes every registration, `going` means `CONFIRMED`, and `checked-in` means `checked_in_at IS NOT NULL`.
+
+The frontend exports these rows as UTF-8 CSV files that Excel can open. No database schema change is required; `discovery_source` is already stored on event registrations.
 ## Errors
 
 | Status | `error.code` | When |
