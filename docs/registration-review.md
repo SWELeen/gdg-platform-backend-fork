@@ -24,12 +24,12 @@ The auth layer sets `request.user = { personId, memberId? }` (see `src/auth/curr
 
 | Route | Permission | Granted to |
 | --- | --- | --- |
-| `GET /events/:eventId/registrations` | `registrants.view` | PR Leader, Co-Leader, Member |
-| `GET /registrations/blacklist` | `registrations.review` | PR Leader, Co-Leader, Member |
+| `GET /events/:eventId/registrations` | `registrants.view` | PR Leader, Co-Leader |
+| `GET /registrations/blacklist` | `registrations.review` | PR Leader, Co-Leader |
 | `POST /registrations/blacklist/:entryId/resolve` | PR `Leader` / `Co-Leader` position | PR Leader, Co-Leader |
-| `PATCH /registrations/:registrationId` | `registrations.review` | PR Leader, Co-Leader, Member |
-| `PUT /events/:eventId/waitlist` | `registrations.review` | PR Leader, Co-Leader, Member |
-| `POST /events/:eventId/check-in` | `registrations.review` | PR Leader, Co-Leader, Member |
+| `PATCH /registrations/:registrationId` | `registrations.review` | PR Leader, Co-Leader |
+| `PUT /events/:eventId/waitlist` | `registrations.review` | PR Leader, Co-Leader |
+| `POST /events/:eventId/check-in` | `registrations.review` | PR Leader, Co-Leader |
 
 Anyone else receives 403 `FORBIDDEN`.
 

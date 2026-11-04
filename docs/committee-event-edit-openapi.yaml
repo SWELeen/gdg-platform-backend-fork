@@ -10,7 +10,7 @@ paths:
     post:
       operationId: uploadCommitteeEventImage
       summary: Upload an event image
-      description: Uploads an image to the public event image bucket. An active committee member with events.create permission is required.
+      description: Uploads an image to the public event image bucket. An active committee member with events.create permission is required. The permission is granted to Data Analysis and PR Leaders and Co-Leaders for their own committee events.
       security:
         - accessCookie: []
       parameters:
@@ -73,7 +73,7 @@ paths:
       summary: Update an event's details
       description: >-
         Updates supplied event details for an event owned by the selected committee.
-        The authenticated active committee member must have events.create permission.
+        The authenticated active committee member must have events.create permission. PR and Data Analysis Leaders and Co-Leaders receive this permission for their own committee.
         For published events only registrationDeadline may be changed. Draft events may have their name,
         description, type, schedule, location, capacity, maps link, speakers, requirements, image URL,
         and registration questions changed.
