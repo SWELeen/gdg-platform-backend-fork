@@ -10,7 +10,7 @@ paths:
     get:
       operationId: listRegistrationBlacklist
       summary: List registration attendance incidents
-      description: Requires the registrations.review permission. Includes no-shows, expired confirmation offers, and late cancellations.
+      description: Requires the registrations.review permission. Includes open (unresolved) no-shows, expired confirmation offers, and late cancellations.
       security:
         - bearerAuth: []
         - accessCookie: []
@@ -30,6 +30,52 @@ paths:
                 $ref: '#/components/schemas/BlacklistResponse'
         '401': { description: Authentication required. }
         '403': { description: Caller lacks registration review permission. }
+  /registrations/blacklist/{entryId}/resolve:
+    post:
+      operationId: resolveRegistrationBlacklist
+      summary: Remove a person from the blacklist
+      description: >
+        PR committee Leader or Co-Leader only (not Members). Resolves every
+        unresolved entry of the person behind this entry, so they leave the
+        list; rows are kept in the database as history. Being blacklisted never blocks registering for events.
+      security:
+        - bearerAuth: []
+        - accessCookie: []
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: The person's open entries were resolved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, data, error]
+                properties:
+                  success: { type: boolean, const: true }
+                  message: { type: string }
+                  error: { type: 'null' }
+                  data:
+                    type: object
+                    required: [entryId, resolvedEntries]
+                    properties:
+                      entryId: { type: integer }
+                      resolvedEntries: { type: integer, minimum: 0 }
+        '401': { description: Authentication required. }
+        '403': { description: Caller is not the PR committee Leader or Co-Leader. }
+        '404': { description: 'BLACKLIST_ENTRY_NOT_FOUND' }
 components:
   securitySchemes:
     bearerAuth:
@@ -49,8 +95,11 @@ components:
         error: { type: 'null' }
         data:
           type: object
-          required: [items, pagination]
+          required: [canResolve, items, pagination]
           properties:
+            canResolve:
+              type: boolean
+              description: True when the caller is the PR Leader or Co-Leader and may remove people.
             items:
               type: array
               items: { $ref: '#/components/schemas/BlacklistEntry' }
