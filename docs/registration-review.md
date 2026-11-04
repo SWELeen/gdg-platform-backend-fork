@@ -26,6 +26,7 @@ The auth layer sets `request.user = { personId, memberId? }` (see `src/auth/curr
 | --- | --- | --- |
 | `GET /events/:eventId/registrations` | `registrants.view` | PR Leader, Co-Leader, Member |
 | `GET /registrations/blacklist` | `registrations.review` | PR Leader, Co-Leader, Member |
+| `POST /registrations/blacklist/:entryId/resolve` | PR `Leader` / `Co-Leader` position | PR Leader, Co-Leader |
 | `PATCH /registrations/:registrationId` | `registrations.review` | PR Leader, Co-Leader, Member |
 | `PUT /events/:eventId/waitlist` | `registrations.review` | PR Leader, Co-Leader, Member |
 | `POST /events/:eventId/check-in` | `registrations.review` | PR Leader, Co-Leader, Member |
@@ -51,7 +52,7 @@ Answers are stored as text; checkbox choices as a JSON array string. The QR toke
 
 Query: `page` (default 1), `pageSize` (1–100, default 20), `search` (name or email, case-insensitive), `status` (a registration status).
 
-`data` contains `event`, `summary` (`accepted`, `capacity`, `confirmed`, `awaitingConfirmation`, `waitlisted`, `pending`), `items` (`registrationId`, `name`, `email`, `status`, `registeredAt`, `waitlistPosition`, `confirmationDeadline`, `discoverySource`, `answers[]`) and `pagination` (`page`, `pageSize`, `total`, `totalPages`). `discoverySource` is the attendee's required answer to “Where did you hear about this event?”. Items are ordered by registration time.
+`data` contains `event`, `summary` (`accepted`, `capacity`, `confirmed`, `awaitingConfirmation`, `waitlisted`, `pending`), `items` (`registrationId`, `name`, `email`, `blacklisted`, `status`, `registeredAt`, `waitlistPosition`, `confirmationDeadline`, `discoverySource`, `answers[]`) and `pagination` (`page`, `pageSize`, `total`, `totalPages`). `discoverySource` is the attendee's required answer to “Where did you hear about this event?”. `blacklisted` is true when the person has any unresolved blacklist entry from any event; it is informational only, so blacklisted people still register and appear here like everyone else. Items are ordered by registration time.
 
 ### PATCH /registrations/:registrationId
 
@@ -65,7 +66,11 @@ The registrants list also reports attendance: `summary.checkedIn`, `summary.notC
 
 ### GET /registrations/blacklist
 
-Query: `page` (default 1), `pageSize` (1–100, default 20). Returns paginated attendance incidents with their reason (`NO_CHECK_IN`, `CONFIRMATION_EXPIRED`, or `LATE_CANCELLATION`), creation/resolution timestamps, attendee name/email, registration status, and event details. Requires `registrations.review`.
+Query: `page` (default 1), `pageSize` (1–100, default 20). Returns paginated open (unresolved) attendance incidents with their reason (`NO_CHECK_IN`, `CONFIRMATION_EXPIRED`, or `LATE_CANCELLATION`), creation/resolution timestamps, attendee name/email, registration status, and event details. Requires `registrations.review`. `data.canResolve` is true only for the PR Leader or Co-Leader.
+
+### POST /registrations/blacklist/:entryId/resolve
+
+Body (optional): `{ "reason": "text up to 500 characters" }`. PR committee Leader or Co-Leader only (Members receive 403). Resolves every unresolved entry of the person behind `entryId` (sets `resolved_at`, `resolved_by_member_id`, `resolution_reason`); the person then leaves the blacklist and is no longer flagged; rows are kept in the database as history. Returns `{ entryId, resolvedEntries }`. Unknown entry: 404 `BLACKLIST_ENTRY_NOT_FOUND`.
 
 ### PUT /events/:eventId/waitlist
 

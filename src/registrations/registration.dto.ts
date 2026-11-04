@@ -55,6 +55,13 @@ export class SetWaitlistDto {
   registrationIds: number[];
 }
 
+export class ResolveBlacklistDto {
+  @IsOptional()
+  @IsString({ message: 'reason must be text.' })
+  @MaxLength(500, { message: 'reason must be at most 500 characters.' })
+  reason?: string;
+}
+
 export class CheckInDto {
   @IsString({ message: 'token must be text.' })
   @MaxLength(200, { message: 'token is too long.' })

@@ -22,6 +22,7 @@ import { CheckInService } from './check-in.service.js';
 import {
   CheckInDto,
   ListRegistrationsQueryDto,
+  ResolveBlacklistDto,
   ReviewRegistrationDto,
   SetWaitlistDto,
 } from './registration.dto.js';
@@ -81,6 +82,22 @@ export class RegistrationsController {
       staffMemberId(user),
     );
     return apiSuccess(result);
+  }
+
+  // PR Leader only: lifts the flag for the person behind this entry.
+  @Post('registrations/blacklist/:entryId/resolve')
+  @HttpCode(200)
+  async resolveBlacklist(
+    @Param('entryId', ParseIntPipe) entryId: number,
+    @Body() body: ResolveBlacklistDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const result = await this.listService.resolveBlacklist(
+      entryId,
+      body.reason,
+      staffMemberId(user),
+    );
+    return apiSuccess(result, 'Removed from the blacklist.');
   }
 
   @Patch('registrations/:registrationId')
