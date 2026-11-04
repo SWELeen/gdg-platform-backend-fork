@@ -1,5 +1,9 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, RegistrationStatus } from '../generated/prisma/client.js';
+import {
+  EventStatus,
+  Prisma,
+  RegistrationStatus,
+} from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   CommitteeAccessService,
@@ -10,8 +14,10 @@ import {
   blacklistEntryNotFound,
   registrationForbidden,
 } from './registration-errors.js';
+import type { DataEventReportGroup } from './registration.dto.js';
 
 const PR_COMMITTEE_CODE = 'PR';
+const DATA_COMMITTEE_CODE = 'DATA';
 
 export interface RegistrationListQuery {
   page: number;
@@ -54,6 +60,108 @@ export class RegistrationListService {
     private readonly access: CommitteeAccessService,
   ) {}
 
+  async listDataReportEvents(actorMemberId: number) {
+    await this.assertDataCommitteeLeader(actorMemberId);
+    const events = await this.prisma.event.findMany({
+      where: { status: { not: EventStatus.DRAFT } },
+      orderBy: [{ startsAt: 'desc' }, { eventId: 'desc' }],
+      select: {
+        eventId: true,
+        name: true,
+        startsAt: true,
+        status: true,
+        _count: { select: { registrations: true } },
+      },
+    });
+    const eventIds = events.map(({ eventId }) => eventId);
+    if (eventIds.length === 0) return [];
+    const [goingRows, checkedInRows] = await Promise.all([
+      this.prisma.eventRegistration.groupBy({
+        by: ['eventId'],
+        where: {
+          eventId: { in: eventIds },
+          status: RegistrationStatus.CONFIRMED,
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.eventRegistration.groupBy({
+        by: ['eventId'],
+        where: { eventId: { in: eventIds }, checkedInAt: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+    const goingByEvent = new Map(
+      goingRows.map((row) => [row.eventId, row._count._all]),
+    );
+    const checkedInByEvent = new Map(
+      checkedInRows.map((row) => [row.eventId, row._count._all]),
+    );
+    return events.map(({ _count, ...event }) => ({
+      ...event,
+      registered: _count.registrations,
+      going: goingByEvent.get(event.eventId) ?? 0,
+      checkedIn: checkedInByEvent.get(event.eventId) ?? 0,
+    }));
+  }
+
+  async getDataEventReport(
+    eventId: number,
+    group: DataEventReportGroup,
+    actorMemberId: number,
+  ) {
+    await this.assertDataCommitteeLeader(actorMemberId);
+    const event = await this.prisma.event.findFirst({
+      where: { eventId, status: { not: EventStatus.DRAFT } },
+      select: { eventId: true, name: true },
+    });
+    if (!event)
+      throw new NotFoundException('The event was not found.', {
+        errorCode: 'EVENT_NOT_FOUND',
+      });
+    const where: Prisma.EventRegistrationWhereInput = {
+      eventId,
+      ...(group === 'going' ? { status: RegistrationStatus.CONFIRMED } : {}),
+      ...(group === 'checked-in' ? { checkedInAt: { not: null } } : {}),
+    };
+    const rows = await this.prisma.eventRegistration.findMany({
+      where,
+      orderBy: [{ registeredAt: 'asc' }, { registrationId: 'asc' }],
+      select: {
+        status: true,
+        registeredAt: true,
+        checkedInAt: true,
+        discoverySource: true,
+        person: {
+          select: {
+            fullName: true,
+            emailPersonal: true,
+            emailUniversity: true,
+          },
+        },
+      },
+    });
+    return {
+      event,
+      group,
+      items: rows.map((row) => ({
+        name: row.person.fullName,
+        email: row.person.emailPersonal ?? row.person.emailUniversity,
+        status: row.status,
+        registeredAt: row.registeredAt,
+        checkedInAt: row.checkedInAt,
+        discoverySource: row.discoverySource,
+      })),
+    };
+  }
+
+  private async assertDataCommitteeLeader(actorMemberId: number) {
+    if (
+      !(await this.access.isCommitteeLeader(actorMemberId, DATA_COMMITTEE_CODE))
+    ) {
+      throw registrationForbidden();
+    }
+  }
+
   async list(
     eventId: number,
     query: RegistrationListQuery,
@@ -70,7 +178,12 @@ export class RegistrationListService {
 
     const event = await this.prisma.event.findUnique({
       where: { eventId },
-      select: { eventId: true, name: true, capacity: true, requiredRegistrantFields: true },
+      select: {
+        eventId: true,
+        name: true,
+        capacity: true,
+        requiredRegistrantFields: true,
+      },
     });
     if (!event) {
       throw new NotFoundException('The event was not found.', {
@@ -185,7 +298,9 @@ export class RegistrationListService {
         email: row.person.emailPersonal ?? row.person.emailUniversity,
         profile: registrantProfile(
           row.person,
-          event.requiredRegistrantFields.filter((field) => field !== 'universityId'),
+          event.requiredRegistrantFields.filter(
+            (field) => field !== 'universityId',
+          ),
         ),
         blacklisted: row.person.registrations.length > 0,
         status: row.status,
@@ -296,7 +411,9 @@ export class RegistrationListService {
     reason: string | undefined,
     actorMemberId: number,
   ) {
-    if (!(await this.access.isCommitteeLeader(actorMemberId, PR_COMMITTEE_CODE))) {
+    if (
+      !(await this.access.isCommitteeLeader(actorMemberId, PR_COMMITTEE_CODE))
+    ) {
       throw registrationForbidden();
     }
 
