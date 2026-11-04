@@ -32,11 +32,19 @@ describe('Developer Committees Leader dashboard', () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 
+  it('reports dashboard access separately from permission to assign members', async () => {
+    hasGlobalPermission.mockImplementation(async (_memberId: number, code: string) => code === 'developer_committees.dashboard.view');
+    const result = await service.getDeveloperOverview({ personId: 9, memberId: 12 });
+    expect(result.permissions).toEqual({ canAssignMembers: false });
+    expect(result.committees).toHaveLength(1);
+  });
   it('returns aggregate developer committee counts without exposing applicant or member records', async () => {
-    await expect(service.getDeveloperOverview({ personId: 9, memberId: 12 })).resolves.toEqual([
-      { code: 'DATA', name: 'Data Analysis', memberCount: 5, leaderCount: 2, activeTaskCount: 3 },
-    ]);
+    await expect(service.getDeveloperOverview({ personId: 9, memberId: 12 })).resolves.toEqual({
+      permissions: { canAssignMembers: true },
+      committees: [{ code: 'DATA', name: 'Data Analysis', memberCount: 5, leaderCount: 2, activeTaskCount: 3 }],
+    });
     expect(hasGlobalPermission).toHaveBeenCalledWith(12, 'developer_committees.dashboard.view');
+    expect(hasGlobalPermission).toHaveBeenCalledWith(12, 'developer_committees.members.assign');
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { parent: { committeeCode: 'DEV' } },
     }));
@@ -115,7 +123,7 @@ describe('Club Leadership adds a member to another committee', () => {
   const findMember = vi.fn();
   const createMembership = vi.fn();
   const clubService = new CommitteeDashboardService({
-    committee: { findUnique: findCommittee },
+    committee: { findFirst: findCommittee },
     member: { findUnique: findMember },
     memberCommittee: { create: createMembership },
   } as unknown as PrismaService, { hasGlobalPermission } as unknown as CommitteeAccessService);
@@ -138,7 +146,7 @@ describe('Club Leadership adds a member to another committee', () => {
     await expect(clubService.addMemberToCommittee({ personId: 8, memberId: 12 }, 30, { committeeCode: 'pr' })).resolves.toEqual({
       memberId: '30', committee: { code: 'PR', name: 'Public Relations', role: 'Member', points: 0 },
     });
-    expect(findCommittee).toHaveBeenCalledWith({ where: { committeeCode: 'PR' } });
+    expect(findCommittee).toHaveBeenCalledWith({ where: { committeeCode: 'PR', children: { none: {} } } });
     expect(createMembership).toHaveBeenCalledWith({ data: { memberId: 30, committeeId: 2, role: 'Member' } });
   });
 

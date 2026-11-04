@@ -1,0 +1,119 @@
+openapi: 3.1.0
+info:
+  title: GDG Main Platform Member Assignment API
+  version: 1.0.0
+  description: Assign existing platform accounts to committees and leadership roles.
+servers:
+  - url: /
+paths:
+  /committees/{committeeCode}/members:
+    post:
+      operationId: addExistingAccountAsCommitteeMember
+      summary: Add an existing account as a Member to its own committee
+      description: Requires the caller to be a Leader or Co-Leader of one of CONTENT, PM, PR, DMD, DATA, CYBER, ROBOTICS, WEB, AUTOMATION, or AI. The email must be the account's personal login email and the account must already exist.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters:
+        - name: committeeCode
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '201': { description: Existing account added as a committee Member. }
+        '400': { description: Invalid email. }
+        '401': { description: Authentication required. }
+        '403': { description: Caller cannot add members to this committee. }
+        '404': { description: No existing active platform account uses this login email. }
+        '409': { description: Account or committee membership is inactive or already exists. }
+  /developer-committees/dashboard:
+    get:
+      operationId: getDeveloperCommitteesDashboard
+      description: Requires developer_committees.dashboard.view. The response reports canAssignMembers separately; only the Developer Committees Leader receives true.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      responses:
+        '200':
+          description: Developer committees overview and assignment permission.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: object
+                    properties:
+                      canAssignMembers: { type: boolean }
+                  committees:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string }
+                        name: { type: string }
+                        memberCount: { type: integer }
+                        leaderCount: { type: integer }
+                        activeTaskCount: { type: integer }
+        '401': { description: Authentication required. }
+        '403': { description: Caller cannot view this dashboard. }
+  /developer-committees/members:
+    post:
+      operationId: assignDeveloperCommitteeMember
+      summary: Assign an existing account to one of the six developer committees
+      description: Requires developer_committees.members.assign, granted only to the Developer Committees Leader. Leader and Co-Leader assignments are permitted for one of the six children of DEV; Member assignments are also permitted. An existing membership returns 409 and is never silently changed.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, committeeCode, role]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                committeeCode: { type: string, maxLength: 20 }
+                role: { type: string, enum: [Member, Leader, Co-Leader] }
+      responses:
+        '201': { description: Account assigned to a developer committee. }
+        '400': { description: Invalid request or committee outside DEV children. }
+        '401': { description: Authentication required. }
+        '403': { description: Caller lacks developer committee leadership permission. }
+        '404': { description: No existing active platform account uses this login email. }
+        '409': { description: Account or membership is inactive or already assigned. }
+  /club-leadership/members:
+    post:
+      operationId: assignClubManagedPerson
+      summary: Assign an existing account to a committee or global leadership role
+      description: Requires the members.manage global permission (Group Leader or Co-Leader). Committee roles may be Member, Leader, or Co-Leader on any leaf committee. Global roles may be ADVISOR, DEVELOPER_COMMITTEES_LEADER and omit committeeCode. Email must identify an existing platform account by its personal login email.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, role]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                committeeCode: { type: string, maxLength: 20, description: Required for Member, Leader, and Co-Leader; omitted for global roles. }
+                role: { type: string, enum: [Member, Leader, Co-Leader, ADVISOR, DEVELOPER_COMMITTEES_LEADER] }
+      responses:
+        '201': { description: Account assigned to the selected committee or global role. }
+        '400': { description: Invalid role and committee combination. }
+        '401': { description: Authentication required. }
+        '403': { description: Caller lacks group leadership permission. }
+        '404': { description: Account or committee not found. }
+        '409': { description: Account, role assignment, or committee membership is inactive or already assigned. }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+    accessCookie: { type: apiKey, in: cookie, name: gdg_access }

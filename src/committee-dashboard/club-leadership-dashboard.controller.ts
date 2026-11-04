@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Inject, Param, ParseIntPipe, Post, Req } from '@nestjs/common';
 import { apiSuccess } from '../common/http/api-response.js';
 import type { RequestUser } from '../auth/auth.guard.js';
-import { AddMemberToCommitteeDto } from './committee-dashboard.dto.js';
+import { AddMemberToCommitteeDto, AssignClubPersonDto } from './committee-dashboard.dto.js';
 import { CommitteeDashboardService } from './committee-dashboard.service.js';
 
 @Controller('club-leadership')
@@ -20,5 +20,13 @@ export class ClubLeadershipDashboardController {
     @Body() body: AddMemberToCommitteeDto,
   ) {
     return apiSuccess(await this.dashboard.addMemberToCommittee(request.user, memberId, body));
+  }
+
+  @Post('members')
+  async assignPerson(
+    @Req() request: { user?: RequestUser },
+    @Body() body: AssignClubPersonDto,
+  ) {
+    return apiSuccess(await this.dashboard.assignClubPerson(request.user, body));
   }
 }
