@@ -34,6 +34,23 @@ export class CommitteeAccessService {
     return rows[0]?.allowed === true;
   }
 
+  // The committee's leadership positions (Leader or Co-Leader), not Members.
+  async isCommitteeLeader(
+    memberId: number,
+    committeeCode: string,
+  ): Promise<boolean> {
+    const seat = await this.prisma.memberCommittee.findFirst({
+      where: {
+        memberId,
+        role: { in: ['Leader', 'Co-Leader'] },
+        member: { isActive: true },
+        committee: { committeeCode },
+      },
+      select: { id: true },
+    });
+    return seat !== null;
+  }
+
   async hasGlobalPermission(memberId: number, code: string): Promise<boolean> {
     const rows = await this.prisma.$queryRaw<{ allowed: boolean }[]>`
       SELECT EXISTS (

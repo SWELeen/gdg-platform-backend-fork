@@ -6,7 +6,12 @@ import {
   REGISTRANTS_VIEW,
   REGISTRATIONS_REVIEW,
 } from './committee-access.service.js';
-import { registrationForbidden } from './registration-errors.js';
+import {
+  blacklistEntryNotFound,
+  registrationForbidden,
+} from './registration-errors.js';
+
+const PR_COMMITTEE_CODE = 'PR';
 
 export interface RegistrationListQuery {
   page: number;
@@ -122,6 +127,13 @@ export class RegistrationListService {
                   },
                 },
               },
+              // Any open entry from any event marks the person; it never
+              // blocks registering, it only informs PR's review.
+              registrations: {
+                where: { blacklistEntries: { some: { resolvedAt: null } } },
+                select: { registrationId: true },
+                take: 1,
+              },
             },
           },
           answers: {
@@ -175,6 +187,7 @@ export class RegistrationListService {
           row.person,
           event.requiredRegistrantFields.filter((field) => field !== 'universityId'),
         ),
+        blacklisted: row.person.registrations.length > 0,
         status: row.status,
         registeredAt: row.registeredAt,
         waitlistPosition: row.waitlistPosition,
@@ -209,9 +222,16 @@ export class RegistrationListService {
       throw registrationForbidden();
     }
 
+    const canResolve = await this.access.isCommitteeLeader(
+      actorMemberId,
+      PR_COMMITTEE_CODE,
+    );
+    // A removed person is no longer on the blacklist, so only open entries show.
+    const where = { resolvedAt: null };
     const [total, entries] = await this.prisma.$transaction([
-      this.prisma.registrationBlacklistEntry.count(),
+      this.prisma.registrationBlacklistEntry.count({ where }),
       this.prisma.registrationBlacklistEntry.findMany({
+        where,
         orderBy: [{ createdAt: 'desc' }, { entryId: 'desc' }],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
@@ -244,6 +264,7 @@ export class RegistrationListService {
     ]);
 
     return {
+      canResolve,
       items: entries.map(({ registration, ...entry }) => ({
         ...entry,
         registration: {
@@ -265,5 +286,37 @@ export class RegistrationListService {
         totalPages: Math.ceil(total / query.pageSize),
       },
     };
+  }
+
+  // Removing someone resolves every open entry they have, so they leave the
+  // blacklist and the PR registrants list stops flagging them. Rows are kept
+  // in the database as history.
+  async resolveBlacklist(
+    entryId: number,
+    reason: string | undefined,
+    actorMemberId: number,
+  ) {
+    if (!(await this.access.isCommitteeLeader(actorMemberId, PR_COMMITTEE_CODE))) {
+      throw registrationForbidden();
+    }
+
+    const entry = await this.prisma.registrationBlacklistEntry.findUnique({
+      where: { entryId },
+      select: { registration: { select: { personId: true } } },
+    });
+    if (!entry) throw blacklistEntryNotFound();
+
+    const { count } = await this.prisma.registrationBlacklistEntry.updateMany({
+      where: {
+        resolvedAt: null,
+        registration: { personId: entry.registration.personId },
+      },
+      data: {
+        resolvedAt: new Date(),
+        resolvedByMemberId: actorMemberId,
+        resolutionReason: reason?.trim() || null,
+      },
+    });
+    return { entryId, resolvedEntries: count };
   }
 }

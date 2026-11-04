@@ -33,6 +33,12 @@ export function registrationNotFound(): NotFoundException {
   });
 }
 
+export function blacklistEntryNotFound(): NotFoundException {
+  return new NotFoundException('The blacklist entry was not found.', {
+    errorCode: 'BLACKLIST_ENTRY_NOT_FOUND',
+  });
+}
+
 export function registrationForbidden(): ForbiddenException {
   return new ForbiddenException(
     'You do not have permission to manage registrations.',
