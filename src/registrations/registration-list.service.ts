@@ -314,7 +314,7 @@ export class RegistrationListService {
       data: {
         resolvedAt: new Date(),
         resolvedByMemberId: actorMemberId,
-        resolutionReason: reason?.trim() || null,
+        resolutionReason: reason?.trim() || 'Removed by PR leadership',
       },
     });
     return { entryId, resolvedEntries: count };
