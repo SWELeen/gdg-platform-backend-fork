@@ -1,0 +1,107 @@
+openapi: 3.1.0
+info:
+  title: GDG Main Platform Data Event Reports API
+  version: 1.0.0
+  description: Event guest exports for Data committee Leaders and Co-Leaders.
+servers:
+  - url: /
+paths:
+  /data/event-reports/events:
+    get:
+      operationId: listDataEventReportEvents
+      summary: List events available for Data reports
+      description: Returns every non-draft event across committees. Requires an active Data committee Leader or Co-Leader.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      responses:
+        '200':
+          description: Events and guest counts available for export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventListResponse' }
+        '401': { description: Authentication required. }
+        '403': { description: Caller is not a Data committee Leader or Co-Leader. }
+  /data/event-reports/events/{eventId}:
+    get:
+      operationId: getDataEventReport
+      summary: Get a guest report for one event
+      description: Returns only the fields needed for event reporting, including the registrant's discovery source. All includes every registration; going includes CONFIRMED registrations; checked-in includes registrations with checkedInAt set. Requires an active Data committee Leader or Co-Leader.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: group
+          in: query
+          required: true
+          schema: { type: string, enum: [all, going, checked-in] }
+      responses:
+        '200':
+          description: The requested guest report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReportResponse' }
+        '400': { description: Invalid report group or event ID. }
+        '401': { description: Authentication required. }
+        '403': { description: Caller is not a Data committee Leader or Co-Leader. }
+        '404': { description: Event not found or is still a draft. }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: gdg_access
+  schemas:
+    EventListResponse:
+      type: object
+      required: [success, message, data, error]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        error: { type: 'null' }
+        data:
+          type: array
+          items:
+            type: object
+            required: [eventId, name, startsAt, status, registered, going, checkedIn]
+            properties:
+              eventId: { type: integer }
+              name: { type: string }
+              startsAt: { type: string, format: date-time }
+              status: { type: string }
+              registered: { type: integer }
+              going: { type: integer }
+              checkedIn: { type: integer }
+    EventReportResponse:
+      type: object
+      required: [success, message, data, error]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        error: { type: 'null' }
+        data:
+          type: object
+          required: [event, group, items]
+          properties:
+            event:
+              type: object
+              required: [eventId, name]
+              properties:
+                eventId: { type: integer }
+                name: { type: string }
+            group: { type: string, enum: [all, going, checked-in] }
+            items:
+              type: array
+              items:
+                type: object
+                required: [name, email, status, registeredAt, checkedInAt, discoverySource]
+                properties:
+                  name: { type: string }
+                  email: { type: [string, 'null'], format: email }
+                  status: { type: string }
+                  registeredAt: { type: string, format: date-time }
+                  checkedInAt: { type: [string, 'null'], format: date-time }
+                  discoverySource: { type: [string, 'null'], enum: [WHATSAPP, X, LINKEDIN, ME_QR, LUMA_FEED, GOOGLE, INSTAGRAM, TECH, null] }

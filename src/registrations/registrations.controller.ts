@@ -20,6 +20,7 @@ import {
 import { apiSuccess } from '../common/http/api-response.js';
 import { CheckInService } from './check-in.service.js';
 import {
+  DataEventReportQueryDto,
   CheckInDto,
   ListRegistrationsQueryDto,
   ResolveBlacklistDto,
@@ -49,6 +50,28 @@ export class RegistrationsController {
     @Inject(CheckInService)
     private readonly checkInService: CheckInService,
   ) {}
+
+  @Get('data/event-reports/events')
+  async listDataReportEvents(@CurrentUser() user: AuthenticatedUser) {
+    return apiSuccess(
+      await this.listService.listDataReportEvents(staffMemberId(user)),
+    );
+  }
+
+  @Get('data/event-reports/events/:eventId')
+  async getDataEventReport(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Query() query: DataEventReportQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return apiSuccess(
+      await this.listService.getDataEventReport(
+        eventId,
+        query.group,
+        staffMemberId(user),
+      ),
+    );
+  }
 
   @Get('events/:eventId/registrations')
   async list(
