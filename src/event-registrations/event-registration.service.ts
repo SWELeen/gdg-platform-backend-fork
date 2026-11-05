@@ -291,7 +291,7 @@ export class EventRegistrationService {
         attendanceTokenEncrypted: issued.encrypted,
       },
     });
-    if (count === 0) throw this.cannotRespond(registration.status);
+    if (count === 0) throw this.cannotRespond(registration);
 
     const attendanceQrCodeDataUrl = await AttendanceTokenService.qrImage(
       issued.token,
@@ -378,7 +378,7 @@ export class EventRegistrationService {
           return { status, releasedSeat: true };
         }
       }
-      throw this.cannotRespond(registration.status);
+      throw this.cannotRespond(registration);
     });
 
     if (outcome.releasedSeat) {
@@ -394,6 +394,8 @@ export class EventRegistrationService {
         personId: true,
         eventId: true,
         status: true,
+        confirmedAt: true,
+        confirmationDeadline: true,
         person: {
           select: {
             fullName: true,
@@ -410,9 +412,18 @@ export class EventRegistrationService {
   }
 
   // An offer whose deadline passed reads as expired even before the job runs.
-  private cannotRespond(status: RegistrationStatus) {
-    return status === RegistrationStatus.AWAITING_CONFIRMATION ||
-      status === RegistrationStatus.EXPIRED
+  private cannotRespond(registration: {
+    status: RegistrationStatus;
+    confirmedAt: Date | null;
+    confirmationDeadline: Date | null;
+  }) {
+    const missedConfirmation =
+      registration.status === RegistrationStatus.CANCELLED &&
+      registration.confirmedAt === null &&
+      registration.confirmationDeadline !== null &&
+      registration.confirmationDeadline.getTime() <= Date.now();
+    return registration.status === RegistrationStatus.AWAITING_CONFIRMATION ||
+      registration.status === RegistrationStatus.EXPIRED || missedConfirmation
       ? confirmationExpired()
       : invalidStatusTransition();
   }

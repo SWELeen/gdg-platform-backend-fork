@@ -18,7 +18,7 @@ INSERT INTO event_questions(event_id,question_text,question_type,position)
 SELECT e, 'Synthetic question ' || q, 'text', q FROM generate_series(1,103) e CROSS JOIN generate_series(0,4) q;
 INSERT INTO event_registrations(event_id,person_id,status,registered_at,approved_at,confirmation_deadline,confirmed_at,waitlist_position,attendance_token_hash,attendance_token_encrypted)
 SELECT e,i,
-  CASE WHEN e<=100 THEN CASE WHEN i%10=0 THEN 'EXPIRED' ELSE 'NOT_SELECTED' END
+  CASE WHEN e<=100 THEN CASE WHEN i%10=0 THEN 'NO_CHECK_IN' ELSE 'NOT_SELECTED' END
     WHEN i%5=0 THEN 'CONFIRMED' WHEN i%5=1 THEN 'AWAITING_CONFIRMATION'
     WHEN i%5=2 THEN 'WAITLISTED' ELSE 'PENDING' END::"RegistrationStatus",
   now()-interval '32 days' + i*interval '1 second',
@@ -26,11 +26,12 @@ SELECT e,i,
   CASE WHEN e<=100 AND i%10=0 THEN now()-interval '31 days'
        WHEN e>100 AND i%5=0 THEN now()+interval '30 minutes'
        WHEN e>100 AND i%5=1 THEN now()-interval '1 minute' END,
-  CASE WHEN e>100 AND i%5=0 THEN now()-interval '1 hour' END,
+  CASE WHEN e<=100 AND i%10=0 THEN now()-interval '32 days'+interval '2 hours'
+       WHEN e>100 AND i%5=0 THEN now()-interval '1 hour' END,
   CASE WHEN e>100 AND i%5=2 THEN i END,
-  CASE WHEN e>100 AND i%5=0 THEN md5(e::text || ':' || i::text) END,
-  CASE WHEN e>100 AND i%5=0 THEN 'synthetic ciphertext' END
+  CASE WHEN (e<=100 AND i%10=0) OR (e>100 AND i%5=0) THEN md5(e::text || ':' || i::text) END,
+  CASE WHEN (e<=100 AND i%10=0) OR (e>100 AND i%5=0) THEN 'synthetic ciphertext' END
 FROM generate_series(1,103) e CROSS JOIN LATERAL generate_series(1,CASE WHEN e<=100 THEN 400 WHEN e=101 THEN 100 WHEN e=102 THEN 400 ELSE 800 END) i;
 INSERT INTO registration_blacklist_entries(registration_id,reason)
-SELECT registration_id,'CONFIRMATION_EXPIRED' FROM event_registrations WHERE status='EXPIRED';
+SELECT registration_id,'NO_CHECK_IN' FROM event_registrations WHERE status='NO_CHECK_IN';
 ANALYZE;

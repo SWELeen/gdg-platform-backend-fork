@@ -21,13 +21,13 @@ export class ConfirmationExpiryJob {
     if (this.running) return;
     this.running = true;
     try {
-      const { expired, promoted } =
-        await this.reviewService.expireOverdueConfirmations();
+      const { cancelled, promoted } =
+        await this.reviewService.cancelOverdueConfirmationOffers();
       const { marked } = await this.reviewService.markOverdueNoShows();
-      if (expired > 0) {
+      if (cancelled > 0) {
         this.logger.log({
-          event: 'registration_confirmations_expired',
-          expired,
+          event: 'registration_confirmation_offers_cancelled',
+          cancelled,
           promoted: promoted.length,
         });
       }
