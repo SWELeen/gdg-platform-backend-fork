@@ -81,7 +81,7 @@ describe('Club Leadership dashboard', () => {
           taskId: 3, title: 'Report', description: '', assignedMemberId: 12, createdByMemberId: 12,
           dueAt: new Date('2026-11-01T00:00:00Z'), priority: 'HIGH', status: 'TODO',
           createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
-          assignee: { member: { person: { fullName: 'Abdullah' } } },
+          assignee: { person: { fullName: 'Abdullah' } },
           committee: { committeeCode: 'DATA', committeeName: 'Data' },
         }]),
         groupBy: vi.fn().mockResolvedValue([]),
