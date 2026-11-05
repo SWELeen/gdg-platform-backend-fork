@@ -865,6 +865,42 @@ export class CommitteeDashboardService {
     }));
   }
 
+  async getMyCommitteeDirectory(user: { memberId?: number | null } | undefined, committeeCode: string) {
+    const { committee } = await this.requireMembership(user, committeeCode.trim().toUpperCase());
+    const memberships = await this.prisma.memberCommittee.findMany({
+      where: { committeeId: committee.committeeId, member: { isActive: true, person: { isActive: true } } },
+      include: {
+        member: {
+          include: {
+            person: {
+              select: {
+                fullName: true, university: true, major: true, phoneNumber: true,
+                profileImageUrl: true, bio: true, githubUrl: true, portfolioUrl: true, xUrl: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ role: 'asc' }, { member: { person: { fullName: 'asc' } } }],
+    });
+    return memberships.map(({ member, role }: any) => ({
+      id: String(member.memberId),
+      name: member.person.fullName,
+      role,
+      university: member.person.university,
+      major: member.person.major,
+      phone: member.person.phoneNumber,
+      profileImageUrl: member.person.profileImageUrl,
+      bio: member.person.bio,
+      socialLinks: {
+        github: member.person.githubUrl,
+        linkedin: null,
+        website: member.person.portfolioUrl,
+        x: member.person.xUrl,
+      },
+    }));
+  }
+
   private mapTask(task: {
     taskId: number; title: string; description: string; assignedMemberId: number;
     createdByMemberId: number; dueAt: Date; priority: string; status: string;
@@ -923,7 +959,7 @@ export class CommitteeDashboardService {
     return { person, member };
   }
 
-  private async requireMembership(user: RequestUser | undefined, committeeCode: string) {
+  private async requireMembership(user: { memberId?: number | null } | undefined, committeeCode: string) {
     const committee = await this.prisma.committee.findUnique({ where: { committeeCode } });
     if (!committee) throw new NotFoundException();
     let membership = user?.memberId

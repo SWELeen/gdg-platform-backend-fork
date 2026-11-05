@@ -6,6 +6,22 @@ info:
 servers:
   - url: /
 paths:
+  /my/committees/{committeeCode}/members:
+    get:
+      operationId: listMyCommitteeMembers
+      summary: List active members of one of the caller's committees
+      description: Requires an authenticated account with active membership in the requested committee. Returns only directory fields for active members of that committee; member records from other committees are never included.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters:
+        - name: committeeCode
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Active members and their limited directory profiles. }
+        '401': { description: Authentication required. }
+        '403': { description: Caller is not an active member of the requested committee. }
+        '404': { description: Committee not found. }
   /committees/{committeeCode}/members:
     post:
       operationId: addExistingAccountAsCommitteeMember
