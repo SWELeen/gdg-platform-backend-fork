@@ -1,4 +1,4 @@
-﻿BEGIN;
+BEGIN;
 
 -- Tasks may be assigned across committee boundaries, but remain scoped so each
 -- leadership tier can manage only the work it created.
