@@ -678,7 +678,7 @@ export class CommitteeDashboardService {
         select: { committeeId: true, committeeCode: true, committeeName: true },
       });
       if (!committee) throw new NotFoundException('The selected committee does not exist or cannot have members.');
-      const membership = await this.createAssignedMembership(transaction, member.memberId, committee.committeeId, dto.role);
+      const membership = await this.assignClubCommitteeRole(transaction, member.memberId, committee.committeeId, dto.role);
       return {
         memberId: String(member.memberId), name: person.fullName, email,
         committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
@@ -890,6 +890,22 @@ export class CommitteeDashboardService {
       }
       throw error;
     }
+  }
+
+  private async assignClubCommitteeRole(transaction: Prisma.TransactionClient, memberId: number, committeeId: number, role: string) {
+    const existing = await transaction.memberCommittee.findUnique({
+      where: { memberId_committeeId: { memberId, committeeId } },
+    });
+    if (existing) {
+      if (existing.role === role) {
+        throw new ConflictException('This person already has this role in the selected committee.');
+      }
+      return transaction.memberCommittee.update({
+        where: { memberId_committeeId: { memberId, committeeId } },
+        data: { role },
+      });
+    }
+    return this.createAssignedMembership(transaction, memberId, committeeId, role);
   }
 
   private async resolveExistingAccountMember(transaction: Prisma.TransactionClient, email: string) {
