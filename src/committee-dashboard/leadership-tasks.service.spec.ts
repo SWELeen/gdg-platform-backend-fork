@@ -27,13 +27,43 @@ describe('leadership task authorization', () => {
     expect(access.hasGlobalPermission).toHaveBeenCalledWith(12, 'club.tasks.manage');
   });
 
-  it('prevents the group leaders from assigning directly to a developer subcommittee', async () => {
+  it('allows group leaders to assign to a leader of a developer subcommittee', async () => {
     const { service, access, prisma } = makeService();
     access.hasGlobalPermission.mockResolvedValue(true);
-    await expect(service.createClubTask({ memberId: 1 } as any, {
-      title: 'Restricted target', assignedMemberId: 4, targetCommitteeCode: 'DATA', dueAt: '2026-12-01T10:00:00.000Z', priority: 'HIGH',
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
-    expect(prisma.committee.findUnique).not.toHaveBeenCalled();
+    prisma.committee.findUnique.mockResolvedValue({ committeeId: 8, committeeCode: 'DATA', committeeName: 'Data' });
+    prisma.memberCommittee.findFirst.mockResolvedValue({ memberId: 4 });
+    prisma.committeeTask.create.mockResolvedValue({
+      taskId: 21, title: 'Coordinate data work', description: '', assignedMemberId: 4, createdByMemberId: 1,
+      dueAt: new Date('2026-12-01T10:00:00.000Z'), priority: 'HIGH', status: 'TODO', taskScope: 'CLUB', eventId: null,
+      createdAt: new Date(), updatedAt: new Date(), assignee: { person: { fullName: 'Data Lead' } },
+      committee: { committeeCode: 'DATA', committeeName: 'Data' }, event: null,
+    });
+
+    await service.createClubTask({ memberId: 1 } as any, {
+      title: 'Coordinate data work', assignedMemberId: 4, targetCommitteeCode: 'DATA', dueAt: '2026-12-01T10:00:00.000Z', priority: 'HIGH',
+    } as any);
+
+    expect(prisma.committee.findUnique).toHaveBeenCalledWith({ where: { committeeCode: 'DATA' } });
+    expect(prisma.committeeTask.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ committeeId: 8, assignedMemberId: 4, taskScope: 'CLUB' }),
+    }));
+  });
+
+  it('offers group leaders all ten committee leadership targets plus the overall Developer Committees Leader', async () => {
+    const { service, access, prisma } = makeService();
+    access.hasGlobalPermission.mockResolvedValue(true);
+    prisma.committeeTask.findMany.mockResolvedValue([]);
+    prisma.committee.findMany.mockResolvedValue([]);
+    prisma.memberRole.findMany.mockResolvedValue([]);
+
+    await service.getClubTasks({ memberId: 1 } as any);
+
+    expect(prisma.committee.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        committeeCode: { in: ['CONTENT', 'PM', 'PR', 'DMD', 'DATA', 'CYBER', 'ROBOTICS', 'WEB', 'AUTOMATION', 'AI'] },
+      }),
+    }));
+    expect(prisma.memberRole.findMany).toHaveBeenCalled();
   });
 
   it('allows group leaders to assign to an active leader in the four club committees', async () => {
@@ -73,6 +103,10 @@ describe('leadership task authorization', () => {
     expect(prisma.committeeTask.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ committeeId: 8, assignedMemberId: 4, taskScope: 'DEVELOPER_COMMITTEES' }),
     }));
+
+    await expect(service.createDeveloperTask({ memberId: 1 } as any, {
+      title: 'Outside developer committees', assignedMemberId: 4, targetCommitteeCode: 'PR', dueAt: '2026-12-01T10:00:00.000Z', priority: 'HIGH',
+    } as any)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects non-PM users from accessing published event task plans', async () => {
@@ -92,6 +126,11 @@ describe('leadership task authorization', () => {
     prisma.committee.findMany.mockResolvedValue([]);
     await expect(service.getProjectEvents({ memberId: 22 } as any)).resolves.toMatchObject({ events: [] });
     expect(prisma.memberCommittee.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ role: { in: ['Leader', 'Co-Leader'] } }) }));
+    expect(prisma.committee.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        committeeCode: { in: ['CONTENT', 'PM', 'PR', 'DMD', 'DATA', 'CYBER', 'ROBOTICS', 'WEB', 'AUTOMATION', 'AI'] },
+      }),
+    }));
   });
 
   it('only links PM tasks to published PR events', async () => {

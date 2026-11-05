@@ -8,6 +8,7 @@ import { CommitteeTaskStatus, type CreateLeadershipTaskDto, type UpdateLeadershi
 const CLUB_TARGETS = ['CONTENT', 'PM', 'PR', 'DMD'] as const;
 const DEVELOPER_TARGETS = ['DATA', 'CYBER', 'ROBOTICS', 'WEB', 'AUTOMATION', 'AI'] as const;
 const ALL_COMMITTEE_TARGETS = [...CLUB_TARGETS, ...DEVELOPER_TARGETS] as const;
+const GROUP_TASK_TARGETS = [...ALL_COMMITTEE_TARGETS, 'DEV'] as const;
 const COMMITTEE_TASK_PERMISSION = 'tasks.manage';
 
 @Injectable()
@@ -21,20 +22,20 @@ export class LeadershipTasksService {
     await this.requireGlobal(user, 'club.tasks.manage');
     const [tasks, targets] = await Promise.all([
       this.listTasks('CLUB'),
-      this.listLeadershipTargets([...CLUB_TARGETS, 'DEV'], true),
+      this.listLeadershipTargets(GROUP_TASK_TARGETS, true),
     ]);
     return { tasks, targets };
   }
 
   async createClubTask(user: RequestUser | undefined, dto: CreateLeadershipTaskDto) {
     const actorId = await this.requireGlobal(user, 'club.tasks.manage');
-    const target = await this.resolveLeadershipTarget(dto.targetCommitteeCode, dto.assignedMemberId, [...CLUB_TARGETS, 'DEV'], true);
+    const target = await this.resolveLeadershipTarget(dto.targetCommitteeCode, dto.assignedMemberId, GROUP_TASK_TARGETS, true);
     return this.createTask(actorId, target, dto, 'CLUB');
   }
 
   async updateClubTask(user: RequestUser | undefined, taskId: number, dto: UpdateLeadershipTaskDto) {
     const actorId = await this.requireGlobal(user, 'club.tasks.manage');
-    return this.updateScopedTask(actorId, taskId, 'CLUB', dto, [...CLUB_TARGETS, 'DEV'], true);
+    return this.updateScopedTask(actorId, taskId, 'CLUB', dto, GROUP_TASK_TARGETS, true);
   }
 
   async reviewClubTask(user: RequestUser | undefined, taskId: number, decision: 'APPROVE' | 'RETURN') {
