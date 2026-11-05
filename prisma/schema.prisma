@@ -39,7 +39,6 @@ enum QuestionType {
 }
 
 enum BlacklistReason {
-  CONFIRMATION_EXPIRED
   LATE_CANCELLATION
   NO_CHECK_IN
 }
@@ -164,6 +163,8 @@ model Member {
   reviewedMembershipCommittees MembershipRequestCommittee[] @relation("MembershipDecisionReviewer")
   reviewedGlobalMembershipRoles MembershipRequestGlobalRole[] @relation("GlobalRoleDecisionReviewer")
   publishedAnnouncements Announcement[]
+  assignedCommitteeTasks CommitteeTask[] @relation("TaskAssignee")
+  createdCommitteeTasks  CommitteeTask[] @relation("TaskCreator")
 
   @@map("member")
 }
@@ -253,8 +254,6 @@ model MemberCommittee {
 
   member    Member    @relation(fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
   committee Committee @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
-  assignedTasks CommitteeTask[] @relation("TaskAssignee")
-  createdTasks  CommitteeTask[] @relation("TaskCreator")
   pointsReceived CommitteePointEntry[] @relation("PointsRecipient")
   pointsAwarded  CommitteePointEntry[] @relation("PointsAwarder")
 
@@ -449,15 +448,20 @@ model CommitteeTask {
   dueAt             DateTime @map("due_at") @db.Timestamptz(3)
   priority          String   @default("MEDIUM") @db.VarChar(10)
   status            String   @default("TODO") @db.VarChar(20)
+  taskScope         String   @default("COMMITTEE") @map("task_scope") @db.Text
+  eventId           Int?     @map("event_id")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  committee Committee       @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
-  assignee  MemberCommittee @relation("TaskAssignee", fields: [assignedMemberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
-  creator   MemberCommittee @relation("TaskCreator", fields: [createdByMemberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
+  committee Committee @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
+  assignee  Member    @relation("TaskAssignee", fields: [assignedMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  creator   Member    @relation("TaskCreator", fields: [createdByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  event     Event?    @relation(fields: [eventId], references: [eventId], onDelete: Restrict, onUpdate: NoAction)
 
   @@index([committeeId, status, dueAt])
   @@index([assignedMemberId, committeeId, status])
+  @@index([eventId, status, dueAt])
+  @@index([taskScope, status, dueAt])
   @@map("committee_task")
 }
 
@@ -504,6 +508,7 @@ model Event {
   committee     Committee           @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: Restrict)
   questions     EventQuestion[]
   registrations EventRegistration[]
+  tasks         CommitteeTask[]
 
   @@index([status, startsAt, eventId])
   @@index([status, endsAt, eventId])

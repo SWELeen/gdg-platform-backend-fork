@@ -86,7 +86,7 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Status: approved behavior; implementation pending.
 - Decision: use the original eleven categorized registration statuses (superseded by the 2026-10-09 update below) documented in the core database design. DECLINED includes voluntary waitlist withdrawal; remaining waitlisted users become NOT_SELECTED at event start, without a warning or later promotion.
 - Confirmation: authorized admin sets the event window (default 24 hours); existing approval deadlines remain unchanged when it is edited.
-- Cancellation: at least two hours before start uses CANCELLED; cancellation within the final two hours uses LATE_CANCELLATION. EXPIRED and LATE_CANCELLATION create incident warnings visible to PR, without blocking registration.
+- Cancellation: at least two hours before start uses CANCELLED; cancellation within the final two hours uses LATE_CANCELLATION. LATE_CANCELLATION creates an incident warning visible to PR, without blocking registration.
 - Excuse: PR may set EXCUSED and resolve the corresponding incident warning while preserving history; other unresolved warnings remain visible.
 - Source: subsequent user clarifications/approval in this chat supersede the original registration-state allocation. Full transition rules and remaining event-time edge cases are recorded in the core design document.
 - Migration/rollback: documentation only; no migration, seed, or database operation performed. Warning storage expands the original 12-table core and remains a proposed schema detail.
@@ -98,7 +98,7 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Decision: new confirmation deadlines are capped at event start; admin window edits affect future approvals only. The initial PENDING/WAITLISTED cleanup proposal is superseded by the 2026-10-09 transition contract below.
 - Check-in: opens one hour before start and closes at event end. CONFIRMED with no recorded check-in at end creates a NO_CHECK_IN blacklist incident; actual attendance remains separate from registration status.
 - Questions: questions/options cannot be changed or deleted after the first registration.
-- Blacklist: EXPIRED, LATE_CANCELLATION and NO_CHECK_IN create informational incidents, never registration blocks. PR may excuse an incident, preserving history and unrelated incidents. Participant wording is Attendance notice; Blacklist is internal/database terminology.
+- Blacklist (superseded by 2026-11-05): LATE_CANCELLATION and NO_CHECK_IN create informational incidents, never registration blocks. A missed-confirmation cancellation releases its seat and promotes the waitlist without a blacklist incident.
 - Scope: all other approved authentication, group membership, PR scope, capacity, QR, cancellation, waitlist remain in force; the status set is superseded by the 2026-10-09 update below. See the core database design's Full business decision approval section.
 - Source/precedence: the user's approved full summary supersedes older open questions about these workflows; it does not approve unspecified physical-schema or cryptographic choices.
 - Migration/rollback: documentation only; no code, schema, database migration, commit, push or deployment performed by this approval-recording task.
@@ -108,7 +108,7 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Owner/approver: project user; latest approved status and Reject Remaining clarifications in this chat.
 - Status: approved workflow; schema/migration implementation pending.
 - Status set: PENDING, WAITLISTED, AWAITING_CONFIRMATION, CONFIRMED, DECLINED, CANCELLED, LATE_CANCELLATION, NOT_SELECTED, REJECTED, EXPIRED, NO_CHECK_IN, EXCUSED. Default PENDING.
-- EXPIRED: PR accepted but the user missed confirmation; create a blacklist incident.
+- EXPIRED: historical status for missed confirmation deadlines. New missed deadlines cancel the unconfirmed offer, release the seat, and promote the waitlist without a blacklist incident (updated 2026-11-05).
 - NO_CHECK_IN: confirmed user with no recorded scan at event end transitions from CONFIRMED to NO_CHECK_IN; create a blacklist incident and preserve confirmation history. This supersedes leaving the registration CONFIRMED after missing check-in.
 - Selection: explicit Reject Remaining changes only PENDING to REJECTED. At event start, remaining WAITLISTED become NOT_SELECTED without a warning. This supersedes automatic PENDING-to-NOT_SELECTED cleanup; no new rule is inferred for forgotten PENDING applications.
 - Attendance: successful check-in keeps CONFIRMED and sets checked_in_at/checked_in_by. PR may excuse an incident without deleting history or releasing a seat twice.
@@ -280,3 +280,11 @@ Web Doc Final describes some Next.js full-stack capabilities, including Server A
 - Affected repositories: backend and frontend.
 - Migration implications: add developer_committees.members.assign to the existing DEVELOPER_COMMITTEES_LEADER role only; no overall Developer Committees Co-Leader role is created. No existing rows are rewritten.
 - Source: explicit user instruction in this chat on 2026-11-04.
+
+## 2026-11-05 Registration blacklist reasons
+
+- Owner/approver: project user in this chat.
+- Status: approved implementation requirement.
+- Decision: the blacklist has exactly two incident reasons: a confirmed attendee without a check-in after the event ends, and a confirmed attendee who cancels within two hours before event start. An accepted attendee who misses the confirmation deadline is cancelled, receives no blacklist incident, releases the seat, and allows the next waitlisted person to be promoted.
+- Scope: the confirmation deadline and expiry behavior remain in place; only its blacklist incident is removed. The existing late-cancellation and no-check-in rules remain unchanged.
+- Migration: remove legacy CONFIRMATION_EXPIRED blacklist rows and narrow the database enum. Do not apply the migration to any database as part of this change.

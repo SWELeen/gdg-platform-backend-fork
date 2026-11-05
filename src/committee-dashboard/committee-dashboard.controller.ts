@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -26,12 +27,15 @@ import {
   UpdateCommitteeTaskDto,
 } from './committee-dashboard.dto.js';
 import { CommitteeDashboardService } from './committee-dashboard.service.js';
+import { LeadershipTasksService } from './leadership-tasks.service.js';
+import { CreateLeadershipTaskDto, UpdateLeadershipTaskDto } from './committee-dashboard.dto.js';
 
 @Controller('committees/:committeeCode')
 export class CommitteeDashboardController {
   constructor(
     @Inject(CommitteeDashboardService)
     private readonly dashboard: CommitteeDashboardService,
+    @Inject(LeadershipTasksService) private readonly leadershipTasks: LeadershipTasksService,
   ) {}
 
   @Get('dashboard')
@@ -51,6 +55,39 @@ export class CommitteeDashboardController {
     return apiSuccess(await this.dashboard.addMember(request.user, committeeCode, body));
   }
 
+  @Get('managed-events')
+  async getManagedEvents(@Req() request: { user?: RequestUser }, @Param('committeeCode') committeeCode: string) {
+    this.assertProjectManagementRoute(committeeCode);
+    return apiSuccess(await this.leadershipTasks.getProjectEvents(request.user));
+  }
+
+  @Post('managed-events/:eventId/tasks')
+  async createManagedEventTask(@Req() request: { user?: RequestUser }, @Param('committeeCode') committeeCode: string, @Param('eventId', ParseIntPipe) eventId: number, @Body() body: CreateLeadershipTaskDto) {
+    this.assertProjectManagementRoute(committeeCode);
+    return apiSuccess(await this.leadershipTasks.createProjectEventTask(request.user, eventId, body));
+  }
+
+  @Patch('managed-events/:eventId/tasks/:taskId')
+  async updateManagedEventTask(@Req() request: { user?: RequestUser }, @Param('committeeCode') committeeCode: string, @Param('eventId', ParseIntPipe) eventId: number, @Param('taskId', ParseIntPipe) taskId: number, @Body() body: UpdateLeadershipTaskDto) {
+    this.assertProjectManagementRoute(committeeCode);
+    return apiSuccess(await this.leadershipTasks.updateProjectEventTask(request.user, eventId, taskId, body));
+  }
+
+  @Post('managed-events/:eventId/tasks/:taskId/review')
+  async reviewManagedEventTask(@Req() request: { user?: RequestUser }, @Param('committeeCode') committeeCode: string, @Param('eventId', ParseIntPipe) eventId: number, @Param('taskId', ParseIntPipe) taskId: number, @Body() body: ReviewCommitteeTaskDto) {
+    this.assertProjectManagementRoute(committeeCode);
+    return apiSuccess(await this.leadershipTasks.reviewProjectEventTask(request.user, eventId, taskId, body.decision));
+  }
+
+  @Delete('managed-events/:eventId/tasks/:taskId')
+  async deleteManagedEventTask(@Req() request: { user?: RequestUser }, @Param('committeeCode') committeeCode: string, @Param('eventId', ParseIntPipe) eventId: number, @Param('taskId', ParseIntPipe) taskId: number) {
+    this.assertProjectManagementRoute(committeeCode);
+    return apiSuccess(await this.leadershipTasks.deleteProjectEventTask(request.user, eventId, taskId));
+  }
+
+  private assertProjectManagementRoute(committeeCode: string) {
+    if (committeeCode.trim().toUpperCase() !== 'PM') throw new BadRequestException('Project event task routes require the PM committee.');
+  }
   @Post('events')
   async createEvent(
     @Req() request: { user?: RequestUser },

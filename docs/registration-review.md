@@ -7,13 +7,13 @@ Members browse events, register, then confirm or decline an offered seat. PR rev
 ```
 PENDING ──accept──► AWAITING_CONFIRMATION ──member confirms──► CONFIRMED
    │                      ├── member declines ──► DECLINED ─┐
-   │                      └── deadline passes ──► EXPIRED  ─┴─► waitlist #1 promoted
+   │                      └── deadline passes ──► CANCELLED ─┴─► waitlist #1 promoted
    ├──reject──► REJECTED
    └──waitlist──► WAITLISTED (waitlist_position 1..n)
 ```
 
 - Accepting sets `approved_at`, `reviewed_by_member_id` and `confirmation_deadline = now + events.confirmation_window_hours` (default 24), capped at the event start. No acceptance or promotion after the event starts (`EVENT_STARTED`).
-- An expired confirmation also records a `CONFIRMATION_EXPIRED` attendance notice (`registration_blacklist_entries`); notices never block registration.
+- An unconfirmed offer is cancelled when its deadline passes, releasing its seat and promoting the next waitlisted person without creating an attendance notice.
 - Seats held = `AWAITING_CONFIRMATION + CONFIRMED`. Accepting when held ≥ capacity fails with `CAPACITY_REACHED`.
 - Every seat or waitlist change locks the event row (`SELECT … FOR UPDATE`) inside a transaction, so concurrent reviewers cannot oversell the last seat.
 - Emails are sent only after the transaction commits. A failed email is logged and never undoes the change.
@@ -66,7 +66,7 @@ The registrants list also reports attendance: `summary.checkedIn`, `summary.notC
 
 ### GET /registrations/blacklist
 
-Query: `page` (default 1), `pageSize` (1–100, default 20). Returns paginated open (unresolved) attendance incidents with their reason (`NO_CHECK_IN`, `CONFIRMATION_EXPIRED`, or `LATE_CANCELLATION`), creation/resolution timestamps, attendee name/email, registration status, and event details. Requires `registrations.review`. `data.canResolve` is true only for the PR Leader or Co-Leader.
+Query: `page` (default 1), `pageSize` (1–100, default 20). Returns paginated open (unresolved) attendance incidents with their reason (`NO_CHECK_IN` or `LATE_CANCELLATION`), creation/resolution timestamps, attendee name/email, registration status, and event details. Requires `registrations.review`. `data.canResolve` is true only for the PR Leader or Co-Leader.
 
 ### POST /registrations/blacklist/:entryId/resolve
 
@@ -97,7 +97,7 @@ The frontend exports these rows as UTF-8 CSV files that Excel can open. No datab
 | 409 | `EVENT_STARTED` | Accept/promote after the event started |
 | 409 | `REGISTRATION_CLOSED` | Registration deadline passed |
 | 409 | `ALREADY_REGISTERED` | Second registration for the same event |
-| 409 | `CONFIRMATION_EXPIRED` | Confirm/decline after the confirmation deadline |
+| 409 | `CONFIRMATION_EXPIRED` | Confirm/decline after the confirmation deadline; this is not a blacklist reason |
 | 503 | `REGISTRATION_BUSY` | Too many simultaneous changes to one event (queued over 10 s); nothing changed, retry |
 
 Domain codes are allow-listed in `src/common/http/http-error.filter.ts` (`DOMAIN_ERROR_CODES`).
@@ -106,7 +106,7 @@ Domain codes are allow-listed in `src/common/http/http-error.filter.ts` (`DOMAIN
 
 `RegistrationReviewService.promoteNextFromWaitlist(eventId)` gives waitlist #1 a seat when one is free, renumbers the rest and sends the promotion email. The member decline flow calls it after a decline; `RegistrationsModule` exports the service.
 
-`ConfirmationExpiryJob` runs every minute: overdue `AWAITING_CONFIRMATION` rows become `EXPIRED`, then each freed seat is offered to waitlist #1. A row only expires if it is still awaiting confirmation once the event is locked, so overlapping runs never promote the same person twice.
+`ConfirmationExpiryJob` runs every minute: overdue `AWAITING_CONFIRMATION` rows become `CANCELLED`, then each freed seat is offered to waitlist #1. A row only changes if it is still awaiting confirmation once the event is locked, so overlapping runs never promote the same person twice. This automatic cancellation does not add a blacklist incident.
 
 The same job marks a still-confirmed registration `NO_CHECK_IN` once the event has ended for 24 hours without a recorded scan, and creates a `NO_CHECK_IN` blacklist entry. Cancelled events are excluded. Both transitions are conditional and idempotent.
 

@@ -152,8 +152,9 @@ Approved states in workflow categories:
 | Withdrawal | CANCELLED | Cancelled after confirming, at least two hours before event start |
 | Withdrawal | LATE_CANCELLATION | Cancelled after confirming within the final two hours before event start; warning added |
 | Not selected | NOT_SELECTED | Still WAITLISTED when the event starts; no warning |
-| Rejected / expired | REJECTED | Rejected by PR |
-| Rejected / expired | EXPIRED | Missed confirmation deadline; warning added |
+| Rejected | REJECTED | Rejected by PR |
+| Historical expiry | EXPIRED | Legacy status; new missed confirmations are recorded as CANCELLED |
+| Missed confirmation | CANCELLED | Confirmation deadline passes; seat released and waitlist promoted; no blacklist warning |
 | Attendance | NO_CHECK_IN | Confirmed, but no QR check-in recorded by event end; warning added |
 | Excused | EXCUSED | PR granted an excuse and resolved this incident's warning, if any |
 
@@ -165,7 +166,7 @@ Row checks:
 
 - WAITLISTED requires positive waitlist_position; other states require NULL position.
 - AWAITING_CONFIRMATION, CONFIRMED, CANCELLED, LATE_CANCELLATION, NO_CHECK_IN, EXPIRED require approved_at and confirmation_deadline; deadline > approved_at.
-- CONFIRMED, CANCELLED, LATE_CANCELLATION, and NO_CHECK_IN require confirmed_at. PENDING, WAITLISTED, AWAITING_CONFIRMATION, DECLINED, NOT_SELECTED, REJECTED, and EXPIRED require confirmed_at NULL for the initial lifecycle. EXCUSED retains the incident history, including confirmation/cancellation timestamps when present; the current excuse workflow does not authorize overwriting a successful check-in. Never erase historical timestamps to satisfy a status constraint.
+- CONFIRMED, LATE_CANCELLATION, and NO_CHECK_IN require confirmed_at. CANCELLED may have confirmed_at when the attendee cancelled after confirming, or no confirmed_at when an offer timed out. PENDING, WAITLISTED, AWAITING_CONFIRMATION, DECLINED, NOT_SELECTED, REJECTED, and EXPIRED require confirmed_at NULL for the initial lifecycle. EXCUSED retains the incident history, including confirmation/cancellation timestamps when present; the current excuse workflow does not authorize overwriting a successful check-in. Never erase historical timestamps to satisfy a status constraint.
 - NO_CHECK_IN requires checked_in_at and checked_in_by to be NULL; preserve confirmed_at and QR identity as history, but reject scanning in this state. Successful scanning keeps status CONFIRMED.
 - CANCELLED/LATE_CANCELLATION require cancelled_at; EXCUSED requires excused_at, excused_by, and a nonempty excuse_reason. A warning record preserves the original incident when status becomes EXCUSED.
 - confirmed_at, when set, must be within the confirmation deadline and not before approval.
@@ -183,7 +184,7 @@ Delete registration: Cascade answers; delete referenced question: Restrict. Inde
 
 ### 13. registration_blacklist_entries (additional history table)
 
-Proposed fields: `entry_id` INT PK; `registration_id` INT FK; `reason` enum CONFIRMATION_EXPIRED/LATE_CANCELLATION/NO_CHECK_IN; `created_at` TIMESTAMPTZ(3) default now; `resolved_at?` TIMESTAMPTZ(3); `resolved_by?` INT users FK; `resolution_reason?` TEXT.
+Proposed fields: `entry_id` INT PK; `registration_id` INT FK; `reason` enum LATE_CANCELLATION/NO_CHECK_IN; `created_at` TIMESTAMPTZ(3) default now; `resolved_at?` TIMESTAMPTZ(3); `resolved_by?` INT users FK; `resolution_reason?` TEXT.
 
 Unique `(registration_id, reason)` makes incident creation idempotent. Both delete actions Restrict, and onUpdate Restrict. Index resolved_by for staff references. Registration lookup uses the unique pair's prefix; owner is derived through event_registrations.user_id rather than duplicated. Query unresolved entries through that owner's registrations to derive the PR indicator. No users.is_blacklisted boolean and no registration block.
 
@@ -297,16 +298,16 @@ The user approved the categorized statuses and clarified the following transitio
 
 - Admin sets events.confirmation_window_hours (default 24). Acceptance/promotion snapshots confirmation_deadline = approved_at + the configured interval. Editing the event setting affects future approvals only, not existing deadlines. Cap each new deadline at event start: min(approved_at + configured interval, event_start). Do not accept/promote after event start. Existing deadlines are not recalculated when the admin changes the configured window.
 - WAITLISTED -> DECLINED only on the user's voluntary withdrawal. Remove its active position and renumber the remaining waitlist. This frees no reserved seat and creates no warning.
-- At event start, remaining WAITLISTED -> NOT_SELECTED. Clear active positions; no warning; stop promotion at the same cutoff. Scheduled processing and promotion must serialize on the event lock, and endpoints must enforce the cutoff even if the scheduled job is delayed. AWAITING_CONFIRMATION registrations expire at their capped deadline; only these expirations create an expiry warning.
+- At event start, remaining WAITLISTED -> NOT_SELECTED. Clear active positions; no warning; stop promotion at the same cutoff. Scheduled processing and promotion must serialize on the event lock, and endpoints must enforce the cutoff even if the scheduled job is delayed. AWAITING_CONFIRMATION registrations are cancelled at their capped confirmation deadline without a warning.
 - AWAITING_CONFIRMATION -> DECLINED on voluntary refusal before confirmation. Release the reserved seat once and promote only if before the event-start cutoff.
 - CONFIRMED -> CANCELLED when cancelled at or before event_start minus two hours; no warning. CONFIRMED -> LATE_CANCELLATION when cancelled strictly after that cutoff and before event start; create a warning. Invalidate QR scanning and release the seat once. No cancellation after check-in is defined by this policy.
-- AWAITING_CONFIRMATION -> EXPIRED when its confirmation deadline passes. Release the seat once and create a warning, even if the user never confirmed. A confirmed non-attendee is a separate no-show, not EXPIRED.
-- EXPIRED and LATE_CANCELLATION each produce a registration-linked warning visible to PR beside future applicants. Warnings never block registration. Multiple unresolved incidents retain the icon.
+- AWAITING_CONFIRMATION -> CANCELLED when its confirmation deadline passes. Set cancelled_at, release the seat once and promote the next waitlisted person; do not create a blacklist warning. EXPIRED is retained only for historical rows. A confirmed non-attendee is a separate no-show.
+- LATE_CANCELLATION produces a registration-linked warning visible to PR beside future applicants. Warnings never block registration. Multiple unresolved incidents retain the icon.
 - Authorized PR may grant an excuse for cancellation/absence: set EXCUSED, record actor/time/reason, and resolve only that incident's warning. Preserve its original reason and timestamps. Repeating the request must not release another seat or promote another person. Excusing an absence does not create a check-in.
 
 Proposed extra table: registration_blacklist_entries, linked to the originating registration and through it to the user. Section 13 specifies the proposed columns and incident key. Store the historical reason independently from the mutable registration status. Permission grants remain unapproved; do not implement a global users.is_blacklisted boolean as duplicate state.
 
-Add acceptance tests: voluntary waitlist exit vs event-start NOT_SELECTED; concurrent promotion vs cutoff; cancellation before/at/after the two-hour boundary; expiry warning retries; multiple warnings with only one excused; EXCUSED history preservation; and no second seat release on excuse. These are planned tests, not executed tests.
+Add acceptance tests: voluntary waitlist exit vs event-start NOT_SELECTED; concurrent promotion vs cutoff; cancellation before/at/after the two-hour boundary; missed-confirmation cancellation and waitlist promotion retries without a blacklist warning; multiple warnings with only one excused; EXCUSED history preservation; and no second seat release on excuse. These are planned tests, not executed tests.
 
 ## Full business decision approval — 2026-10-07
 
@@ -321,7 +322,7 @@ The user explicitly approved the complete summarized decision set in chat. This 
 - QR is issued only after confirmation and is identical in the platform and confirmation email, contains no personal data, and is validated server-side by authorized PR/staff.
 - QR scanning opens one hour before event start and remains available until event end. Store actual attendance separately with checked_in_at/checked_in_by; reject replay with Already Checked In. Use one consistent server-time boundary convention in implementation/tests. Schedule data must provide a definite event end; do not leave published event end undefined.
 - Cancellation after confirmation at least two hours before start is CANCELLED without warning. Within the final two hours it is LATE_CANCELLATION with warning. QR becomes unusable and the reserved seat is released once; promotion is allowed only before event start.
-- At event end, CONFIRMED registrations with no check-in transition to NO_CHECK_IN. EXPIRED, LATE_CANCELLATION, and NO_CHECK_IN each create a separate registration-linked blacklist incident. Use reasons CONFIRMATION_EXPIRED, LATE_CANCELLATION, and NO_CHECK_IN. NO_CHECK_IN is both a registration status and an incident reason. It records missing attendance evidence, not verified physical absence. Never use EXPIRED for an already-confirmed user.
+- At event end, CONFIRMED registrations with no check-in transition to NO_CHECK_IN and create a registration-linked blacklist incident. LATE_CANCELLATION also creates an incident. A missed confirmation deadline cancels the offer, releases its seat, and promotes the next waitlisted person, but creates no blacklist incident. The only incident reasons are LATE_CANCELLATION and NO_CHECK_IN. NO_CHECK_IN is both a registration status and an incident reason. It records missing attendance evidence, not verified physical absence. Never use EXPIRED for an already-confirmed user.
 - Blacklist entries are informational: show the indicator beside future applicants to PR; never block registration. Participant-facing copy uses Attendance notice, never Blacklist.
 - PR can set EXCUSED with reason, actor and time; resolve only the associated incident and preserve historical status reason/timestamps. Multiple unresolved incidents retain the indicator. Excusing a cancellation or absence never releases the same seat twice or invents a check-in.
 
@@ -341,14 +342,14 @@ The twelve statuses above belong to event_registrations.status; default PENDING.
 | WAITLISTED | NOT_SELECTED | Event starts without a seat offer; no warning |
 | AWAITING_CONFIRMATION | CONFIRMED | User confirms before their deadline; issue QR |
 | AWAITING_CONFIRMATION | DECLINED | User declines before confirmation; no warning |
-| AWAITING_CONFIRMATION | EXPIRED | Confirmation deadline passes; warning added; no QR issued |
+| AWAITING_CONFIRMATION | CANCELLED | Confirmation deadline passes; seat released and waitlist promoted; no blacklist incident or QR issued |
 | CONFIRMED | CANCELLED | User cancels at least two hours before event start; no warning |
 | CONFIRMED | LATE_CANCELLATION | User cancels within the final two hours before start; warning added |
 | CONFIRMED | NO_CHECK_IN | Event ends without a recorded QR check-in; warning added |
 | CONFIRMED | CONFIRMED | Successful QR scan; write checked_in_at/checked_in_by once |
 | Eligible cancellation/absence incident | EXCUSED | PR accepts the excuse; resolve only that incident's warning and retain history |
 
-QR scanning must require CONFIRMED plus a valid event/window/token. NO_CHECK_IN processing and a scan at the end boundary must serialize so one registration cannot be both checked in and marked NO_CHECK_IN. Repeated scheduled work cannot duplicate blacklist incidents. EXPIRED and NO_CHECK_IN are intentionally distinct: no confirmation versus confirmed without check-in.
+QR scanning must require CONFIRMED plus a valid event/window/token. NO_CHECK_IN processing and a scan at the end boundary must serialize so one registration cannot be both checked in and marked NO_CHECK_IN. Repeated scheduled work cannot duplicate blacklist incidents. Missed-confirmation cancellations do not create blacklist incidents; NO_CHECK_IN remains distinct because the attendee had confirmed.
 
 Reject Remaining affects only PENDING. It must not change WAITLISTED, AWAITING_CONFIRMATION, CONFIRMED or terminal states. Clearing/renumbering a withdrawn waitlist position does not release an occupied seat. Excusing an incident never releases a seat a second time.
 

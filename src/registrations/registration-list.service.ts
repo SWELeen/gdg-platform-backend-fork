@@ -1,5 +1,6 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  BlacklistReason,
   EventStatus,
   Prisma,
   RegistrationStatus,
@@ -342,7 +343,10 @@ export class RegistrationListService {
       PR_COMMITTEE_CODE,
     );
     // A removed person is no longer on the blacklist, so only open entries show.
-    const where = { resolvedAt: null };
+    const where = {
+      resolvedAt: null,
+      reason: { in: [BlacklistReason.NO_CHECK_IN, BlacklistReason.LATE_CANCELLATION] },
+    };
     const [total, entries] = await this.prisma.$transaction([
       this.prisma.registrationBlacklistEntry.count({ where }),
       this.prisma.registrationBlacklistEntry.findMany({
