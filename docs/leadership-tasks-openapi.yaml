@@ -1,0 +1,285 @@
+openapi: 3.1.0
+info:
+  title: GDG Main Platform Leadership Tasks API
+  version: 1.0.0
+  description: Cross-committee tasks assigned by group leadership, the Developer Committees Leader, and Project Management event owners.
+servers:
+  - url: /
+paths:
+  /club-leadership/tasks:
+    get:
+      operationId: getClubLeadershipTasks
+      description: Requires club.tasks.manage. Returns group-level tasks and active Leader/Co-Leader targets from CONTENT, PM, PR, DMD, and the overall Developer Committees Leader.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      responses:
+        '200': { description: Task board and assignable leadership targets., content: { application/json: { schema: { $ref: '#/components/schemas/ClubTaskBoardResponse' } } } }
+        '401': { description: Authentication required. }
+        '403': { description: Caller cannot manage group leadership tasks. }
+    post:
+      operationId: createClubLeadershipTask
+      description: Requires club.tasks.manage. Targets are limited to CONTENT, PM, PR, DMD, or the overall Developer Committees Leader. The selected account must currently hold an active Leader/Co-Leader seat or the Developer Committees Leader role.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateTask' } } } }
+      responses:
+        '201': { description: Task created., content: { application/json: { schema: { $ref: '#/components/schemas/TaskResponse' } } } }
+        '400': { description: Invalid task data or target role. }
+        '401': { description: Authentication required. }
+        '403': { description: Caller cannot manage group leadership tasks. }
+  /club-leadership/tasks/{taskId}:
+    patch:
+      operationId: updateClubLeadershipTask
+      description: Requires club.tasks.manage. Only a task with CLUB scope can be changed.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/taskId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTask' } } } }
+      responses:
+        '200': { description: Task updated., content: { application/json: { schema: { $ref: '#/components/schemas/TaskResponse' } } } }
+        '403': { description: Caller cannot manage group leadership tasks. }
+        '404': { description: Task not found in the group scope. }
+    delete:
+      operationId: deleteClubLeadershipTask
+      description: Requires club.tasks.manage. Only a task with CLUB scope can be deleted.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/taskId' }]
+      responses:
+        '200': { description: Task deleted. }
+        '403': { description: Caller cannot manage group leadership tasks. }
+        '404': { description: Task not found in the group scope. }
+  /club-leadership/tasks/{taskId}/review:
+    post:
+      operationId: reviewClubLeadershipTask
+      description: Requires club.tasks.manage. APPROVE completes a task awaiting review; RETURN moves it back to IN_PROGRESS.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/taskId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReviewTask' } } } }
+      responses:
+        '200': { description: Task reviewed. }
+        '403': { description: Caller cannot manage group leadership tasks. }
+        '404': { description: Task not found in the group scope. }
+        '409': { description: Task is not waiting for review. }
+  /developer-committees/tasks:
+    get:
+      operationId: getDeveloperLeadershipTasks
+      description: Requires developer_committees.dashboard.view. Returns manager tasks and, where applicable, inbox tasks assigned to the signed-in Developer Committees Leader. Only the Developer Committees Leader receives canManageTasks=true and assignable targets.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      responses:
+        '200': { description: Developer leadership task board., content: { application/json: { schema: { $ref: '#/components/schemas/DeveloperTaskBoardResponse' } } } }
+        '403': { description: Caller cannot view the developer committees dashboard. }
+    post:
+      operationId: createDeveloperLeadershipTask
+      description: Requires developer_committees.tasks.manage. Targets are limited to DATA, CYBER, ROBOTICS, WEB, AUTOMATION, and AI active Leaders/Co-Leaders.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateTask' } } } }
+      responses:
+        '201': { description: Task created., content: { application/json: { schema: { $ref: '#/components/schemas/TaskResponse' } } } }
+        '400': { description: Invalid task data or target role. }
+        '403': { description: Caller cannot manage developer committee tasks. }
+  /developer-committees/tasks/{taskId}:
+    patch:
+      operationId: updateDeveloperLeadershipTask
+      description: Requires developer_committees.tasks.manage. Only a task with DEVELOPER_COMMITTEES scope can be changed.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/taskId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTask' } } } }
+      responses:
+        '200': { description: Task updated. }
+        '403': { description: Caller cannot manage developer committee tasks. }
+        '404': { description: Task not found in the developer committee scope. }
+    delete:
+      operationId: deleteDeveloperLeadershipTask
+      description: Requires developer_committees.tasks.manage. Only a task with DEVELOPER_COMMITTEES scope can be deleted.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/taskId' }]
+      responses:
+        '200': { description: Task deleted. }
+        '403': { description: Caller cannot manage developer committee tasks. }
+        '404': { description: Task not found in the developer committee scope. }
+  /developer-committees/tasks/{taskId}/review:
+    post:
+      operationId: reviewDeveloperLeadershipTask
+      description: Requires developer_committees.tasks.manage. APPROVE completes a task awaiting review; RETURN moves it back to IN_PROGRESS.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/taskId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReviewTask' } } } }
+      responses:
+        '200': { description: Task reviewed. }
+        '403': { description: Caller cannot manage developer committee tasks. }
+        '404': { description: Task not found in the developer committee scope. }
+        '409': { description: Task is not waiting for review. }
+  /committees/PM/managed-events:
+    get:
+      operationId: getProjectManagedPrEvents
+      description: Requires an active PM committee Leader or Co-Leader with tasks.manage. Returns published PR events and eligible Leader/Co-Leader targets across the ten leaf committees.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      responses:
+        '200': { description: Published PR event cards with associated tasks., content: { application/json: { schema: { $ref: '#/components/schemas/ManagedEventsApiResponse' } } } }
+        '403': { description: Caller is not authorized to manage PM event tasks. }
+  /committees/PM/managed-events/{eventId}/tasks:
+    post:
+      operationId: createProjectEventTask
+      description: Requires an active PM committee Leader or Co-Leader with tasks.manage. The event must be published by PR; the target must be an active Leader/Co-Leader in CONTENT, PM, PR, DMD, DATA, CYBER, ROBOTICS, WEB, AUTOMATION, or AI.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/eventId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateTask' } } } }
+      responses:
+        '201': { description: Event task created., content: { application/json: { schema: { $ref: '#/components/schemas/TaskResponse' } } } }
+        '400': { description: Invalid task data or target role. }
+        '403': { description: Caller cannot manage PM event tasks. }
+        '404': { description: Published PR event not found. }
+  /committees/PM/managed-events/{eventId}/tasks/{taskId}:
+    patch:
+      operationId: updateProjectEventTask
+      description: Requires an active PM committee Leader or Co-Leader with tasks.manage. Only a task linked to this published PR event can be changed.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/eventId' }, { $ref: '#/components/parameters/taskId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTask' } } } }
+      responses:
+        '200': { description: Event task updated. }
+        '403': { description: Caller cannot manage PM event tasks. }
+        '404': { description: Event or linked task not found. }
+    delete:
+      operationId: deleteProjectEventTask
+      description: Requires an active PM committee Leader or Co-Leader with tasks.manage. Only a task linked to this event can be deleted.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/eventId' }, { $ref: '#/components/parameters/taskId' }]
+      responses:
+        '200': { description: Event task deleted. }
+        '403': { description: Caller cannot manage PM event tasks. }
+        '404': { description: Event or linked task not found. }
+  /committees/PM/managed-events/{eventId}/tasks/{taskId}/review:
+    post:
+      operationId: reviewProjectEventTask
+      description: Requires an active PM committee Leader or Co-Leader with tasks.manage. APPROVE completes a task awaiting review; RETURN moves it back to IN_PROGRESS.
+      security: [{ bearerAuth: [] }, { accessCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/eventId' }, { $ref: '#/components/parameters/taskId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReviewTask' } } } }
+      responses:
+        '200': { description: Event task reviewed. }
+        '403': { description: Caller cannot manage PM event tasks. }
+        '404': { description: Event or linked task not found. }
+        '409': { description: Task is not waiting for review. }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+    accessCookie: { type: apiKey, in: cookie, name: gdg_access }
+  parameters:
+    taskId: { name: taskId, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    eventId: { name: eventId, in: path, required: true, schema: { type: integer, minimum: 1 } }
+  schemas:
+    CreateTask:
+      type: object
+      additionalProperties: false
+      required: [title, assignedMemberId, targetCommitteeCode, dueAt, priority]
+      properties:
+        title: { type: string, maxLength: 150 }
+        description: { type: string, maxLength: 5000 }
+        assignedMemberId: { type: integer, minimum: 1 }
+        targetCommitteeCode: { type: string, maxLength: 20 }
+        dueAt: { type: string, format: date-time }
+        priority: { type: string, enum: [HIGH, MEDIUM, LOW] }
+    UpdateTask:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, maxLength: 150 }
+        description: { type: string, maxLength: 5000 }
+        assignedMemberId: { type: integer, minimum: 1 }
+        targetCommitteeCode: { type: string, maxLength: 20 }
+        dueAt: { type: string, format: date-time }
+        priority: { type: string, enum: [HIGH, MEDIUM, LOW] }
+        status: { type: string, enum: [TODO, IN_PROGRESS, PENDING_REVIEW, COMPLETED] }
+    ReviewTask:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [APPROVE, RETURN] }
+    Target:
+      type: object
+      required: [memberId, name, committeeCode, committeeName, role]
+      properties:
+        memberId: { type: string }
+        name: { type: string }
+        committeeCode: { type: string }
+        committeeName: { type: string }
+        role: { type: string }
+    Task:
+      type: object
+      required: [id, title, description, assignedMemberId, assignedMemberName, createdByMemberId, dueAt, priority, status, taskScope, committeeCode, committeeName, eventId, eventTitle, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        assignedMemberId: { type: string }
+        assignedMemberName: { type: string }
+        createdByMemberId: { type: string }
+        dueAt: { type: string, format: date-time }
+        priority: { type: string, enum: [HIGH, MEDIUM, LOW] }
+        status: { type: string, enum: [TODO, IN_PROGRESS, PENDING_REVIEW, COMPLETED] }
+        taskScope: { type: string, enum: [COMMITTEE, CLUB, DEVELOPER_COMMITTEES, EVENT] }
+        committeeCode: { type: string }
+        committeeName: { type: string }
+        eventId: { type: [string, 'null'] }
+        eventTitle: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ClubTaskBoard:
+      type: object
+      required: [tasks, targets]
+      properties:
+        tasks: { type: array, items: { $ref: '#/components/schemas/Task' } }
+        targets: { type: array, items: { $ref: '#/components/schemas/Target' } }
+    ClubTaskBoardResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        data: { $ref: '#/components/schemas/ClubTaskBoard' }
+        error: { type: 'null' }
+    DeveloperTaskBoard:
+      type: object
+      required: [canManageTasks, tasks, targets, inboxTasks]
+      properties:
+        canManageTasks: { type: boolean }
+        tasks: { type: array, items: { $ref: '#/components/schemas/Task' } }
+        targets: { type: array, items: { $ref: '#/components/schemas/Target' } }
+        inboxTasks: { type: array, items: { $ref: '#/components/schemas/Task' } }
+    DeveloperTaskBoardResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        data: { $ref: '#/components/schemas/DeveloperTaskBoard' }
+        error: { type: 'null' }
+    ManagedEventsResponse:
+      type: object
+      required: [targets, events]
+      properties:
+        targets: { type: array, items: { $ref: '#/components/schemas/Target' } }
+        events:
+          type: array
+          items:
+            type: object
+            required: [id, title, description, startsAt, endsAt, location, tasks]
+            properties:
+              id: { type: string }
+              title: { type: string }
+              description: { type: string }
+              startsAt: { type: string, format: date-time }
+              endsAt: { type: string, format: date-time }
+              location: { type: [string, 'null'] }
+              tasks: { type: array, items: { $ref: '#/components/schemas/Task' } }
+    ManagedEventsApiResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        data: { $ref: '#/components/schemas/ManagedEventsResponse' }
+        error: { type: 'null' }
+    TaskResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        data: { $ref: '#/components/schemas/Task' }
+        error: { type: 'null' }

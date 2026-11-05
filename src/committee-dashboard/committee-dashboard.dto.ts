@@ -142,6 +142,66 @@ export class UpdateCommitteeTaskDto {
   status?: CommitteeTaskStatus;
 }
 
+export class CreateLeadershipTaskDto {
+  @IsString()
+  @MaxLength(150)
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  description?: string;
+
+  @IsInt()
+  @Min(1)
+  assignedMemberId!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  targetCommitteeCode!: string;
+
+  @IsDateString()
+  dueAt!: string;
+
+  @IsEnum(CommitteeTaskPriority)
+  priority!: CommitteeTaskPriority;
+}
+
+export class UpdateLeadershipTaskDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  description?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  assignedMemberId?: number;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  targetCommitteeCode?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dueAt?: string;
+
+  @IsOptional()
+  @IsEnum(CommitteeTaskPriority)
+  priority?: CommitteeTaskPriority;
+
+  @IsOptional()
+  @IsEnum(CommitteeTaskStatus)
+  status?: CommitteeTaskStatus;
+}
 export class UpdateCommitteePointsDto {
   @IsInt()
   pointsDelta!: number;

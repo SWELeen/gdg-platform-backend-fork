@@ -97,7 +97,7 @@ export class CommitteeDashboardService {
       }),
       this.prisma.committeeTask.findMany({
         include: {
-          assignee: { include: { member: { include: { person: true } } } },
+          assignee: { include: { person: true } },
           committee: { select: { committeeCode: true, committeeName: true } },
         },
         orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }], take: 200,
@@ -162,9 +162,9 @@ export class CommitteeDashboardService {
       })),
       tasks: (tasks as any[]).map((task: any) => ({
         id: String(task.taskId), title: task.title, description: task.description,
-        assignedMemberId: String(task.assignedMemberId), assignedMemberName: task.assignee.member.person.fullName,
+        assignedMemberId: String(task.assignedMemberId), assignedMemberName: task.assignee.person.fullName,
         createdByMemberId: String(task.createdByMemberId), dueAt: task.dueAt.toISOString(), priority: task.priority,
-        status: task.status, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
+        status: task.status, taskScope: task.taskScope ?? 'COMMITTEE', eventId: task.eventId == null ? null : String(task.eventId), eventTitle: task.event?.name ?? null, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
         committeeCode: task.committee.committeeCode, committeeName: task.committee.committeeName,
       })),
       pointHistory: (points as any[]).map((entry: any) => ({
@@ -228,7 +228,7 @@ export class CommitteeDashboardService {
       }),
       this.prisma.committeeTask.findMany({
         where: { committeeId: committee.committeeId },
-        include: { assignee: { include: { member: { include: { person: true } } } } },
+        include: { assignee: { include: { person: true } }, event: { select: { name: true } } },
         orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }],
       }),
       this.prisma.committeePointEntry.findMany({
@@ -288,11 +288,12 @@ export class CommitteeDashboardService {
       title: task.title,
       description: task.description,
       assignedMemberId: String(task.assignedMemberId),
-      assignedMemberName: task.assignee.member.person.fullName,
+      assignedMemberName: task.assignee.person.fullName,
       createdByMemberId: String(task.createdByMemberId),
       dueAt: task.dueAt.toISOString(),
       priority: task.priority,
-      status: task.status,
+      status: task.status, taskScope: task.taskScope ?? 'COMMITTEE',
+      eventId: task.eventId == null ? null : String(task.eventId), eventTitle: task.event?.name ?? null,
       createdAt: task.createdAt.toISOString(),
       updatedAt: task.updatedAt.toISOString(),
     }));
@@ -724,8 +725,10 @@ export class CommitteeDashboardService {
         dueAt: new Date(dto.dueAt),
         priority: dto.priority,
         status: dto.status ?? CommitteeTaskStatus.TODO,
+        taskScope: 'COMMITTEE',
+        eventId: null,
       },
-      include: { assignee: { include: { member: { include: { person: true } } } } },
+      include: { assignee: { include: { person: true } }, event: { select: { name: true } } },
     });
     return this.mapTask(task);
   }
@@ -735,6 +738,7 @@ export class CommitteeDashboardService {
     await this.requirePermission(memberId, TASK_PERMISSION, committee.committeeId);
     const existing = await this.prisma.committeeTask.findFirst({ where: { taskId, committeeId: committee.committeeId } });
     if (!existing) throw new NotFoundException();
+    if (existing.taskScope !== 'COMMITTEE') throw new ForbiddenException();
     if (dto.assignedMemberId !== undefined) await this.requireCommitteeMember(committee.committeeId, dto.assignedMemberId);
     const task = await this.prisma.committeeTask.update({
       where: { taskId },
@@ -746,7 +750,7 @@ export class CommitteeDashboardService {
         ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
       },
-      include: { assignee: { include: { member: { include: { person: true } } } } },
+      include: { assignee: { include: { person: true } }, event: { select: { name: true } } },
     });
     return this.mapTask(task);
   }
@@ -755,7 +759,7 @@ export class CommitteeDashboardService {
   async updateMyTaskStatus(memberId: number | null | undefined, taskId: number, status: (typeof MEMBER_TASK_STATUSES)[number]) {
     if (!memberId) throw new ForbiddenException();
     const task = await this.prisma.committeeTask.findFirst({
-      where: { taskId, assignedMemberId: memberId, assignee: { member: { isActive: true } } },
+      where: { taskId, assignedMemberId: memberId, assignee: { isActive: true, person: { isActive: true } } },
       select: { status: true },
     });
     if (!task) throw new NotFoundException();
@@ -775,16 +779,16 @@ export class CommitteeDashboardService {
   async reviewTask(user: RequestUser | undefined, committeeCode: string, taskId: number, decision: 'APPROVE' | 'RETURN') {
     const { committee, memberId } = await this.requireMembership(user, committeeCode);
     await this.requirePermission(memberId, TASK_PERMISSION, committee.committeeId);
-    const task = await this.prisma.committeeTask.findFirst({ where: { taskId, committeeId: committee.committeeId }, select: { status: true } });
+    const task = await this.prisma.committeeTask.findFirst({ where: { taskId, committeeId: committee.committeeId, taskScope: 'COMMITTEE' }, select: { status: true } });
     if (!task) throw new NotFoundException();
     const { count } = await this.prisma.committeeTask.updateMany({
-      where: { taskId, committeeId: committee.committeeId, status: CommitteeTaskStatus.PENDING_REVIEW },
+      where: { taskId, committeeId: committee.committeeId, taskScope: 'COMMITTEE', status: CommitteeTaskStatus.PENDING_REVIEW },
       data: { status: decision === 'APPROVE' ? CommitteeTaskStatus.COMPLETED : CommitteeTaskStatus.IN_PROGRESS },
     });
     if (count === 0) throw new ConflictException('Only a task waiting for confirmation can be reviewed.');
     const updated = await this.prisma.committeeTask.findUniqueOrThrow({
       where: { taskId },
-      include: { assignee: { include: { member: { include: { person: true } } } } },
+      include: { assignee: { include: { person: true } }, event: { select: { name: true } } },
     });
     return this.mapTask(updated);
   }
@@ -792,7 +796,7 @@ export class CommitteeDashboardService {
   async deleteTask(user: RequestUser | undefined, committeeCode: string, taskId: number) {
     const { committee, memberId } = await this.requireMembership(user, committeeCode);
     await this.requirePermission(memberId, TASK_PERMISSION, committee.committeeId);
-    const result = await this.prisma.committeeTask.deleteMany({ where: { taskId, committeeId: committee.committeeId } });
+    const result = await this.prisma.committeeTask.deleteMany({ where: { taskId, committeeId: committee.committeeId, taskScope: 'COMMITTEE' } });
     if (!result.count) throw new NotFoundException();
     return { deleted: true };
   }
@@ -845,10 +849,11 @@ export class CommitteeDashboardService {
   async getMyTasks(memberId: number | null | undefined) {
     if (!memberId) return [];
     const tasks: any[] = await this.prisma.committeeTask.findMany({
-      where: { assignedMemberId: memberId, assignee: { member: { isActive: true } } },
+      where: { assignedMemberId: memberId, assignee: { isActive: true, person: { isActive: true } } },
       include: {
-        assignee: { include: { member: { include: { person: true } } } },
+        assignee: { include: { person: true } },
         committee: { select: { committeeCode: true, committeeName: true } },
+        event: { select: { name: true } },
       },
       orderBy: [{ dueAt: 'asc' }, { taskId: 'desc' }],
       take: 500,
@@ -863,14 +868,16 @@ export class CommitteeDashboardService {
   private mapTask(task: {
     taskId: number; title: string; description: string; assignedMemberId: number;
     createdByMemberId: number; dueAt: Date; priority: string; status: string;
-    createdAt: Date; updatedAt: Date; assignee: { member: { person: { fullName: string } } };
+    createdAt: Date; updatedAt: Date; assignee: { person: { fullName: string } }; taskScope?: string; eventId?: number | null; event?: { name: string } | null;
   }) {
     return {
       id: String(task.taskId), title: task.title, description: task.description,
-      assignedMemberId: String(task.assignedMemberId), assignedMemberName: task.assignee.member.person.fullName,
+      assignedMemberId: String(task.assignedMemberId), assignedMemberName: task.assignee.person.fullName,
       createdByMemberId: String(task.createdByMemberId), dueAt: task.dueAt.toISOString(),
-      priority: task.priority, status: task.status,
-      createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
+      priority: task.priority, status: task.status, taskScope: task.taskScope ?? 'COMMITTEE',
+      eventId: task.eventId == null ? null : String(task.eventId), eventTitle: task.event?.name ?? null,
+      createdAt: task.createdAt.toISOString(),
+      updatedAt: task.updatedAt.toISOString(),
     };
   }
 

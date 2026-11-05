@@ -15,7 +15,7 @@ const task = (taskId: number, committeeCode: string, committeeName: string) => (
   taskId, title: `Task ${taskId}`, description: '', assignedMemberId: 30, createdByMemberId: 12,
   dueAt: new Date('2026-11-10T00:00:00Z'), priority: 'HIGH', status: 'TODO',
   createdAt: new Date('2026-10-01T00:00:00Z'), updatedAt: new Date('2026-10-01T00:00:00Z'),
-  assignee: { member: { person: { fullName: 'Member Demo' } } },
+  assignee: { person: { fullName: 'Member Demo' } },
   committee: { committeeCode, committeeName },
 });
 
@@ -32,7 +32,7 @@ describe('A member\'s own tasks', () => {
     findMany.mockResolvedValue([]);
     await service.getMyTasks(30);
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { assignedMemberId: 30, assignee: { member: { isActive: true } } },
+      where: { assignedMemberId: 30, assignee: { isActive: true, person: { isActive: true } } },
     }));
   });
 
@@ -47,7 +47,7 @@ describe('A member\'s own tasks', () => {
 
     findFirst.mockResolvedValueOnce(null);
     await expect(mine.updateMyTaskStatus(30, 5, CommitteeTaskStatus.IN_PROGRESS)).rejects.toBeInstanceOf(NotFoundException);
-    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { taskId: 5, assignedMemberId: 30, assignee: { member: { isActive: true } } } }));
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { taskId: 5, assignedMemberId: 30, assignee: { isActive: true, person: { isActive: true } } } }));
 
     findFirst.mockResolvedValueOnce({ status: 'COMPLETED' });
     await expect(mine.updateMyTaskStatus(30, 5, CommitteeTaskStatus.IN_PROGRESS)).rejects.toBeInstanceOf(ConflictException);
@@ -91,12 +91,12 @@ describe('A member\'s own tasks', () => {
     findFirst.mockResolvedValueOnce({ status: 'PENDING_REVIEW' });
     updateMany.mockResolvedValueOnce({ count: 1 });
     await leader.reviewTask(user, 'WEB', 5, 'APPROVE');
-    expect(updateMany).toHaveBeenLastCalledWith({ where: { taskId: 5, committeeId: 3, status: 'PENDING_REVIEW' }, data: { status: 'COMPLETED' } });
+    expect(updateMany).toHaveBeenLastCalledWith({ where: { taskId: 5, committeeId: 3, taskScope: 'COMMITTEE', status: 'PENDING_REVIEW' }, data: { status: 'COMPLETED' } });
 
     findFirst.mockResolvedValueOnce({ status: 'PENDING_REVIEW' });
     updateMany.mockResolvedValueOnce({ count: 1 });
     await leader.reviewTask(user, 'WEB', 5, 'RETURN');
-    expect(updateMany).toHaveBeenLastCalledWith({ where: { taskId: 5, committeeId: 3, status: 'PENDING_REVIEW' }, data: { status: 'IN_PROGRESS' } });
+    expect(updateMany).toHaveBeenLastCalledWith({ where: { taskId: 5, committeeId: 3, taskScope: 'COMMITTEE', status: 'PENDING_REVIEW' }, data: { status: 'IN_PROGRESS' } });
   });
 
   it('labels each task with its committee so the dashboard can switch between committees', async () => {
