@@ -1506,6 +1506,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       ['CONFIRMED', confirmation],
       ['DECLINED', {}],
       ['CANCELLED', { ...confirmation, cancelled_at: cancelled }],
+      ['CANCELLED without confirmation', { ...approval, cancelled_at: cancelled }],
       ['LATE_CANCELLATION', { ...confirmation, cancelled_at: cancelled }],
       ['NOT_SELECTED', {}],
       ['REJECTED', {}],
@@ -1636,6 +1637,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       [
         'cancellation before confirmation',
         { status: 'CANCELLED', ...confirmation, cancelled_at: approved },
+        'registrations_cancellation_check',
+      ],
+      [
+        'unconfirmed cancellation before approval',
+        { status: 'CANCELLED', ...approval, cancelled_at: new Date('2030-01-01T09:00:00Z') },
         'registrations_cancellation_check',
       ],
       [
@@ -1859,7 +1865,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         const first = await tx.registrationBlacklistEntry.create({
           data: {
             registrationId: f.registration.registrationId,
-            reason: 'CONFIRMATION_EXPIRED',
+            reason: 'LATE_CANCELLATION',
             createdAt: approved,
           },
         });
@@ -1892,7 +1898,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
               where: { entryId: first.entryId },
             })
           ).reason,
-        ).toBe('CONFIRMATION_EXPIRED');
+        ).toBe('LATE_CANCELLATION');
       });
     });
 

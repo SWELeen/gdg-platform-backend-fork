@@ -10,7 +10,7 @@ paths:
     get:
       operationId: listRegistrationBlacklist
       summary: List registration attendance incidents
-      description: Requires the registrations.review permission. Includes open (unresolved) no-shows, expired confirmation offers, and late cancellations.
+      description: Requires the registrations.review permission. Includes only confirmed no-shows and cancellations within two hours of event start.
       security:
         - bearerAuth: []
         - accessCookie: []
@@ -111,7 +111,7 @@ components:
         entryId: { type: integer }
         reason:
           type: string
-          enum: [NO_CHECK_IN, CONFIRMATION_EXPIRED, LATE_CANCELLATION]
+          enum: [NO_CHECK_IN, LATE_CANCELLATION]
         createdAt: { type: string, format: date-time }
         resolvedAt: { type: [string, 'null'], format: date-time }
         resolutionReason: { type: [string, 'null'] }

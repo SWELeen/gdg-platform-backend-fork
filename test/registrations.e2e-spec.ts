@@ -362,18 +362,18 @@ describe('promotion from the waitlist', () => {
     expect((await statusOf(w1)).waitlistPosition).toBe(1);
   });
 
-  it('expires an overdue confirmation and promotes waitlist #1', async () => {
+  it('cancels an overdue confirmation without a blacklist entry and promotes waitlist #1', async () => {
     const { held1, w1, w2 } = await fullEventWithWaitlist();
     await makeOverdue([held1]);
 
-    const outcome = await review.expireOverdueConfirmations();
+    const outcome = await review.cancelOverdueConfirmationOffers();
 
-    expect((await statusOf(held1)).status).toBe(RegistrationStatus.EXPIRED);
+    expect((await statusOf(held1)).status).toBe(RegistrationStatus.CANCELLED);
     expect(
       await prisma.registrationBlacklistEntry.count({
-        where: { registrationId: held1, reason: 'CONFIRMATION_EXPIRED' },
+        where: { registrationId: held1 },
       }),
-    ).toBe(1);
+    ).toBe(0);
     expect(outcome.promoted).toContain(w1);
     expect((await statusOf(w1)).status).toBe(
       RegistrationStatus.AWAITING_CONFIRMATION,
@@ -386,11 +386,11 @@ describe('promotion from the waitlist', () => {
     await makeOverdue([held1, held2]);
 
     const [one, two] = await Promise.all([
-      review.expireOverdueConfirmations(),
-      review.expireOverdueConfirmations(),
+      review.cancelOverdueConfirmationOffers(),
+      review.cancelOverdueConfirmationOffers(),
     ]);
 
-    // held1 and held2 both expire once; w1 and w2 fill the two seats once each.
+    // held1 and held2 are cancelled once; w1 and w2 fill the two seats once each.
     const promotedHere = [...one.promoted, ...two.promoted].filter((id) =>
       [w1, w2, w3].includes(id),
     );

@@ -39,7 +39,6 @@ enum QuestionType {
 }
 
 enum BlacklistReason {
-  CONFIRMATION_EXPIRED
   LATE_CANCELLATION
   NO_CHECK_IN
 }

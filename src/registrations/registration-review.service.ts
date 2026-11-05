@@ -199,7 +199,7 @@ export class RegistrationReviewService {
   // Scheduled-job entry point: expires overdue confirmations and refills
   // each freed seat from the waitlist. Safe to run concurrently: a row only
   // expires if it is still awaiting confirmation once the event is locked.
-  async expireOverdueConfirmations(now = new Date()) {
+  async cancelOverdueConfirmationOffers(now = new Date()) {
     const overdue = await this.prisma.eventRegistration.findMany({
       where: {
         status: RegistrationStatus.AWAITING_CONFIRMATION,
@@ -209,7 +209,7 @@ export class RegistrationReviewService {
       orderBy: { confirmationDeadline: 'asc' },
     });
 
-    let expired = 0;
+    let cancelled = 0;
     const promoted: number[] = [];
     for (const { registrationId, eventId } of overdue) {
       const outcome = await inEventTransaction(this.prisma, async (tx) => {
@@ -220,27 +220,20 @@ export class RegistrationReviewService {
             status: RegistrationStatus.AWAITING_CONFIRMATION,
             confirmationDeadline: { lt: now },
           },
-          data: { status: RegistrationStatus.EXPIRED },
+          data: { status: RegistrationStatus.CANCELLED, cancelledAt: now },
         });
         if (count === 0) return null;
-        // Approved rule: a missed confirmation leaves an attendance notice.
-        await tx.registrationBlacklistEntry.createMany({
-          data: {
-            registrationId,
-            reason: BlacklistReason.CONFIRMATION_EXPIRED,
-          },
-          skipDuplicates: true,
-        });
+        // A missed confirmation cancels the offer, releases its seat and is not a blacklist incident.
         return { email: await this.promoteWithin(tx, event) };
       });
       if (!outcome) continue;
-      expired += 1;
+      cancelled += 1;
       if (outcome.email) {
         promoted.push(outcome.email.registrationId);
         await this.emails.sendSafely(outcome.email);
       }
     }
-    return { expired, promoted };
+    return { cancelled, promoted };
   }
 
   // A confirmed attendee becomes a no-show only after the event has ended
