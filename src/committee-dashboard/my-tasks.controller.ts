@@ -14,6 +14,11 @@ export class MyTasksController {
     return apiSuccess(await this.dashboard.getMyTasks(user.memberId));
   }
 
+  @Get('committees/:committeeCode/members')
+  async committeeMembers(@CurrentUser() user: AuthenticatedUser, @Param('committeeCode') committeeCode: string) {
+    return apiSuccess(await this.dashboard.getMyCommitteeDirectory(user, committeeCode));
+  }
+
   // Only the task's own assignee; COMPLETED is set by a leader's review, never here.
   @Patch('tasks/:taskId')
   async updateMyTask(
