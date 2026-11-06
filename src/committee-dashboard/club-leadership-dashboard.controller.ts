@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Req } from '@nestjs/common';
 import { apiSuccess } from '../common/http/api-response.js';
 import type { RequestUser } from '../auth/auth.guard.js';
-import { AddMemberToCommitteeDto, AssignClubPersonDto } from './committee-dashboard.dto.js';
+import { AddMemberToCommitteeDto, AssignClubPersonDto, RemoveClubPersonDto } from './committee-dashboard.dto.js';
 import { CommitteeDashboardService } from './committee-dashboard.service.js';
 import { LeadershipTasksService } from './leadership-tasks.service.js';
 import { CreateLeadershipTaskDto, ReviewCommitteeTaskDto, UpdateLeadershipTaskDto } from './committee-dashboard.dto.js';
@@ -54,5 +54,13 @@ export class ClubLeadershipDashboardController {
     @Body() body: AssignClubPersonDto,
   ) {
     return apiSuccess(await this.dashboard.assignClubPerson(request.user, body));
+  }
+
+  @Delete('members')
+  async removePerson(
+    @Req() request: { user?: RequestUser },
+    @Body() body: RemoveClubPersonDto,
+  ) {
+    return apiSuccess(await this.dashboard.removeClubPerson(request.user, body));
   }
 }

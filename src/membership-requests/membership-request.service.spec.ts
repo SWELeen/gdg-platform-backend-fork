@@ -223,6 +223,7 @@ describe('MembershipRequestService.decide', () => {
     tx.membershipRequestCommittee.findUnique.mockResolvedValue({
       membershipRequestCommitteeId: 400,
       membershipRequestId: 40,
+      committeeId: 3,
       approvalScope: 'DEVELOPER_COMMITTEES',
       status: Decision.PENDING,
       requestedRole: 'Leader',
@@ -340,21 +341,15 @@ describe('MembershipRequestService approval routing', () => {
     );
   });
 
-  it('lets club leadership decide a member request for a committee with no leader, granting only membership', async () => {
-    tx.memberCommittee.findMany.mockResolvedValue([]);
+  it('keeps ordinary member requests on the committee approval route even if the committee has no leader', async () => {
     tx.membershipRequestCommittee.findUnique.mockResolvedValue(
       leadershipRow({ approvalScope: 'COMMITTEE', requestedRole: 'Member' }),
     );
-    await service.decideLeadershipCommittee(40, 'DMD', 'APPROVED', actor);
-    expect(hasGlobalPermission).toHaveBeenCalledWith(
-      actor.memberId,
-      'applications.club_leaders.decide',
-    );
-    expect(tx.memberCommittee.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: { memberId: 99, committeeId: 3, role: 'Member' },
-      }),
-    );
+    await expect(
+      service.decideLeadershipCommittee(40, 'DMD', 'APPROVED', actor),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(hasGlobalPermission).not.toHaveBeenCalled();
+    expect(tx.memberCommittee.upsert).not.toHaveBeenCalled();
   });
 
   it('keeps a member request with its committee while the committee has a leader', async () => {

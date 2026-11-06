@@ -81,6 +81,19 @@ export class AssignClubPersonDto {
   @MaxLength(20)
   committeeCode?: string;
 }
+
+export class RemoveClubPersonDto {
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  committeeCode?: string;
+}
+
 export class AddMemberToCommitteeDto {
   @IsString()
   @IsNotEmpty()

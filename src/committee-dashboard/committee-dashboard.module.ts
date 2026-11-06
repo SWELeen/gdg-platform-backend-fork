@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { RegistrationsModule } from '../registrations/registrations.module.js';
+import { MembershipRequestsModule } from '../membership-requests/membership-requests.module.js';
 import { CommitteeDashboardController } from './committee-dashboard.controller.js';
 import { DeveloperCommitteesDashboardController } from './developer-committees-dashboard.controller.js';
 import { ClubLeadershipDashboardController } from './club-leadership-dashboard.controller.js';
@@ -10,7 +11,7 @@ import { CommitteeEventImageStorageService } from './committee-event-image-stora
 import { MyTasksController } from './my-tasks.controller.js';
 
 @Module({
-  imports: [PrismaModule, RegistrationsModule],
+  imports: [PrismaModule, RegistrationsModule, MembershipRequestsModule],
   controllers: [CommitteeDashboardController, DeveloperCommitteesDashboardController, ClubLeadershipDashboardController, MyTasksController],
   providers: [CommitteeDashboardService, LeadershipTasksService, CommitteeEventImageStorageService],
 })
