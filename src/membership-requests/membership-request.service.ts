@@ -419,7 +419,7 @@ export class MembershipRequestService {
           requestedRole: row.requestedRole,
         },
       };
-    });
+    }, { maxWait: 10_000, timeout: 15_000 });
     this.dispatchDecisionEmail(
       () =>
         this.sendCommitteeDecisionEmail(
@@ -583,16 +583,14 @@ export class MembershipRequestService {
     tx: Prisma.TransactionClient,
     requestId: number,
   ) {
-    const [committees, roles] = await Promise.all([
-      tx.membershipRequestCommittee.findMany({
-        where: { membershipRequestId: requestId },
-        select: { status: true },
-      }),
-      tx.membershipRequestGlobalRole.findMany({
-        where: { membershipRequestId: requestId },
-        select: { status: true },
-      }),
-    ]);
+    const committees = await tx.membershipRequestCommittee.findMany({
+      where: { membershipRequestId: requestId },
+      select: { status: true },
+    });
+    const roles = await tx.membershipRequestGlobalRole.findMany({
+      where: { membershipRequestId: requestId },
+      select: { status: true },
+    });
     const decisions = [...committees, ...roles];
     const status = decisions.some(
       (item) => item.status === MembershipCommitteeDecision.PENDING,

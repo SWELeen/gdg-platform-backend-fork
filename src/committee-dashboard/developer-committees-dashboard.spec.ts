@@ -39,6 +39,9 @@ describe('Developer Committees Leader dashboard', () => {
     expect(result.committees).toHaveLength(1);
   });
   it('returns aggregate developer committee counts without exposing applicant or member records', async () => {
+    groupBy
+      .mockResolvedValueOnce([{ committeeId: 2, _count: { _all: 2 } }])
+      .mockResolvedValueOnce([{ committeeId: 2, _count: { _all: 5 } }]);
     await expect(service.getDeveloperOverview({ personId: 9, memberId: 12 })).resolves.toEqual({
       permissions: { canAssignMembers: true },
       committees: [{ code: 'DATA', name: 'Data Analysis', memberCount: 5, leaderCount: 2, activeTaskCount: 3 }],

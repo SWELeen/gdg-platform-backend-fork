@@ -12,5 +12,6 @@ import { VerifiedSupabaseEmailGuard } from './verified-supabase-email.guard.js';
   imports: [AuthModule, PrismaModule, SmtpEmailModule],
   controllers: [MembershipRequestsController],
   providers: [CommitteeAccessService, MembershipRequestEmailService, MembershipRequestService, VerifiedSupabaseEmailGuard],
+  exports: [MembershipRequestEmailService],
 })
 export class MembershipRequestsModule {}
