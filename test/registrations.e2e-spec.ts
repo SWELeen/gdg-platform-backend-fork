@@ -14,6 +14,7 @@ import { schemaTestTarget } from './schema-test-target.js';
 process.env.DATABASE_URL = schemaTestTarget(
   process.env.TEST_DATABASE_URL,
   process.env.DATABASE_URL,
+  { allowSupabaseTestProject: true },
 );
 
 let app: INestApplication;

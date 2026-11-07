@@ -1,6 +1,8 @@
 # GDG Backend — Local Testing Setup
 
-This guide explains how each developer can run an isolated PostgreSQL test database with Docker and run the backend test suites locally.
+For members who do not use Docker, follow [LOCAL_SETUP.md](LOCAL_SETUP.md). It configures a dedicated Supabase test project and guarded test/migration commands. Never use the production or shared-development Supabase project for tests.
+
+The Docker procedure in this document is optional and remains separate. `.env.test.example` now documents the Supabase test target; do not use it as a Docker connection template.
 
 ## 1. Environment overview
 
@@ -10,7 +12,8 @@ Each developer runs their own test database on their own machine.
 |---|---:|---|
 | Development PostgreSQL | 5432 | Normal local development |
 | Test PostgreSQL | 5433 | Automated tests only |
-| Supabase / Production | Remote | Never use for local automated tests |
+| Dedicated Supabase test project | Remote | Database E2E tests without Docker |
+| Production or shared development Supabase | Remote | Never use as an automated test target |
 
 The test database is separate from the existing `docker-compose.yml` development database. Do not change the existing development database configuration for this setup.
 
@@ -87,48 +90,31 @@ This deletes the test database volume. Do not run this command against the devel
 
 ## 5. Configure the test database connection
 
-Copy `.env.test.example` to `.env.test.local` in the backend repository root.
+For the no-Docker Supabase workflow, use the steps in `LOCAL_SETUP.md`. The remaining instructions in this section apply only to the optional Docker database. Do not copy the Supabase `.env.test.example` template for this local Docker path.
 
-PowerShell:
+The supplied Compose service creates `gdg_test`. The backend E2E guard requires its fixture database to have a `gdg_schema_test_*` name, so create a second database inside this **test-only** PostgreSQL container:
 
 ```powershell
-Copy-Item .env.test.example .env.test.local
+docker compose -f docker-compose.test.yml exec test-db psql -U gdg_test -d gdg_test -c "CREATE DATABASE gdg_schema_test_local"
 ```
 
-The file contains a local-only connection string:
-
-```env
-DATABASE_URL="postgresql://gdg_test:gdg_test_local_only@localhost:5433/gdg_test?schema=public"
-```
-
-`.env.test.local` must remain untracked and must never be committed. Confirm it is covered by `.gitignore`.
-
-### Important: load the test URL in each PowerShell session
-
-The current Prisma config is `prisma7.config.ts` and loads `.env` using `dotenv/config`. The commands below explicitly set `DATABASE_URL` in the current PowerShell session, so Prisma and child processes inherit the test database URL.
-
-Run this before every test session:
+Set a base URL and a separate E2E target in the current PowerShell session:
 
 ```powershell
 $env:DATABASE_URL = "postgresql://gdg_test:gdg_test_local_only@localhost:5433/gdg_test?schema=public"
+$env:TEST_DATABASE_URL = "postgresql://gdg_test:gdg_test_local_only@localhost:5433/gdg_schema_test_local?schema=public"
 ```
 
-Verify the value before running database commands:
-
-```powershell
-$env:DATABASE_URL
-```
-
-It must contain `localhost:5433/gdg_test`.
-
-Do not run test commands if the value points to port `5432`, Supabase, or any production database.
+Keep both values pointed at the test-only Compose database server. Never use a production or shared Supabase URL for this Docker workflow.
 
 ## 6. Prepare the test database schema
 
-With the test database running and `DATABASE_URL` set as described above, apply the repository's existing migrations:
+With the test database running, temporarily set Prisma's `DATABASE_URL` to the E2E target and apply the existing migrations:
 
 ```powershell
+$env:DATABASE_URL = $env:TEST_DATABASE_URL
 pnpm prisma:migrate:deploy
+$env:DATABASE_URL = "postgresql://gdg_test:gdg_test_local_only@localhost:5433/gdg_test?schema=public"
 ```
 
 Generate Prisma Client:
@@ -137,7 +123,7 @@ Generate Prisma Client:
 pnpm prisma:generate
 ```
 
-These scripts use the repository's existing `prisma7.config.ts`. Because `DATABASE_URL` is already set in the shell, Prisma receives the test database URL.
+These scripts use the repository's existing `prisma7.config.ts`. `prisma:migrate:deploy` applies migrations only to `gdg_schema_test_local`; `pnpm test:e2e` also uses that target through `TEST_DATABASE_URL`. The base `gdg_test` database remains isolated from the development Compose project.
 
 Do not use `prisma migrate reset`, `prisma db push`, or seed scripts unless the task specifically requires them and the database target has been verified.
 
