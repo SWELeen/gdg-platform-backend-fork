@@ -4,6 +4,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
   ServiceUnavailableException,
@@ -16,12 +17,14 @@ import { DEVELOPER_COMMITTEES_CODE } from '../committees/committee-catalog.js';
 import { CommitteeAccessService } from '../registrations/committee-access.service.js';
 import { SEAT_HOLDING_STATUSES } from '../registrations/event-seats.js';
 import { CommitteeEventImageStorageService } from './committee-event-image-storage.service.js';
+import { MembershipRequestEmailService } from '../membership-requests/membership-request-email.service.js';
 import {
   AddMemberToCommitteeDto,
   AssignClubPersonDto,
   AssignDeveloperCommitteeMemberDto,
   CreateCommitteeEventDto,
   CreateCommitteeMemberDto,
+  RemoveClubPersonDto,
   CommitteeTaskStatus,
   MEMBER_TASK_STATUSES,
   CreateCommitteeTaskDto,
@@ -41,12 +44,16 @@ const ACTIVE_TASK_STATUSES = [CommitteeTaskStatus.TODO, CommitteeTaskStatus.IN_P
 
 @Injectable()
 export class CommitteeDashboardService {
+  private readonly logger = new Logger(CommitteeDashboardService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(CommitteeAccessService)
     private readonly access: CommitteeAccessService,
     @Inject(CommitteeEventImageStorageService)
     @Optional() private readonly eventImageStorage?: CommitteeEventImageStorageService,
+    @Inject(MembershipRequestEmailService)
+    @Optional() private readonly membershipEmails?: MembershipRequestEmailService,
   ) {}
 
   async getDeveloperOverview(user: RequestUser | undefined) {
@@ -55,14 +62,31 @@ export class CommitteeDashboardService {
     const canAssignMembers = await this.access.hasGlobalPermission(user.memberId, 'developer_committees.members.assign');
     const committees = (await this.prisma.committee.findMany({
       where: { parent: { committeeCode: DEVELOPER_COMMITTEES_CODE } },
-      select: { committeeId: true, committeeCode: true, committeeName: true, _count: { select: { members: true } } },
+      select: { committeeId: true, committeeCode: true, committeeName: true },
       orderBy: { committeeName: 'asc' },
-    })) as Array<{ committeeId: number; committeeCode: string; committeeName: string; _count: { members: number } }>;
-    const leaders = (await (this.prisma.memberCommittee as any).groupBy({
-      by: ['committeeId'],
-      where: { committeeId: { in: committees.map(({ committeeId }) => committeeId) }, role: { in: ['Leader', 'Co-Leader'] }, member: { isActive: true } },
-      _count: { _all: true },
-    })) as Array<{ committeeId: number; _count: { _all: number } }>;
+    })) as Array<{ committeeId: number; committeeCode: string; committeeName: string }>;
+    const [leaders, activeMembers] = await Promise.all([
+      (this.prisma.memberCommittee as any).groupBy({
+        by: ['committeeId'],
+        where: {
+          committeeId: { in: committees.map(({ committeeId }) => committeeId) },
+          role: { in: ['Leader', 'Co-Leader'] },
+          member: { isActive: true, person: { isActive: true } },
+        },
+        _count: { _all: true },
+      }),
+      (this.prisma.memberCommittee as any).groupBy({
+        by: ['committeeId'],
+        where: {
+          committeeId: { in: committees.map(({ committeeId }) => committeeId) },
+          member: { isActive: true, person: { isActive: true } },
+        },
+        _count: { _all: true },
+      }),
+    ]) as [
+      Array<{ committeeId: number; _count: { _all: number } }>,
+      Array<{ committeeId: number; _count: { _all: number } }>,
+    ];
     const activeTasks = await Promise.all(committees.map((committee: any) => this.prisma.committeeTask.count({
       where: { committeeId: committee.committeeId, status: { in: ACTIVE_TASK_STATUSES } },
     })));
@@ -71,7 +95,7 @@ export class CommitteeDashboardService {
       committees: committees.map((committee: any, index: number) => ({
       code: committee.committeeCode,
       name: committee.committeeName,
-      memberCount: committee._count.members,
+      memberCount: activeMembers.find((row: any) => row.committeeId === committee.committeeId)?._count._all ?? 0,
       leaderCount: leaders.find((row: any) => row.committeeId === committee.committeeId)?._count._all ?? 0,
       activeTaskCount: activeTasks[index],
       })),
@@ -204,6 +228,7 @@ export class CommitteeDashboardService {
         ])
       : [true, false, false, false, false, false];
     if (!canViewDashboard) throw new ForbiddenException();
+    const canViewWalletLinks = membership.role === 'Leader' || membership.role === 'Co-Leader';
     const now = new Date();
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const monthStart = riyadhPeriodStart(now, 'month');
@@ -211,8 +236,13 @@ export class CommitteeDashboardService {
 
     const [memberships, events, tasks, pointEntries, pointTotals, registrationGroups, checkInGroups, totalPoints, pointsThisMonth, tasksDueThisWeek]: any[] = await Promise.all([
       this.prisma.memberCommittee.findMany({
-        where: { committeeId: committee.committeeId },
-        include: { member: { include: { person: true } } },
+        where: { committeeId: committee.committeeId, member: { isActive: true, person: { isActive: true } } },
+        include: {
+          member: { include: { person: true } },
+          ...(canViewWalletLinks ? {
+            walletLinks: { where: { revokedAt: null }, take: 1, select: { verifiedAt: true } },
+          } : {}),
+        },
         orderBy: [{ role: 'asc' }, { member: { person: { fullName: 'asc' } } }],
       }),
       this.prisma.event.findMany({
@@ -273,7 +303,9 @@ export class CommitteeDashboardService {
       }
     }
     const activeMemberships = (memberships as any[]).filter(({ member }: { member: any }) => member.isActive);
-    const members = activeMemberships.map(({ member, role }: { member: any; role: string }) => ({
+    const members = activeMemberships.map(({ member, role, walletLinks }: {
+      member: any; role: string; walletLinks?: { verifiedAt: Date }[];
+    }) => ({
       id: String(member.memberId),
       name: member.person.fullName,
       email: member.person.emailUniversity ?? member.person.emailPersonal ?? '',
@@ -282,6 +314,9 @@ export class CommitteeDashboardService {
       points: memberPoints.get(member.memberId) ?? 0,
       tasksCompleted: memberCompletedTasks.get(member.memberId) ?? 0,
       lastActivity: null,
+      ...(canViewWalletLinks && member.person.isActive && typeof member.membershipNumber === 'number' ? {
+        wallet: { membershipNumber: member.membershipNumber, linked: Boolean(walletLinks?.length) },
+      } : {}),
     }));
     const mappedTasks = (tasks as any[]).map((task: any) => ({
       id: String(task.taskId),
@@ -369,7 +404,7 @@ export class CommitteeDashboardService {
 
     const email = dto.email.trim().toLowerCase();
     try {
-      return await this.prisma.$transaction(async (transaction) => {
+      const assigned = await this.prisma.$transaction(async (transaction) => {
         const { person, member } = await this.resolveExistingAccountMember(transaction, email);
         const existingMembership = await transaction.memberCommittee.findUnique({
           where: { memberId_committeeId: { memberId: member.memberId, committeeId: committee.committeeId } },
@@ -378,8 +413,16 @@ export class CommitteeDashboardService {
         await transaction.memberCommittee.create({
           data: { memberId: member.memberId, committeeId: committee.committeeId, role: 'Member' },
         });
-        return { id: String(member.memberId), name: person.fullName, email, role: 'Member', status: 'Active' };
+        return { result: { id: String(member.memberId), name: person.fullName, email, role: 'Member', status: 'Active' }, recipientName: person.fullName };
       });
+      this.dispatchMembershipAssignmentEmail({
+        to: email,
+        recipientName: assigned.recipientName,
+        decision: 'APPROVED',
+        committeeName: committee.committeeName,
+        roleName: 'Member',
+      });
+      return assigned.result;
     } catch (error: any) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictException('This person is already a member of the committee.');
@@ -401,14 +444,25 @@ export class CommitteeDashboardService {
       throw new BadRequestException('Choose one of the six developer committees.');
     }
     const email = dto.email.trim().toLowerCase();
-    return this.prisma.$transaction(async (transaction) => {
+    const assigned = await this.prisma.$transaction(async (transaction) => {
       const { person, member } = await this.resolveExistingAccountMember(transaction, email);
       const membership = await this.createAssignedMembership(transaction, member.memberId, committee.committeeId, dto.role);
       return {
-        memberId: String(member.memberId), name: person.fullName, email,
-        committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
+        result: {
+          memberId: String(member.memberId), name: person.fullName, email,
+          committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
+        },
+        recipientName: person.fullName,
       };
     });
+    this.dispatchMembershipAssignmentEmail({
+      to: email,
+      recipientName: assigned.recipientName,
+      decision: 'APPROVED',
+      committeeName: committee.committeeName,
+      roleName: dto.role,
+    });
+    return assigned.result;
   }
 
   async createEvent(user: RequestUser | undefined, committeeCode: string, dto: CreateCommitteeEventDto) {
@@ -510,9 +564,6 @@ export class CommitteeDashboardService {
     const existing = await this.prisma.event.findFirst({
       where: { eventId, committeeId: committee.committeeId },
       select: {
-        startsAt: true,
-        endsAt: true,
-        registrationDeadline: true,
         questions: {
           orderBy: { position: 'asc' },
           select: { questionText: true, questionType: true, isRequired: true, position: true, options: true },
@@ -547,28 +598,41 @@ export class CommitteeDashboardService {
       })
     );
 
-    const startsAt = dto.startsAt === undefined ? existing.startsAt : new Date(dto.startsAt);
-    const endsAt = dto.endsAt === undefined ? existing.endsAt : new Date(dto.endsAt);
-    const registrationDeadline = dto.registrationDeadline === undefined
-      ? existing.registrationDeadline
-      : new Date(dto.registrationDeadline);
-    const errors: ApiErrorDetail[] = [];
-    if (endsAt.getTime() <= startsAt.getTime()) errors.push({ pointer: '/endsAt', message: 'The event must end after it starts.' });
-    if (registrationDeadline.getTime() > startsAt.getTime()) errors.push({ pointer: '/registrationDeadline', message: 'Registration must close before the event starts.' });
-    if (errors.length) throw apiValidationError(errors);
-
     const event = await this.prisma.$transaction(async (transaction) => {
-      const locked = await transaction.$queryRaw<Array<{ eventId: number; status: EventStatus }>>`
-        SELECT event_id AS "eventId", status
+      const [locked] = await transaction.$queryRaw<Array<{
+        published: boolean; draft: boolean; startsAt: Date; endsAt: Date; registrationDeadline: Date;
+      }>>`
+        SELECT status = 'published' AS published, status = 'draft' AS draft,
+               starts_at AS "startsAt", ends_at AS "endsAt", registration_deadline AS "registrationDeadline"
         FROM events
         WHERE event_id = ${eventId} AND committee_id = ${committee.committeeId}
         FOR UPDATE
       `;
-      if (!locked.length) throw new NotFoundException();
-      if (locked[0].status === EventStatus.PUBLISHED) {
-        const attemptedFields = Object.keys(dto).filter((field) => field !== 'registrationDeadline');
-        if (attemptedFields.length > 0) {
-          throw new BadRequestException('Only the registration deadline can be changed after an event is published.');
+      if (!locked) throw new NotFoundException();
+      if (!locked.published && !locked.draft) throw new ConflictException('This event is closed for editing.');
+      const startsAt = dto.startsAt === undefined ? locked.startsAt : new Date(dto.startsAt);
+      const endsAt = dto.endsAt === undefined ? locked.endsAt : new Date(dto.endsAt);
+      const registrationDeadline = dto.registrationDeadline === undefined
+        ? locked.registrationDeadline : new Date(dto.registrationDeadline);
+      const errors: ApiErrorDetail[] = [];
+      if (endsAt <= startsAt) errors.push({ pointer: '/endsAt', message: 'The event must end after it starts.' });
+      if (registrationDeadline > startsAt) errors.push({ pointer: '/registrationDeadline', message: 'Registration must close before the event starts.' });
+      if (errors.length) throw apiValidationError(errors);
+      if (locked.published) {
+        const now = new Date();
+        if (locked.endsAt <= now || endsAt <= now) throw new ConflictException('An ended event cannot be rescheduled.');
+        const scheduleFields = ['startsAt', 'endsAt', 'registrationDeadline'];
+        if (Object.entries(dto).some(([field, value]) => value !== undefined && !scheduleFields.includes(field))) {
+          throw new BadRequestException('Only the schedule can be changed after an event is published.');
+        }
+        if (startsAt.getTime() !== locked.startsAt.getTime()) {
+          if (locked.startsAt <= now || startsAt <= now) {
+            throw new ConflictException('A new start time must be set before the event starts.');
+          }
+          await transaction.eventRegistration.updateMany({
+            where: { eventId, status: 'AWAITING_CONFIRMATION', confirmationDeadline: { gt: startsAt } },
+            data: { confirmationDeadline: startsAt },
+          });
         }
       }
       if (questionsChanged) {
@@ -662,14 +726,21 @@ export class CommitteeDashboardService {
     if (globalRole && dto.committeeCode) throw new BadRequestException('Global roles do not use a committee.');
     if (!globalRole && !dto.committeeCode?.trim()) throw new BadRequestException('Choose a committee for this role.');
 
-    return this.prisma.$transaction(async (transaction) => {
+    const assigned = await this.prisma.$transaction(async (transaction) => {
       const { person, member } = await this.resolveExistingAccountMember(transaction, email);
       if (globalRole) {
-        await transaction.memberRole.createMany({
+        const createdRole = await transaction.memberRole.createMany({
           data: [{ memberId: member.memberId, roleCode: dto.role, assignedBy: user.memberId! }],
           skipDuplicates: true,
         });
-        return { memberId: String(member.memberId), name: person.fullName, email, role: dto.role };
+        return {
+          result: { memberId: String(member.memberId), name: person.fullName, email, role: dto.role },
+          recipientName: person.fullName,
+          committeeName: undefined as string | undefined,
+          globalRoleName: dto.role === 'ADVISOR' ? 'Advisor' : 'Developer Committees Leader',
+          roleName: dto.role === 'ADVISOR' ? 'Advisor' : 'Leader',
+          notifyEmail: createdRole.count > 0,
+        };
       }
 
       const committeeCode = dto.committeeCode!.trim().toUpperCase();
@@ -680,10 +751,27 @@ export class CommitteeDashboardService {
       if (!committee) throw new NotFoundException('The selected committee does not exist or cannot have members.');
       const membership = await this.assignClubCommitteeRole(transaction, member.memberId, committee.committeeId, dto.role);
       return {
-        memberId: String(member.memberId), name: person.fullName, email,
-        committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
+        result: {
+          memberId: String(member.memberId), name: person.fullName, email,
+          committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
+        },
+        recipientName: person.fullName,
+        committeeName: committee.committeeName,
+        globalRoleName: undefined as string | undefined,
+        roleName: membership.role,
+        notifyEmail: true,
       };
     });
+    if (assigned.notifyEmail) {
+      this.dispatchMembershipAssignmentEmail({
+        to: email,
+        recipientName: assigned.recipientName,
+        decision: 'APPROVED',
+        ...(assigned.committeeName ? { committeeName: assigned.committeeName } : { globalRoleName: assigned.globalRoleName }),
+        roleName: assigned.roleName,
+      });
+    }
+    return assigned.result;
   }
 
   async addMemberToCommittee(user: RequestUser | undefined, targetMemberId: number, dto: AddMemberToCommitteeDto) {
@@ -699,6 +787,13 @@ export class CommitteeDashboardService {
       const membership = await this.prisma.memberCommittee.create({
         data: { memberId: member.memberId, committeeId: committee.committeeId, role: 'Member' },
       });
+      this.dispatchMembershipAssignmentEmail({
+        to: member.person.emailPersonal ?? member.person.emailUniversity,
+        recipientName: member.person.fullName,
+        decision: 'APPROVED',
+        committeeName: committee.committeeName,
+        roleName: membership.role,
+      });
       return {
         memberId: String(member.memberId),
         committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role, points: 0 },
@@ -709,6 +804,159 @@ export class CommitteeDashboardService {
       }
       throw error;
     }
+  }
+
+  async removeClubPerson(user: RequestUser | undefined, dto: RemoveClubPersonDto) {
+    if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION))) {
+      throw new ForbiddenException();
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const requestedCommitteeCode = dto.committeeCode?.trim().toUpperCase();
+    return this.prisma.$transaction(async (transaction) => {
+      const people = await transaction.person.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { emailPersonal: { equals: email, mode: 'insensitive' } },
+            { emailUniversity: { equals: email, mode: 'insensitive' } },
+            { emailIdentities: { some: { email: { equals: email, mode: 'insensitive' } } } },
+          ],
+        },
+        include: {
+          member: {
+            include: {
+              roleAssignments: {
+                where: { endsOn: null, OR: [{ startsOn: null }, { startsOn: { lte: new Date() } }] },
+                select: { roleCode: true },
+              },
+            },
+          },
+        },
+        orderBy: { personId: 'asc' },
+        take: 2,
+      });
+      if (people.length > 1) {
+        throw new ConflictException('This email matches more than one account. No membership was removed.');
+      }
+      const person = people[0];
+      const member = person?.member;
+      if (!person || !member?.isActive) {
+        throw new NotFoundException('No active group membership was found for this email.');
+      }
+      if (member.memberId === user.memberId) {
+        throw new ConflictException('You cannot remove your own group membership.');
+      }
+
+      if (requestedCommitteeCode === 'ADVISOR' || requestedCommitteeCode === 'DEVELOPER_COMMITTEES_LEADER') {
+        const roleCode = requestedCommitteeCode;
+        const activeRole = await transaction.memberRole.findFirst({
+          where: {
+            memberId: member.memberId,
+            roleCode,
+            AND: [
+              { OR: [{ startsOn: null }, { startsOn: { lte: new Date() } }] },
+              { OR: [{ endsOn: null }, { endsOn: { gte: new Date() } }] },
+            ],
+          },
+          select: { id: true },
+        });
+        if (!activeRole) throw new NotFoundException('This person does not have the selected group role.');
+        await transaction.$executeRaw`
+          UPDATE "member_role"
+          SET "ends_on" = CURRENT_DATE - 1
+          WHERE "member_id" = ${member.memberId}
+            AND "role_code" = ${roleCode}
+            AND ("starts_on" IS NULL OR "starts_on" < CURRENT_DATE)
+            AND ("ends_on" IS NULL OR "ends_on" >= CURRENT_DATE)`;
+        // Date-only role assignments cannot represent a same-day revocation;
+        // remove a role created today so access ends immediately.
+        await transaction.$executeRaw`
+          DELETE FROM "member_role"
+          WHERE "member_id" = ${member.memberId}
+            AND "role_code" = ${roleCode}
+            AND "starts_on" >= CURRENT_DATE
+            AND ("ends_on" IS NULL OR "ends_on" >= CURRENT_DATE)`;
+        return {
+          memberId: String(member.memberId),
+          name: person.fullName,
+          email,
+          globalRole: roleCode,
+          globalRoleRemoved: true,
+          membershipRemoved: false,
+        };
+      }
+
+      if (requestedCommitteeCode) {
+        const committee = await transaction.committee.findFirst({
+          where: { committeeCode: requestedCommitteeCode, children: { none: {} } },
+          select: { committeeId: true, committeeCode: true, committeeName: true },
+        });
+        if (!committee) throw new NotFoundException('The selected committee does not exist.');
+        const membership = await transaction.memberCommittee.findUnique({
+          where: { memberId_committeeId: { memberId: member.memberId, committeeId: committee.committeeId } },
+          select: { id: true, role: true },
+        });
+        if (!membership) throw new NotFoundException('This person is not an active member of the selected committee.');
+
+        await transaction.memberCommittee.delete({ where: { id: membership.id } });
+        return {
+          memberId: String(member.memberId),
+          name: person.fullName,
+          email,
+          committee: { code: committee.committeeCode, name: committee.committeeName, role: membership.role },
+          committeeMembershipRemoved: true,
+          membershipRemoved: false,
+        };
+      }
+
+      const groupLeadershipCodes = ['GROUP_LEADER', 'GROUP_CO_LEADER'];
+      const hasGroupLeadershipRole = member.roleAssignments.some(({ roleCode }) =>
+        groupLeadershipCodes.includes(roleCode),
+      );
+      if (hasGroupLeadershipRole) {
+        // Serialize leadership removals so two requests cannot remove the last
+        // active group leader at the same time.
+        await transaction.$queryRaw`
+          SELECT id FROM "member_role"
+          WHERE "role_code" IN ('GROUP_LEADER', 'GROUP_CO_LEADER')
+            AND "ends_on" IS NULL
+          FOR UPDATE`;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const otherLeaders = await transaction.memberRole.findMany({
+          where: {
+            memberId: { not: member.memberId },
+            roleCode: { in: groupLeadershipCodes },
+            endsOn: null,
+            member: { isActive: true, person: { isActive: true } },
+            OR: [{ startsOn: null }, { startsOn: { lte: today } }],
+          },
+          distinct: ['memberId'],
+          take: 1,
+          select: { memberId: true },
+        });
+        if (otherLeaders.length === 0) {
+          throw new ConflictException('The last active group leader cannot be removed.');
+        }
+      }
+
+      await transaction.member.update({
+        where: { memberId: member.memberId },
+        data: { isActive: false },
+      });
+      await transaction.$executeRaw`
+        UPDATE "member_role"
+        SET "ends_on" = GREATEST(CURRENT_DATE, COALESCE("starts_on", CURRENT_DATE))
+        WHERE "member_id" = ${member.memberId} AND "ends_on" IS NULL`;
+
+      return {
+        memberId: String(member.memberId),
+        name: person.fullName,
+        email,
+        membershipRemoved: true,
+      };
+    });
   }
 
   async createTask(user: RequestUser | undefined, committeeCode: string, dto: CreateCommitteeTaskDto) {
@@ -799,6 +1047,33 @@ export class CommitteeDashboardService {
     const result = await this.prisma.committeeTask.deleteMany({ where: { taskId, committeeId: committee.committeeId, taskScope: 'COMMITTEE' } });
     if (!result.count) throw new NotFoundException();
     return { deleted: true };
+  }
+
+  async getWalletLink(user: RequestUser | undefined, committeeCode: string, targetMemberId: number) {
+    if (!user?.memberId) throw new ForbiddenException();
+    const { committee, membership } = await this.requireMembership(user, committeeCode.trim().toUpperCase());
+    if (membership.role !== 'Leader' && membership.role !== 'Co-Leader') throw new ForbiddenException();
+
+    const target = await this.prisma.memberCommittee.findFirst({
+      where: {
+        committeeId: committee.committeeId,
+        memberId: targetMemberId,
+        member: { isActive: true, person: { isActive: true } },
+      },
+      select: {
+        member: { select: { membershipNumber: true } },
+        walletLinks: {
+          where: { revokedAt: null },
+          select: { verifiedAt: true },
+          take: 1,
+        },
+      },
+    });
+    if (!target) throw new NotFoundException();
+    return {
+      membershipNumber: target.member.membershipNumber,
+      walletLinked: target.walletLinks.length > 0,
+    };
   }
 
   async updatePoints(user: RequestUser | undefined, committeeCode: string, targetMemberId: number, dto: UpdateCommitteePointsDto) {
@@ -957,6 +1232,22 @@ export class CommitteeDashboardService {
     }
     if (!member.isActive) throw new ConflictException('This member is inactive and cannot be assigned.');
     return { person, member };
+  }
+
+  private dispatchMembershipAssignmentEmail(
+    email: Parameters<MembershipRequestEmailService['sendDecisionEmail']>[0],
+  ) {
+    if (!this.membershipEmails) return;
+    void Promise.resolve()
+      .then(() => this.membershipEmails!.sendDecisionEmail(email))
+      .catch((error: unknown) => {
+        this.logger.error({
+          event: 'direct_membership_assignment_email_failed',
+          decision: email.decision,
+          targetName: email.committeeName ?? email.globalRoleName ?? 'group role',
+          errorName: error instanceof Error ? error.name : 'unknown',
+        });
+      });
   }
 
   private async requireMembership(user: { memberId?: number | null } | undefined, committeeCode: string) {

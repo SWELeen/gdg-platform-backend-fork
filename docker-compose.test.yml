@@ -1,0 +1,22 @@
+services:
+  test-db:
+    image: postgres:17
+    container_name: gdg-test-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gdg_test
+      POSTGRES_USER: gdg_test
+      POSTGRES_PASSWORD: gdg_test_local_only
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gdg_test -d gdg_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - gdg_test_data:/var/lib/postgresql/data
+
+volumes:
+  gdg_test_data:

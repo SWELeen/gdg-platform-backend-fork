@@ -74,7 +74,8 @@ export class CommitteeEventImageStorageService {
     try {
       this.client ??= createClient(
         this.config.getOrThrow<string>('SUPABASE_URL'),
-        this.config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY'),
+        this.config.get<string>('SUPABASE_SECRET_KEY')
+          ?? this.config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY'),
         { auth: { persistSession: false, autoRefreshToken: false } },
       );
     } catch {

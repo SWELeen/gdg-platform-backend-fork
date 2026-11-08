@@ -4,6 +4,8 @@
 
 The repository uses Vitest and Node's test runner. `pnpm check` runs lint, type checking and unit/helper tests; `pnpm build` verifies compilation. `gdg backend test` runs checks and application e2e inside the running backend container. Coverage thresholds, contract-test tooling, CI and production deployment gates remain **TBD**.
 
+Members without Docker can run selected backend E2E tests against a dedicated Supabase test project using [Local Setup Without Docker](../LOCAL_SETUP.md). The guarded `pnpm test:supabase`, `pnpm check:supabase`, and `pnpm test:supabase:migrate` commands require distinct test, production, and shared-development project references. The default `pnpm test` / `pnpm check` suite contains unit/helper tests; `pnpm test:e2e` is the database-backed suite and does not load `.env.test.local`, so use the Supabase wrapper for remote E2E tests. Never use a production or shared-development Supabase database for automated tests.
+
 For disposable migration, startup and representative SQL checks, follow [Database and Prisma](database-prisma.md#isolated-verification). The automatic runners require host Node.js/pnpm and Docker. They create their own PostgreSQL server and do not use the application database.
 
 ## HTTP envelope and validation checks

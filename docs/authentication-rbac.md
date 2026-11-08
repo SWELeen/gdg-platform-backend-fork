@@ -1,5 +1,27 @@
 # Authentication and RBAC
 
+## Google OAuth
+
+Google OAuth uses Supabase Auth as the credential owner. The browser completes Supabase's PKCE OAuth flow, then posts the resulting access and refresh tokens to `POST /auth/google/session`. NestJS verifies both tokens with Supabase, requires a verified email and a Google identity, rotates the session, and sets the existing HttpOnly GDG cookies. OAuth tokens are never returned in the API response or persisted by the frontend beyond the current tab's temporary PKCE state.
+
+The request/response contract is documented in [auth-google-openapi.yaml](auth-google-openapi.yaml).
+
+- A person already linked to the same Supabase user ID signs in normally.
+- A new verified Google identity receives a session and must complete the GDG registration profile at `/{locale}/signup/complete`. The backend creates a person and finalizes either a non-member registration or a pending membership request. The Google-verified email is the personal login email; a second email OTP is not sent.
+- The personal email is derived from the verified Supabase user, never accepted from the profile form.
+- The current flow accepts any Supabase-verified Google email; it does not restrict users to a university domain.
+- If the email matches a local person with a different or missing `auth_user_id`, the API returns `GOOGLE_ACCOUNT_LINK_REQUIRED`. It does not attach identities by email alone. The person must first use the existing account/setup flow; a manual Google identity-linking UX is not implemented.
+- Google accounts do not receive an application password automatically. A user can continue signing in with Google. Adding password sign-in uses the existing Supabase setup/reset-link flow after the person record exists.
+
+### Google provider configuration
+
+1. In Google Cloud, create a Web OAuth client. Add the local and production frontend origins under **Authorized JavaScript origins**. Add the callback shown in Supabase under **Authorized redirect URIs**; Google redirects to Supabase first.
+2. In Supabase **Authentication → Providers → Google**, enable Google and enter that OAuth client ID and secret. Keep the secret in Supabase only.
+3. In Supabase **Authentication → URL Configuration**, set the production Site URL and allow the exact application callback URLs `http://localhost:3000/en/auth/callback`, `http://localhost:3000/ar/auth/callback`, and their production equivalents.
+4. Set the frontend's public `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and set `NEXT_PUBLIC_USE_API=true`. The backend still needs the existing `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. Do not add the Google client secret to either repository's frontend environment.
+
+The provider must be enabled and redirects/origins configured separately in each Supabase/Google environment. This repository does not configure a live Google Cloud or Supabase project. Whether to add a university-domain restriction and manual linking for legacy accounts remains **TBD**.
+
 ## Current signup and session flow (supersedes legacy endpoint descriptions below)
 
 Browser sessions use HttpOnly `gdg_access` and `gdg_refresh` cookies through the frontend's same-origin `/api/*` proxy. The proxy cookies use `SameSite=Strict`; they are `Secure` in production. The access cookie is scoped to `/api` and the refresh cookie to `/api/auth`, keeping them off frontend page requests. During the two-service rollout only, the backend also emits the previous `/` and `/auth` cookie paths so the old frontend continues working until the new frontend is deployed. Remove that temporary compatibility after deployment; the legacy production cookies use `SameSite=None` and are not part of the final design. The proxy removes the `/api` prefix before forwarding to this backend and must forward `Origin` and `Cookie` request headers and pass `Set-Cookie` response headers unchanged. Cookie-authenticated mutations require an exact `Origin` match with `FRONTEND_URL` or one of the comma-separated `FRONTEND_ORIGINS`; the same allowlist controls CORS. Production must configure its public frontend origin explicitly. Add `http://localhost:3000` to `FRONTEND_ORIGINS` only when local development must use a hosted backend. Only bare HTTP/HTTPS origins are accepted; no production origin is hard-coded. The frontend does not read or persist access/refresh tokens. `/auth/refresh` rotates Supabase sessions; `/auth/logout` revokes the current access token digest locally, signs out the refresh session at Supabase, and clears both current and legacy cookie paths. Protected routes still enforce backend permissions.
@@ -14,7 +36,7 @@ Security review note (2026-10-27): account recovery returns the same success res
 
 ## Approved direction
 
-The user confirmed Supabase Auth as the credential owner on 2026-10-05. NestJS verifies the provider identity and enforces local role-based and committee-based access control. The backend is the authoritative enforcement point. Google OAuth remains a potential provider flow requiring configuration review.
+The user confirmed Supabase Auth as the credential owner on 2026-10-05. NestJS verifies the provider identity and enforces local role-based and committee-based access control. The backend is the authoritative enforcement point. Google OAuth is implemented through Supabase Auth; project credentials and allowed callback URLs still require per-environment configuration.
 
 Do not store password hashes locally. The current Person model maps to person and links to Supabase identities through the nullable unique person.auth_user_id UUID. This plain PostgreSQL setup does not install a foreign key to auth.users. Local person records may remain unlinked until invitation/setup completes. Invitation, reset, token verification, and idempotent provider-to-local provisioning must be designed with the authentication owner.
 
@@ -113,16 +135,17 @@ These instructions describe checks to perform; no live Supabase, SMTP delivery, 
 
 ## TBD before implementation
 
-The following must be confirmed before coding the full auth system:
+The following remain to be configured or confirmed:
 
 - any future role additions beyond the approved local registry;
 - additional permissions beyond the approved initial club and committee mappings;
 - account provisioning, deactivation, alumni transition, and role-change workflow;
-- Google OAuth restrictions, consent-screen settings, callback routes, and allowed email domains;
+- Google OAuth provider settings in each hosted environment and any allowed email-domain restriction;
+- manual Google identity linking for existing local people whose Supabase identity is missing or different;
 - token transport/storage, expiry, refresh, logout, revocation, and session policy;
 - Supabase password/invitation/reset flows and which OAuth providers are enabled;
 - audit-log, account-recovery, privacy, and retention requirements.
-- CORS allowlist, OAuth redirect allowlist, CSRF policy if cookies are used, and Swagger/OpenAPI access policy.
+- OAuth redirect allowlist, CSRF policy if cookies are used, and Swagger/OpenAPI access policy.
 - first login for existing members: proposed email invite link instead of choosing a password directly (Backend Workflow section 4), so knowing a member's email isn't enough to claim the account; pending team confirmation;
 - signup: proposed Supabase account + `person` row only, no `member` row or role, matching the schema (Backend Workflow section 5 says role MEMBER); pending team confirmation;
 - one shared Supabase project for development, so every backend trusts the same logins;

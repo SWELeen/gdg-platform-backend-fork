@@ -14,6 +14,7 @@ import { schemaTestTarget } from './schema-test-target.js';
 process.env.DATABASE_URL = schemaTestTarget(
   process.env.TEST_DATABASE_URL,
   process.env.DATABASE_URL,
+  { allowSupabaseTestProject: true },
 );
 
 let app: INestApplication;
@@ -39,7 +40,7 @@ async function createMember(committeeId?: number) {
   personOfMember.set(member.memberId, person.personId);
   if (committeeId) {
     await prisma.memberCommittee.create({
-      data: { memberId: member.memberId, committeeId, role: 'Member' },
+      data: { memberId: member.memberId, committeeId, role: 'Leader' },
     });
   }
   return member.memberId;

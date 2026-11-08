@@ -23,6 +23,7 @@ import { ResendPersonalVerificationDto } from './resend-verification.dto.js';
 import { AuthRateLimit } from './auth-rate-limit.guard.js';
 import { UpdateBioDto } from './update-bio.dto.js';
 import { UpdateSocialLinksDto } from './update-social-links.dto.js';
+import { GoogleSessionDto, GoogleSignupCompletionDto } from './google-auth.dto.js';
 
 @Controller()
 export class AuthController {
@@ -37,6 +38,30 @@ export class AuthController {
   async login(@Body() body: LoginDto, @Res({ passthrough: true }) response?: Response) {
     this.setSessionCookies(response, await this.auth.login(body));
     return apiSuccess({ authenticated: true });
+  }
+
+  @Post('auth/google/session')
+  @HttpCode(200)
+  @AuthRateLimit({ scope: 'google-session', dimension: 'ip', limit: 20, windowSeconds: 900 })
+  async googleSession(@Body() body: GoogleSessionDto, @Res({ passthrough: true }) response?: Response) {
+    const result = await this.auth.establishGoogleSession(body);
+    this.setSessionCookies(response, result);
+    return apiSuccess({ nextStep: result.nextStep, profile: 'profile' in result ? result.profile : undefined });
+  }
+
+  @Post('auth/google/complete-signup')
+  @HttpCode(200)
+  @AuthRateLimit(
+    { scope: 'google-signup', dimension: 'ip', limit: 10, windowSeconds: 3600 },
+  )
+  async completeGoogleSignup(
+    @Req() request: Request,
+    @Body() body: GoogleSignupCompletionDto,
+  ) {
+    const accessToken = (/^Bearer\s+(\S+)$/i.exec(request.headers.authorization ?? '')?.[1])
+      ?? this.cookieValue(request, 'gdg_access');
+    if (!accessToken) throw new UnauthorizedException();
+    return apiSuccess(await this.auth.completeGoogleSignup(accessToken, body));
   }
 
   @Post('auth/check-email')

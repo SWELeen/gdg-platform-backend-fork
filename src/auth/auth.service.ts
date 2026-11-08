@@ -31,6 +31,7 @@ import type {
   SetupPasswordDto,
 } from './setup-password.dto.js';
 import type { SignupDto } from './signup.dto.js';
+import type { GoogleSessionDto, GoogleSignupCompletionDto } from './google-auth.dto.js';
 import type { UpdateSocialLinksDto } from './update-social-links.dto.js';
 
 const UNIQUE_VIOLATION = 'P2002';
@@ -142,6 +143,134 @@ export class AuthService {
     }
 
     return tokens(data.session);
+  }
+
+  async establishGoogleSession({ accessToken, refreshToken }: GoogleSessionDto) {
+    const authClient = this.connect('SUPABASE_PUBLISHABLE_KEY');
+    const { data: userResult, error: userError } = await authClient.auth.getUser(accessToken);
+    if (userError || !userResult.user) throw new UnauthorizedException();
+    this.assertGoogleIdentity(userResult.user);
+
+    const { data, error } = await authClient.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data.session || !data.user || data.user.id !== userResult.user.id) {
+      throw new UnauthorizedException();
+    }
+    this.assertGoogleIdentity(data.user);
+
+    const person = await this.prisma.person.findUnique({
+      where: { authUserId: data.user.id },
+      select: { personId: true, isActive: true },
+    });
+    const email = data.user.email?.trim().toLowerCase();
+    if (!email || !data.user.email_confirmed_at) throw new UnauthorizedException();
+
+    if (person) {
+      if (!person.isActive) throw new UnauthorizedException();
+      return { ...tokens(data.session), nextStep: 'SIGNED_IN' as const };
+    }
+
+    const emailOwner = await this.findPersonByEmail(email);
+    if (emailOwner) {
+      throw new ConflictException('Sign in to your existing GDG account before connecting Google.', {
+        errorCode: 'GOOGLE_ACCOUNT_LINK_REQUIRED',
+      });
+    }
+
+    const metadata = data.user.user_metadata;
+    const fullName = [metadata.full_name, metadata.name].find(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0,
+    )?.trim() ?? '';
+    return {
+      ...tokens(data.session),
+      nextStep: 'COMPLETE_PROFILE' as const,
+      profile: { email, fullName },
+    };
+  }
+
+  async completeGoogleSignup(accessToken: string, input: GoogleSignupCompletionDto) {
+    const { data, error } = await this.client().auth.getUser(accessToken);
+    if (error || !data.user) throw new UnauthorizedException();
+    this.assertGoogleIdentity(data.user);
+
+    const email = data.user.email?.trim().toLowerCase();
+    const verifiedAt = data.user.email_confirmed_at ? new Date(data.user.email_confirmed_at) : null;
+    if (!email || !verifiedAt) throw new UnauthorizedException();
+
+    const existingByAuthId = await this.prisma.person.findUnique({
+      where: { authUserId: data.user.id },
+      select: { personId: true, pendingSignup: true },
+    });
+    if (existingByAuthId) {
+      if (existingByAuthId.pendingSignup) await this.finalizePendingSignup(existingByAuthId.personId);
+      return { registrationPendingApproval: input.registrationType === 'MEMBER' };
+    }
+
+    const emailOwner = await this.findPersonByEmail(email);
+    if (emailOwner) {
+      throw new ConflictException('Sign in to your existing GDG account before connecting Google.', {
+        errorCode: 'GOOGLE_ACCOUNT_LINK_REQUIRED',
+      });
+    }
+
+    const universityEmail = input.applicationData.universityEmail?.trim().toLowerCase() ?? null;
+    if (universityEmail === email) {
+      throw new BadRequestException('Personal and university emails must be different.', {
+        errorCode: 'EMAILS_MUST_DIFFER',
+      });
+    }
+
+    const committees = input.committees ?? [];
+    const globalRoles = input.requestedGlobalRoles ?? [];
+    if (input.registrationType === 'MEMBER' && !committees.length && !globalRoles.length) {
+      throw new BadRequestException('Select at least one committee or leadership role.');
+    }
+    const committeeRows = await findApplicableCommittees(
+      this.prisma,
+      committees.map((item) => item.committeeCode),
+    );
+    if (!committeeRows) throw committeeUnavailable();
+
+    try {
+      const personId = await this.prisma.$transaction(async (tx) => {
+        const person = await tx.person.create({
+          data: {
+            authUserId: data.user.id,
+            fullName: input.fullName.trim(),
+            emailPersonal: email,
+            emailPersonalVerifiedAt: verifiedAt,
+            emailUniversity: universityEmail,
+            emailUniversityVerifiedAt: null,
+            emailIdentities: { create: [{ email, kind: 'PERSONAL' }] },
+            pendingSignup: {
+              create: {
+                registrationType: input.registrationType,
+                applicationData: JSON.parse(JSON.stringify(input.applicationData)),
+                committees: JSON.parse(JSON.stringify(committees)),
+                globalRoles: JSON.parse(JSON.stringify(globalRoles)),
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+              },
+            },
+          },
+          select: { personId: true },
+        });
+        return person.personId;
+      });
+      await this.finalizePendingSignup(personId);
+    } catch (signupError) {
+      if (
+        signupError instanceof Prisma.PrismaClientKnownRequestError &&
+        signupError.code === UNIQUE_VIOLATION
+      ) throw emailAlreadyExists();
+      throw signupError;
+    }
+
+    return { registrationPendingApproval: input.registrationType === 'MEMBER' };
+  }
+
+  private assertGoogleIdentity(user: { app_metadata?: Record<string, unknown>; identities?: Array<{ provider: string }> }) {
+    const isGoogle = user.app_metadata?.provider === 'google' ||
+      user.identities?.some((identity) => identity.provider === 'google');
+    if (!isGoogle) throw new UnauthorizedException();
   }
 
   async verifySignupEmail(email: string, token: string) {
@@ -477,7 +606,7 @@ export class AuthService {
   }
 
   private verificationHash(personId: number | string, code: string, purpose: string) {
-    return createHmac('sha256', this.config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY'))
+    return createHmac('sha256', this.config.get<string>('SUPABASE_SECRET_KEY') ?? this.config.getOrThrow<string>('SUPABASE_SERVICE_ROLE_KEY'))
       .update(`${personId}:${purpose}:${code}`).digest('hex');
   }
 
@@ -696,6 +825,7 @@ export class AuthService {
         profileImageUrl: true,
         member: {
           select: {
+            membershipNumber: true,
             joinDate: true,
             committees: {
               select: {
@@ -737,6 +867,7 @@ export class AuthService {
     return {
       personId: user.personId,
       memberId: user.memberId,
+      membershipNumber: member?.membershipNumber ?? null,
       fullName: person.fullName,
       email: person.emailPersonal ?? user.email ?? null,
       universityEmail: person.emailUniversity,
@@ -803,7 +934,11 @@ export class AuthService {
 
   // secret key client, only for deleting/inviting accounts, nobody logs in here
   private admin() {
-    this.supabaseAdmin ??= this.connect('SUPABASE_SERVICE_ROLE_KEY');
+    this.supabaseAdmin ??= this.connect(
+      this.config.get<string>('SUPABASE_SECRET_KEY')
+        ? 'SUPABASE_SECRET_KEY'
+        : 'SUPABASE_SERVICE_ROLE_KEY',
+    );
     return this.supabaseAdmin.auth.admin;
   }
 
