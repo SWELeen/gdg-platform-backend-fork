@@ -4,6 +4,7 @@ import { PrismaService } from '../dist/prisma/prisma.service.js';
 
 const args = parseArgs({
   options: {
+    'member-id': { type: 'string' },
     'membership-number': { type: 'string' },
     committee: { type: 'string' },
     'wallet-id': { type: 'string' },
@@ -12,19 +13,22 @@ const args = parseArgs({
     'sync-next-event': { type: 'boolean' },
   },
 }).values;
-const number = Number(args['membership-number']);
+const byMemberId = args['member-id'] !== undefined;
+const rawNumber = args['member-id'] ?? args['membership-number'] ?? '';
+const number = Number(rawNumber);
 const committeeCode = args.committee?.toUpperCase();
 const walletPublicId = args['wallet-id']?.toLowerCase();
 if (
-  !/^\d{6,10}$/.test(args['membership-number'] ?? '') ||
-  number < 100001 ||
+  (byMemberId && args['membership-number'] !== undefined) ||
+  !/^\d{1,10}$/.test(rawNumber) ||
+  number < (byMemberId ? 1 : 100001) ||
   number > 2147483647 ||
   !/^[A-Z0-9_]{1,20}$/.test(committeeCode ?? '') ||
   !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(walletPublicId ?? '') ||
   !process.env.DATABASE_URL
 ) {
   console.error(
-    'Set DATABASE_URL explicitly and supply --membership-number, --committee and --wallet-id.',
+    'Set DATABASE_URL explicitly and supply exactly one of --member-id or --membership-number, plus --committee and --wallet-id.',
   );
   process.exit(2);
 }
@@ -36,7 +40,7 @@ try {
   const result = await prisma.$transaction(async (tx) => {
     const member = await tx.member.findFirst({
       where: {
-        membershipNumber: number,
+        ...(byMemberId ? { memberId: number } : { membershipNumber: number }),
         isActive: true,
         person: { isActive: true },
       },
