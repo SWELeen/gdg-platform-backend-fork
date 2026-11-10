@@ -187,6 +187,9 @@ model Member {
   publishedAnnouncements Announcement[]
   assignedCommitteeTasks CommitteeTask[] @relation("TaskAssignee")
   createdCommitteeTasks  CommitteeTask[] @relation("TaskCreator")
+  globalPointsReceived   GlobalPointEntry[] @relation("GlobalPointsRecipient")
+  globalPointsAwarded    GlobalPointEntry[] @relation("GlobalPointsAwarder")
+  awardedCommitteePoints CommitteePointEntry[] @relation("CommitteePointsAwarder")
 
   @@map("member")
 }
@@ -277,7 +280,6 @@ model MemberCommittee {
   member    Member    @relation(fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
   committee Committee @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: NoAction)
   pointsReceived CommitteePointEntry[] @relation("PointsRecipient")
-  pointsAwarded  CommitteePointEntry[] @relation("PointsAwarder")
   walletLinks    WalletMembershipLink[]
 
   @@unique([memberId, committeeId])
@@ -527,11 +529,27 @@ model CommitteePointEntry {
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   recipient MemberCommittee @relation("PointsRecipient", fields: [memberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
-  awarder   MemberCommittee @relation("PointsAwarder", fields: [awardedByMemberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
+  awarder   Member @relation("CommitteePointsAwarder", fields: [awardedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
 
   @@index([committeeId, createdAt, pointEntryId])
   @@index([memberId, committeeId, createdAt])
   @@map("committee_point_entry")
+}
+
+model GlobalPointEntry {
+  pointEntryId      Int      @id @default(autoincrement()) @map("point_entry_id")
+  memberId          Int      @map("member_id")
+  awardedByMemberId Int      @map("awarded_by_member_id")
+  pointsDelta       Int      @map("points_delta")
+  reason            String   @db.VarChar(500)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recipient Member @relation("GlobalPointsRecipient", fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  awarder   Member @relation("GlobalPointsAwarder", fields: [awardedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([memberId, createdAt, pointEntryId])
+  @@index([createdAt, pointEntryId])
+  @@map("global_point_entry")
 }
 
 model Event {

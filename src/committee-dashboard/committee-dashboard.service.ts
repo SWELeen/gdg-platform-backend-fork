@@ -36,6 +36,8 @@ import {
 const VIEW_PERMISSION = 'dashboard.view';
 const TASK_PERMISSION = 'tasks.manage';
 const POINTS_PERMISSION = 'points.manage';
+const CLUB_POINTS_PERMISSION = 'club.points.manage';
+const DEVELOPER_POINTS_PERMISSION = 'developer_committees.points.manage';
 const MEMBERS_PERMISSION = 'members.manage';
 const MEMBER_ASSIGNABLE_COMMITTEE_CODES = new Set(['CONTENT', 'PM', 'PR', 'DMD', 'DATA', 'CYBER', 'ROBOTICS', 'WEB', 'AUTOMATION', 'AI']);
 const EVENTS_PERMISSION = 'events.create';
@@ -60,6 +62,7 @@ export class CommitteeDashboardService {
     if (!user?.memberId) throw new ForbiddenException();
     if (!(await this.access.hasGlobalPermission(user.memberId, 'developer_committees.dashboard.view'))) throw new ForbiddenException();
     const canAssignMembers = await this.access.hasGlobalPermission(user.memberId, 'developer_committees.members.assign');
+    const canManagePoints = await this.access.hasGlobalPermission(user.memberId, DEVELOPER_POINTS_PERMISSION);
     const committees = (await this.prisma.committee.findMany({
       where: { parent: { committeeCode: DEVELOPER_COMMITTEES_CODE } },
       select: { committeeId: true, committeeCode: true, committeeName: true },
@@ -87,17 +90,39 @@ export class CommitteeDashboardService {
       Array<{ committeeId: number; _count: { _all: number } }>,
       Array<{ committeeId: number; _count: { _all: number } }>,
     ];
+    const [committeeLeaders, leaderPointTotals] = await Promise.all([
+      this.prisma.memberCommittee.findMany({
+        where: {
+          committeeId: { in: committees.map(({ committeeId }) => committeeId) },
+          role: { in: ['Leader', 'Co-Leader'] },
+          member: { isActive: true, person: { isActive: true } },
+        },
+        include: { member: { include: { person: { select: { fullName: true, emailPersonal: true } } } }, committee: { select: { committeeCode: true, committeeName: true } } },
+        orderBy: [{ role: 'asc' }, { member: { person: { fullName: 'asc' } } }],
+      }),
+      (this.prisma.committeePointEntry as any).groupBy({
+        by: ['memberId', 'committeeId'],
+        where: { committeeId: { in: committees.map(({ committeeId }) => committeeId) } },
+        _sum: { pointsDelta: true },
+      }),
+    ]);
+    const leaderPoints = new Map((leaderPointTotals as any[]).map((row: any) => [`${row.memberId}:${row.committeeId}`, row._sum.pointsDelta ?? 0]));
     const activeTasks = await Promise.all(committees.map((committee: any) => this.prisma.committeeTask.count({
       where: { committeeId: committee.committeeId, status: { in: ACTIVE_TASK_STATUSES } },
     })));
     return {
-      permissions: { canAssignMembers },
+      permissions: { canAssignMembers, canManagePoints },
+      currentMember: { id: String(user.memberId), name: '', role: 'DEVELOPER_COMMITTEES_LEADER' },
       committees: committees.map((committee: any, index: number) => ({
       code: committee.committeeCode,
       name: committee.committeeName,
       memberCount: activeMembers.find((row: any) => row.committeeId === committee.committeeId)?._count._all ?? 0,
       leaderCount: leaders.find((row: any) => row.committeeId === committee.committeeId)?._count._all ?? 0,
       activeTaskCount: activeTasks[index],
+      leaders: (committeeLeaders as any[]).filter((row: any) => row.committeeId === committee.committeeId).map((row: any) => ({
+        id: String(row.memberId), name: row.member.person.fullName, email: row.member.person.emailPersonal ?? '', role: row.role,
+        points: leaderPoints.get(`${row.memberId}:${row.committeeId}`) ?? 0,
+      })),
       })),
     };
   }
@@ -146,14 +171,25 @@ export class CommitteeDashboardService {
       (this.prisma.committeePointEntry as any).groupBy({ by: ['memberId', 'committeeId'], _sum: { pointsDelta: true } }),
       this.access.hasGlobalPermission(user.memberId, MEMBERS_PERMISSION),
     ]);
+    const [globalPointTotals, globalPoints, globalMonthPoints] = await Promise.all([
+      (this.prisma.globalPointEntry as any).groupBy({ by: ['memberId'], _sum: { pointsDelta: true } }),
+      this.prisma.globalPointEntry.findMany({
+        include: { recipient: { include: { person: { select: { fullName: true } } } } },
+        orderBy: [{ createdAt: 'desc' }, { pointEntryId: 'desc' }], take: 200,
+      }),
+      this.prisma.globalPointEntry.aggregate({ where: { createdAt: { gte: riyadhPeriodStart(new Date(), 'month') } }, _sum: { pointsDelta: true } }),
+    ]);
     const memberPoints = new Map((pointTotals as any[]).map((row: any) => [row.memberId, row._sum.pointsDelta ?? 0]));
+    const globalPointsByMember = new Map((globalPointTotals as any[]).map((row: any) => [row.memberId, row._sum.pointsDelta ?? 0]));
+    for (const row of globalPointTotals as any[]) memberPoints.set(row.memberId, (memberPoints.get(row.memberId) ?? 0) + (row._sum.pointsDelta ?? 0));
     const memberCommitteePoints = new Map((committeePointTotals as any[]).map((row: any) => [`${row.memberId}:${row.committeeId}`, row._sum.pointsDelta ?? 0]));
     const memberCompletedTasks = new Map((completedTasks as any[]).map((row: any) => [row.assignedMemberId, row._count._all]));
     const mappedMembers = (members as any[]).map((member: any) => ({
       id: String(member.memberId), name: member.person.fullName,
-      email: member.person.emailUniversity ?? member.person.emailPersonal ?? '',
+      email: member.person.emailPersonal ?? '',
       role: [...new Set([...member.committees.map(({ role }: { role: string }) => role), ...member.roleAssignments.map(({ roleCode }: { roleCode: string }) => roleCode)])].join(' / ') || 'Member',
       status: 'Active' as const, points: memberPoints.get(member.memberId) ?? 0,
+      globalPoints: globalPointsByMember.get(member.memberId) ?? 0,
       tasksCompleted: memberCompletedTasks.get(member.memberId) ?? 0, lastActivity: null,
       committees: member.committees.map(({ role, committeeId, committee }: { role: string; committeeId: number; committee: any }) => ({
         code: committee.committeeCode, name: committee.committeeName, role,
@@ -169,14 +205,14 @@ export class CommitteeDashboardService {
         committeeMembers: mappedMembers.length, activeMembers: mappedMembers.length, awayMembers: 0,
         upcomingEvents: (events as any[]).filter((event: any) => event.status === 'PUBLISHED' && event.startsAt >= now).length,
         upcomingEventsInNext30Days: (events as any[]).filter((event: any) => event.status === 'PUBLISHED' && event.startsAt >= now && event.startsAt < new Date(now.getTime() + 30 * 86400000)).length,
-        totalPoints: [...memberPoints.values()].reduce((sum: number, value: number) => sum + value, 0), pointsThisMonth: monthPoints._sum.pointsDelta ?? 0,
+        totalPoints: [...memberPoints.values()].reduce((sum: number, value: number) => sum + value, 0), pointsThisMonth: (monthPoints._sum.pointsDelta ?? 0) + (globalMonthPoints._sum.pointsDelta ?? 0),
         activeTasks, tasksDueThisWeek, eventsCreated: events.length,
         eventsPublishedThisYear: (events as any[]).filter((event: any) => event.status === 'PUBLISHED' && event.createdAt.getUTCFullYear() === now.getUTCFullYear()).length,
         pendingRegistrations: (registrationGroups as any[]).find(({ status }: { status: string }) => status === 'PENDING')?._count._all ?? 0,
         acceptedRegistrations: (registrationGroups as any[]).filter(({ status }: { status: string }) => ['CONFIRMED', 'AWAITING_CONFIRMATION'].includes(status)).reduce((sum: number, row: any) => sum + row._count._all, 0),
         rejectedRegistrations: (registrationGroups as any[]).filter(({ status }: { status: string }) => ['REJECTED', 'NOT_SELECTED'].includes(status)).reduce((sum: number, row: any) => sum + row._count._all, 0),
       },
-      permissions: { canManageTasks: false, canManagePoints: false, canManageRegistrations: false, canAddMembers },
+      permissions: { canManageTasks: false, canManagePoints: await this.access.hasGlobalPermission(user.memberId, CLUB_POINTS_PERMISSION), canManageRegistrations: false, canAddMembers },
       committees: (committees as any[]).map(({ committeeCode, committeeName }: { committeeCode: string; committeeName: string }) => ({ code: committeeCode, name: committeeName })),
       members: mappedMembers,
       events: (events as any[]).map((event: any) => ({
@@ -191,11 +227,18 @@ export class CommitteeDashboardService {
         status: task.status, taskScope: task.taskScope ?? 'COMMITTEE', eventId: task.eventId == null ? null : String(task.eventId), eventTitle: task.event?.name ?? null, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(),
         committeeCode: task.committee.committeeCode, committeeName: task.committee.committeeName,
       })),
-      pointHistory: (points as any[]).map((entry: any) => ({
+      pointHistory: [
+        ...(points as any[]).map((entry: any) => ({
         id: String(entry.pointEntryId), memberId: String(entry.memberId), memberName: entry.recipient.member.person.fullName,
         pointsDelta: entry.pointsDelta, reason: entry.reason, createdAt: entry.createdAt.toISOString(),
         committeeCode: entry.recipient.committee.committeeCode, committeeName: entry.recipient.committee.committeeName,
-      })),
+        })),
+        ...(globalPoints as any[]).map((entry: any) => ({
+          id: `global-${entry.pointEntryId}`, memberId: String(entry.memberId), memberName: entry.recipient.person.fullName,
+          pointsDelta: entry.pointsDelta, reason: entry.reason, createdAt: entry.createdAt.toISOString(),
+          committeeCode: 'GLOBAL', committeeName: 'Club leadership',
+        })),
+      ].sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt)).slice(0, 200),
       recentActivities: [],
     };
   }
@@ -308,7 +351,7 @@ export class CommitteeDashboardService {
     }) => ({
       id: String(member.memberId),
       name: member.person.fullName,
-      email: member.person.emailUniversity ?? member.person.emailPersonal ?? '',
+      email: member.person.emailPersonal ?? '',
       role,
       status: 'Active' as const,
       points: memberPoints.get(member.memberId) ?? 0,
@@ -1077,23 +1120,47 @@ export class CommitteeDashboardService {
   }
 
   async updatePoints(user: RequestUser | undefined, committeeCode: string, targetMemberId: number, dto: UpdateCommitteePointsDto) {
-    const { committee, memberId } = await this.requireMembership(user, committeeCode);
-    await this.requirePermission(memberId, POINTS_PERMISSION, committee.committeeId);
-    await this.requireCommitteeMember(committee.committeeId, targetMemberId);
+    if (!user?.memberId) throw new ForbiddenException();
+    const committee = await this.prisma.committee.findUnique({
+      where: { committeeCode: committeeCode.trim().toUpperCase() },
+      include: { parent: { select: { committeeCode: true } } },
+    });
+    if (!committee) throw new NotFoundException();
+    const memberId = user.memberId;
+    const actorMembership = await this.prisma.memberCommittee.findUnique({
+      where: { memberId_committeeId: { memberId, committeeId: committee.committeeId } },
+      select: { role: true, member: { select: { isActive: true, person: { select: { isActive: true } } } } },
+    });
+    if (actorMembership && (!actorMembership.member.isActive || !actorMembership.member.person.isActive)) throw new ForbiddenException();
+    const canManageClubLeadership = await this.access.hasGlobalPermission(memberId, CLUB_POINTS_PERMISSION);
+    const canManageDeveloperLeaders = committee.parent?.committeeCode === DEVELOPER_COMMITTEES_CODE
+      && (await this.access.hasGlobalPermission(memberId, DEVELOPER_POINTS_PERMISSION));
+    const canManageOwnCommittee = Boolean(actorMembership?.role === 'Leader' || actorMembership?.role === 'Co-Leader')
+      && await this.access.hasCommitteePermission(memberId, POINTS_PERMISSION, undefined, committee.committeeId);
+    if (!canManageClubLeadership && !canManageDeveloperLeaders && !canManageOwnCommittee) throw new ForbiddenException();
+    if (memberId === targetMemberId) throw new ForbiddenException();
     if (!Number.isSafeInteger(dto.pointsDelta) || dto.pointsDelta === 0) throw new BadRequestException('A non-zero points change is required.');
 
     return this.prisma.$transaction(async (transaction) => {
       // Lock the actual committee membership row so concurrent point changes
       // for this member are serialized without returning PostgreSQL's `void`
       // advisory-lock result through Prisma.
-      const membership = await transaction.$queryRaw<Array<{ id: number }>>`
-        SELECT id
-        FROM member_committee
-        WHERE committee_id = ${committee.committeeId}
-          AND member_id = ${targetMemberId}
-        FOR UPDATE
+      const membership = await transaction.$queryRaw<Array<{ id: number; role: string }>>`
+        SELECT mc.id, mc.role
+        FROM member_committee mc
+        JOIN member m ON m.member_id = mc.member_id
+        JOIN person p ON p.person_id = m.person_id
+        WHERE mc.committee_id = ${committee.committeeId}
+          AND mc.member_id = ${targetMemberId}
+          AND m.is_active AND p.is_active
+        FOR UPDATE OF mc
       `;
       if (membership.length === 0) throw new NotFoundException();
+      const targetIsCommitteeLeader = membership[0].role === 'Leader' || membership[0].role === 'Co-Leader';
+      const mayAwardTarget = (canManageClubLeadership && targetIsCommitteeLeader)
+        || (canManageDeveloperLeaders && targetIsCommitteeLeader)
+        || (canManageOwnCommittee && membership[0].role === 'Member');
+      if (!mayAwardTarget) throw new ForbiddenException();
 
       const current = await transaction.committeePointEntry.aggregate({
         where: { committeeId: committee.committeeId, memberId: targetMemberId },
@@ -1116,6 +1183,35 @@ export class CommitteeDashboardService {
         id: String(entry.pointEntryId), memberId: String(entry.memberId),
         memberName: entry.recipient.member.person.fullName, pointsDelta: entry.pointsDelta,
         reason: entry.reason, createdAt: entry.createdAt.toISOString(),
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }
+
+  async updateDeveloperLeaderPoints(user: RequestUser | undefined, targetMemberId: number, dto: UpdateCommitteePointsDto) {
+    if (!user?.memberId || !(await this.access.hasGlobalPermission(user.memberId, CLUB_POINTS_PERMISSION))) throw new ForbiddenException();
+    if (user.memberId === targetMemberId) throw new ForbiddenException();
+    if (!Number.isSafeInteger(dto.pointsDelta) || dto.pointsDelta === 0) throw new BadRequestException('A non-zero points change is required.');
+    const today = new Date();
+    const target = await this.prisma.memberRole.findFirst({
+      where: {
+        memberId: targetMemberId,
+        roleCode: 'DEVELOPER_COMMITTEES_LEADER',
+        AND: [{ OR: [{ startsOn: null }, { startsOn: { lte: today } }] }, { OR: [{ endsOn: null }, { endsOn: { gte: today } }] }],
+        member: { isActive: true, person: { isActive: true } },
+      },
+      select: { member: { select: { memberId: true, person: { select: { fullName: true } } } } },
+    });
+    if (!target) throw new NotFoundException();
+    return this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`SELECT member_id FROM member WHERE member_id = ${targetMemberId} FOR UPDATE`;
+      const current = await transaction.globalPointEntry.aggregate({ where: { memberId: targetMemberId }, _sum: { pointsDelta: true } });
+      if ((current._sum.pointsDelta ?? 0) + dto.pointsDelta < 0) throw new ForbiddenException('A points deduction cannot reduce a member below zero.');
+      const entry = await transaction.globalPointEntry.create({
+        data: { memberId: targetMemberId, awardedByMemberId: user.memberId!, pointsDelta: dto.pointsDelta, reason: dto.reason.trim() },
+      });
+      return {
+        id: String(entry.pointEntryId), memberId: String(targetMemberId), memberName: target.member.person.fullName,
+        pointsDelta: entry.pointsDelta, reason: entry.reason, createdAt: entry.createdAt.toISOString(),
       };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }

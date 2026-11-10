@@ -107,11 +107,13 @@ export class WalletProjectionService {
               } : null;
             }
           }
-          if (link.syncPoints && link.committeeId !== null && typeof remote.points === 'number') {
-            const total = await this.prisma.committeePointEntry.aggregate({
-              where: { memberId: link.memberId, committeeId: link.committeeId },
-              _sum: { pointsDelta: true },
-            });
+          if (link.syncPoints && typeof remote.points === 'number') {
+            const total = link.committeeId === null
+              ? await this.prisma.globalPointEntry.aggregate({ where: { memberId: link.memberId }, _sum: { pointsDelta: true } })
+              : await this.prisma.committeePointEntry.aggregate({
+                  where: { memberId: link.memberId, committeeId: link.committeeId },
+                  _sum: { pointsDelta: true },
+                });
             const points = total._sum.pointsDelta ?? 0;
             if (points >= 0 && points <= 10_000_000 && points !== remote.points) changes.points = points;
           }
