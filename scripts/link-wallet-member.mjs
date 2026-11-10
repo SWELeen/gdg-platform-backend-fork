@@ -17,6 +17,7 @@ const byMemberId = args['member-id'] !== undefined;
 const rawNumber = args['member-id'] ?? args['membership-number'] ?? '';
 const number = Number(rawNumber);
 const committeeCode = args.committee?.toUpperCase();
+const globalPointsScope = committeeCode === 'GLOBAL';
 const walletPublicId = args['wallet-id']?.toLowerCase();
 if (
   (byMemberId && args['membership-number'] !== undefined) ||
@@ -43,6 +44,17 @@ try {
         ...(byMemberId ? { memberId: number } : { membershipNumber: number }),
         isActive: true,
         person: { isActive: true },
+        ...(globalPointsScope ? {
+          roleAssignments: {
+            some: {
+              roleCode: 'DEVELOPER_COMMITTEES_LEADER',
+              AND: [
+                { OR: [{ startsOn: null }, { startsOn: { lte: new Date() } }] },
+                { OR: [{ endsOn: null }, { endsOn: { gte: new Date() } }] },
+              ],
+            },
+          },
+        } : {}),
       },
       select: {
         memberId: true,
@@ -52,10 +64,10 @@ try {
         },
       },
     });
-    if (!member || member.committees.length !== 1)
+    if (!member || (!globalPointsScope && member.committees.length !== 1))
       return 'No active membership for that number and committee.';
     const { memberId } = member;
-    const { committeeId } = member.committees[0];
+    const committeeId = globalPointsScope ? null : member.committees[0].committeeId;
     const previous = await tx.walletMembershipLink.findUnique({
       where: { walletPublicId },
     });
