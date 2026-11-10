@@ -615,11 +615,35 @@ export class MembershipRequestService {
     void Promise.resolve()
       .then(send)
       .catch((error: unknown) => {
+        const details =
+          error instanceof Error
+            ? {
+                errorName: error.name,
+                errorMessage: error.message,
+                errorCode:
+                  'code' in error && typeof error.code === 'string'
+                    ? error.code
+                    : undefined,
+                smtpResponseCode:
+                  'responseCode' in error && typeof error.responseCode === 'number'
+                    ? error.responseCode
+                    : undefined,
+                smtpCommand:
+                  'command' in error && typeof error.command === 'string'
+                    ? error.command
+                    : undefined,
+                smtpResponse:
+                  'response' in error && typeof error.response === 'string'
+                    ? error.response
+                    : undefined,
+              }
+            : { errorName: 'unknown', errorMessage: String(error) };
+
         this.logger.error({
           event: 'membership_decision_email_dispatch_failed',
           decision,
           targetName,
-          errorName: error instanceof Error ? error.name : 'unknown',
+          ...details,
         });
       });
   }

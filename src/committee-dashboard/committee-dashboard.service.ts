@@ -1384,11 +1384,35 @@ export class CommitteeDashboardService {
     void Promise.resolve()
       .then(() => this.membershipEmails!.sendDecisionEmail(email))
       .catch((error: unknown) => {
+        const details =
+          error instanceof Error
+            ? {
+                errorName: error.name,
+                errorMessage: error.message,
+                errorCode:
+                  'code' in error && typeof error.code === 'string'
+                    ? error.code
+                    : undefined,
+                smtpResponseCode:
+                  'responseCode' in error && typeof error.responseCode === 'number'
+                    ? error.responseCode
+                    : undefined,
+                smtpCommand:
+                  'command' in error && typeof error.command === 'string'
+                    ? error.command
+                    : undefined,
+                smtpResponse:
+                  'response' in error && typeof error.response === 'string'
+                    ? error.response
+                    : undefined,
+              }
+            : { errorName: 'unknown', errorMessage: String(error) };
+
         this.logger.error({
           event: 'direct_membership_assignment_email_failed',
           decision: email.decision,
           targetName: email.committeeName ?? email.globalRoleName ?? 'group role',
-          errorName: error instanceof Error ? error.name : 'unknown',
+          ...details,
         });
       });
   }
