@@ -48,6 +48,28 @@ function committeeUnavailable() {
   });
 }
 
+function normalizeBranch<T extends { branch?: string }>(applicationData: T): T {
+  return typeof applicationData.branch === 'string'
+    ? { ...applicationData, branch: applicationData.branch.trim() }
+    : applicationData;
+}
+
+function assertExternalUniversityBranch(
+  registrationType: 'MEMBER' | 'NON_MEMBER',
+  university: string,
+  branch?: string,
+) {
+  if (
+    registrationType === 'MEMBER' &&
+    university !== 'University of Jeddah' &&
+    !branch?.trim()
+  ) {
+    throw new BadRequestException('Branch is required for members outside the University of Jeddah.', {
+      errorCode: 'BRANCH_REQUIRED',
+    });
+  }
+}
+
 // supabase's free email sender only allows a few emails an hour
 function emailError(error: AuthError) {
   if (error.code === 'over_email_send_rate_limit' || error.code === 'over_request_rate_limit' || error.status === 429) {
@@ -221,6 +243,12 @@ export class AuthService {
 
     const committees = input.committees ?? [];
     const globalRoles = input.requestedGlobalRoles ?? [];
+    const applicationData = normalizeBranch(input.applicationData);
+    assertExternalUniversityBranch(
+      input.registrationType,
+      applicationData.university,
+      applicationData.branch,
+    );
     if (input.registrationType === 'MEMBER' && !committees.length && !globalRoles.length) {
       throw new BadRequestException('Select at least one committee or leadership role.');
     }
@@ -244,7 +272,7 @@ export class AuthService {
             pendingSignup: {
               create: {
                 registrationType: input.registrationType,
-                applicationData: JSON.parse(JSON.stringify(input.applicationData)),
+                applicationData: JSON.parse(JSON.stringify(applicationData)),
                 committees: JSON.parse(JSON.stringify(committees)),
                 globalRoles: JSON.parse(JSON.stringify(globalRoles)),
                 expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -384,6 +412,8 @@ export class AuthService {
     fullName, email, universityEmail, password, registrationType,
     applicationData, committees = [], requestedGlobalRoles = [],
   }: SignupDto) {
+    applicationData = normalizeBranch(applicationData);
+    assertExternalUniversityBranch(registrationType, applicationData.university, applicationData.branch);
     if (universityEmail && universityEmail.trim().toLowerCase() === email.trim().toLowerCase()) {
       throw new BadRequestException('Personal and university emails must be different.', {
         errorCode: 'EMAILS_MUST_DIFFER',
@@ -618,7 +648,7 @@ export class AuthService {
       const data = pending.applicationData as Record<string, unknown>;
       await tx.person.update({ where: { personId }, data: {
         phoneNumber: String(data.phoneNumber), university: String(data.university),
-        branch: typeof data.branch === 'string' ? data.branch : null,
+        branch: typeof data.branch === 'string' ? data.branch.trim() || null : null,
         major: String(data.major), gender: String(data.gender),
       } });
       if (pending.registrationType === 'NON_MEMBER') {
