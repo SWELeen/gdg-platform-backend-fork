@@ -17,7 +17,9 @@ class SignupApplicationDataDto {
   @IsString() @MaxLength(50) phoneNumber: string;
   @IsOptional() @IsEmail() @MaxLength(255) universityEmail?: string;
   @IsString() @MaxLength(255) university: string;
-  @IsOptional() @IsString() @MaxLength(100) branch?: string;
+  @IsOptional() @IsString() @MaxLength(100)
+  @Matches(/^[^\u0000-\u001F\u007F-\u009F]*\S[^\u0000-\u001F\u007F-\u009F]*$/)
+  branch?: string;
   @IsString() @MaxLength(255) college: string;
   @IsString() @MaxLength(255) major: string;
   @IsString() @MaxLength(30) level: string;
