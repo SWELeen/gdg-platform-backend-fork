@@ -57,7 +57,7 @@ paths:
       security: [{ bearerAuth: [] }, { accessCookie: [] }]
       responses:
         '200':
-          description: Developer committees overview and assignment permission.
+          description: Developer committee leader points, point history, committee overview, and assignment permissions. Point data is limited to leader and co-leader memberships in the six developer committees; the caller's own points are omitted.
           content:
             application/json:
               schema:
@@ -67,6 +67,20 @@ paths:
                     type: object
                     properties:
                       canAssignMembers: { type: boolean }
+                      canManagePoints: { type: boolean }
+                  pointHistory:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        memberId: { type: string }
+                        memberName: { type: string }
+                        pointsDelta: { type: integer }
+                        reason: { type: string }
+                        createdAt: { type: string, format: date-time }
+                        committeeCode: { type: string }
+                        committeeName: { type: string }
                   committees:
                     type: array
                     items:
