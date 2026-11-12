@@ -90,7 +90,7 @@ export class CommitteeDashboardService {
       Array<{ committeeId: number; _count: { _all: number } }>,
       Array<{ committeeId: number; _count: { _all: number } }>,
     ];
-    const [committeeLeaders, leaderPointTotals] = await Promise.all([
+    const [committeeLeaders, leaderPointTotals, pointEntries] = await Promise.all([
       this.prisma.memberCommittee.findMany({
         where: {
           committeeId: { in: committees.map(({ committeeId }) => committeeId) },
@@ -105,13 +105,40 @@ export class CommitteeDashboardService {
         where: { committeeId: { in: committees.map(({ committeeId }) => committeeId) } },
         _sum: { pointsDelta: true },
       }),
+      this.prisma.committeePointEntry.findMany({
+        where: { committeeId: { in: committees.map(({ committeeId }) => committeeId) } },
+        include: {
+          recipient: {
+            include: {
+              member: { include: { person: { select: { fullName: true } } } },
+              committee: { select: { committeeCode: true, committeeName: true } },
+            },
+          },
+        },
+        orderBy: [{ createdAt: 'desc' }, { pointEntryId: 'desc' }],
+        take: 500,
+      }),
     ]);
     const leaderPoints = new Map((leaderPointTotals as any[]).map((row: any) => [`${row.memberId}:${row.committeeId}`, row._sum.pointsDelta ?? 0]));
+    const leaderMemberships = new Set((committeeLeaders as any[]).map((row: any) => `${row.memberId}:${row.committeeId}`));
     const activeTasks = await Promise.all(committees.map((committee: any) => this.prisma.committeeTask.count({
       where: { committeeId: committee.committeeId, status: { in: ACTIVE_TASK_STATUSES } },
     })));
     return {
       permissions: { canAssignMembers, canManagePoints },
+      pointHistory: (pointEntries as any[])
+        .filter((entry: any) => leaderMemberships.has(`${entry.memberId}:${entry.committeeId}`) && entry.memberId !== user.memberId)
+        .slice(0, 200)
+        .map((entry: any) => ({
+          id: String(entry.pointEntryId),
+          memberId: String(entry.memberId),
+          memberName: entry.recipient.member.person.fullName,
+          pointsDelta: entry.pointsDelta,
+          reason: entry.reason,
+          createdAt: entry.createdAt.toISOString(),
+          committeeCode: entry.recipient.committee.committeeCode,
+          committeeName: entry.recipient.committee.committeeName,
+        })),
       currentMember: { id: String(user.memberId), name: '', role: 'DEVELOPER_COMMITTEES_LEADER' },
       committees: committees.map((committee: any, index: number) => ({
       code: committee.committeeCode,
