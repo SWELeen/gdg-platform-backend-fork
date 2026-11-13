@@ -45,7 +45,7 @@ const DOMAIN_ERROR_CODES: ReadonlyMap<string, number> = new Map([
 function safeErrorMetadata(error: unknown) {
   const value =
     typeof error === 'object' && error !== null
-      ? (error as { name?: unknown; code?: unknown; cause?: unknown })
+      ? (error as { name?: unknown; code?: unknown; cause?: unknown; meta?: unknown })
       : undefined;
   const cause =
     typeof value?.cause === 'object' && value.cause !== null
@@ -56,12 +56,28 @@ function safeErrorMetadata(error: unknown) {
       typeof candidate === 'string' && /^[A-Z0-9_]{1,32}$/.test(candidate),
   );
 
+  const meta =
+    typeof value?.meta === 'object' && value.meta !== null
+      ? (value.meta as { target?: unknown })
+      : undefined;
+  const target =
+    typeof meta?.target === 'string'
+      ? meta.target.slice(0, 120)
+      : Array.isArray(meta?.target)
+        ? meta.target
+            .filter((item): item is string => typeof item === 'string')
+            .slice(0, 8)
+        : undefined;
+
   return {
     errorName:
       error instanceof Error && /^[A-Za-z0-9_.$]{1,80}$/.test(error.name)
         ? error.name
         : 'unknown',
     errorCode: code,
+    ...(code === 'P2002' && target !== undefined
+      ? { constraintTarget: target }
+      : {}),
   };
 }
 const DIAGNOSTIC_METHODS = new Set([
