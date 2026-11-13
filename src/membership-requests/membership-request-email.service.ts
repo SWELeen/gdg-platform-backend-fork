@@ -73,11 +73,11 @@ export class MembershipRequestEmailService {
           : email.roleName;
     const roleDescriptor = roleName ? ` ${roleName}` : '';
     const subject = email.decision === 'APPROVED'
-      ? `🎉 مبروك! تم قبولك في ${targetName}`
+      ? ` مُبارك تم قبولك في ${targetName} !✨`
       : `تحديث بخصوص طلبك للانضمام إلى ${targetName}`;
     const greeting = `مرحبًا ${email.recipientName}،`;
     const body = email.decision === 'APPROVED'
-      ? `يسعدنا إبلاغك بأنه تم قبولك في لجنة ${targetName}${roleDescriptor ? ` كـ${roleDescriptor.trim()}` : ''}! 🎉\n\nنحن متحمسون لانضمامك إلى فريقنا، وواثقون أن شغفك وأفكارك ومهاراتك ستضيف الكثير للجنة. أهلًا بك بيننا، ونتطلع إلى إنجاز أشياء مميزة معًا! 🚀`
+      ? `يُسعدنا إبلاغك بأنه تم قبولك في لجنة ${targetName}${roleDescriptor ? ` كـ${roleDescriptor.trim()}` : ''}! !🎈\n\nسعداء بانضمامك إلى مجموعننا، ونؤمن بأن شغفك وأفكارك ستكون إضافة مميزة للجنة، ونتطلع إلى ما ستقدّمه من إبداع، وإلى ما سنحققه معًا من خطوات وإنجازات مميزة💡🚀!`
       : `نشكر لك اهتمامك بالتقديم إلى لجنة ${targetName}${roleDescriptor ? ` كـ${roleDescriptor.trim()}` : ''}، ونقدّر الوقت والجهد اللذين بذلتهما في طلبك.\n\nنأسف لإبلاغك بأنه لم يقع عليك الاختيار هذه المرة. نعرف أن هذا الخبر قد يكون محبطًا، لكن قرار اللجنة لا يقلل من إمكاناتك أو من قيمة ما قدمته. نتمنى لك التوفيق، ويسعدنا أن نراك تتقدم مرة أخرى في فرص قادمة. 💛`;
 
     const text = [
@@ -85,8 +85,8 @@ export class MembershipRequestEmailService {
       '',
       body,
       '',
-      'بكل التقدير،',
-      'فريق google developer group on Campus – جامعة جدة',
+      'مع خالص التمنيات بالتوفيق،',
+      'مجموعة مطوّري جوجل بجامعة جدة',
     ].join('\n');
 
     const htmlBody = escapeHtml(body).replace(/\n/g, '<br>');
