@@ -24,4 +24,4 @@ COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./package.json
 EXPOSE 3001
-CMD ["pnpm", "start:prod"]
+CMD ["node", "dist/main"]
