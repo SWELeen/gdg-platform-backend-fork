@@ -215,7 +215,7 @@ export class CommitteeDashboardService {
       const self = member.memberId === user.memberId;
       const globalRoleDeveloperLeader = member.roleAssignments.some(({ roleCode }: { roleCode: string }) => roleCode === 'DEVELOPER_COMMITTEES_LEADER');
       const committeesWithVisibility = member.committees.map(({ role, committeeId, committee }: { role: string; committeeId: number; committee: any }) => {
-        const pointsVisible = !self && !globalRoleDeveloperLeader;
+        const pointsVisible = !self;
         return {
           code: committee.committeeCode, name: committee.committeeName, role,
           points: pointsVisible ? memberCommitteePoints.get(`${member.memberId}:${committeeId}`) ?? 0 : 0,
@@ -224,7 +224,7 @@ export class CommitteeDashboardService {
       });
       const visibleCommitteePoints = committeesWithVisibility.reduce((sum: number, item: any) => sum + item.points, 0);
       const visibleCommitteeMonthPoints = member.committees.reduce((sum: number, item: any) => {
-        const pointsVisible = !self && !globalRoleDeveloperLeader;
+        const pointsVisible = !self;
         return sum + (pointsVisible ? committeeMonthPoints.get(`${member.memberId}:${item.committeeId}`) ?? 0 : 0);
       }, 0);
       const globalPointsVisible = !self && globalRoleDeveloperLeader;
@@ -274,11 +274,7 @@ export class CommitteeDashboardService {
         committeeCode: task.committee.committeeCode, committeeName: task.committee.committeeName,
       })),
       pointHistory: [
-        ...(points as any[]).filter((entry: any) => {
-          if (entry.memberId === user.memberId) return false;
-          const recipient = (members as any[]).find((member: any) => member.memberId === entry.memberId);
-          return !recipient?.roleAssignments?.some((item: any) => item.roleCode === 'DEVELOPER_COMMITTEES_LEADER');
-        }).map((entry: any) => ({
+        ...(points as any[]).filter((entry: any) => entry.memberId !== user.memberId).map((entry: any) => ({
         id: String(entry.pointEntryId), memberId: String(entry.memberId), memberName: entry.recipient.member.person.fullName,
         pointsDelta: entry.pointsDelta, reason: entry.reason, createdAt: entry.createdAt.toISOString(),
         committeeCode: entry.recipient.committee.committeeCode, committeeName: entry.recipient.committee.committeeName,
