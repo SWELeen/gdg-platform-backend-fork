@@ -1012,6 +1012,12 @@ export class CommitteeDashboardService {
         });
         if (!membership) throw new NotFoundException('This person is not an active member of the selected committee.');
 
+        // Point entries are scoped to this membership and the database uses
+        // RESTRICT to protect that history. A committee-level removal is an
+        // explicit request to remove this membership and its points together.
+        await transaction.committeePointEntry.deleteMany({
+          where: { memberId: member.memberId, committeeId: committee.committeeId },
+        });
         await transaction.memberCommittee.delete({ where: { id: membership.id } });
         return {
           memberId: String(member.memberId),
