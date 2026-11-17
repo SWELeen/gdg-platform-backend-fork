@@ -523,13 +523,13 @@ model CommitteePointEntry {
   pointEntryId      Int      @id @default(autoincrement()) @map("point_entry_id")
   committeeId       Int      @map("committee_id")
   memberId          Int      @map("member_id")
-  awardedByMemberId Int      @map("awarded_by_member_id")
+  awardedByMemberId Int?     @map("awarded_by_member_id")
   pointsDelta       Int      @map("points_delta")
   reason            String   @db.VarChar(500)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   recipient MemberCommittee @relation("PointsRecipient", fields: [memberId, committeeId], references: [memberId, committeeId], onDelete: Restrict, onUpdate: NoAction)
-  awarder   Member @relation("CommitteePointsAwarder", fields: [awardedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  awarder   Member? @relation("CommitteePointsAwarder", fields: [awardedByMemberId], references: [memberId], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([committeeId, createdAt, pointEntryId])
   @@index([memberId, committeeId, createdAt])
@@ -539,13 +539,13 @@ model CommitteePointEntry {
 model GlobalPointEntry {
   pointEntryId      Int      @id @default(autoincrement()) @map("point_entry_id")
   memberId          Int      @map("member_id")
-  awardedByMemberId Int      @map("awarded_by_member_id")
+  awardedByMemberId Int?     @map("awarded_by_member_id")
   pointsDelta       Int      @map("points_delta")
   reason            String   @db.VarChar(500)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   recipient Member @relation("GlobalPointsRecipient", fields: [memberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
-  awarder   Member @relation("GlobalPointsAwarder", fields: [awardedByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  awarder   Member? @relation("GlobalPointsAwarder", fields: [awardedByMemberId], references: [memberId], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([memberId, createdAt, pointEntryId])
   @@index([createdAt, pointEntryId])
@@ -569,12 +569,12 @@ model Event {
   mapsLink                String?     @map("maps_link") @db.VarChar(500)
   requiredRegistrantFields String[]   @default([]) @map("required_registrant_fields")
   status                  EventStatus @default(DRAFT)
-  createdByMemberId       Int         @map("created_by_member_id")
+  createdByMemberId       Int?        @map("created_by_member_id")
   committeeId             Int         @map("committee_id")
   createdAt               DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt               DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  creator       Member              @relation("EventCreator", fields: [createdByMemberId], references: [memberId], onDelete: Restrict, onUpdate: NoAction)
+  creator       Member?             @relation("EventCreator", fields: [createdByMemberId], references: [memberId], onDelete: SetNull, onUpdate: NoAction)
   committee     Committee           @relation(fields: [committeeId], references: [committeeId], onDelete: Restrict, onUpdate: Restrict)
   questions     EventQuestion[]
   registrations EventRegistration[]

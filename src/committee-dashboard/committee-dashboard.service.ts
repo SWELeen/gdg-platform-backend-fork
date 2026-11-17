@@ -1054,14 +1054,36 @@ export class CommitteeDashboardService {
         }
       }
 
-      await transaction.member.update({
-        where: { memberId: member.memberId },
-        data: { isActive: false },
+      // Keep the Person/AuthUser account so it can still sign in as a guest,
+      // but permanently remove the member identity and its personal records.
+      // Shared records (events and points awarded to others) remain intact;
+      // their attribution is cleared before deleting the member.
+      await transaction.event.updateMany({
+        where: { createdByMemberId: member.memberId },
+        data: { createdByMemberId: null },
       });
-      await transaction.$executeRaw`
-        UPDATE "member_role"
-        SET "ends_on" = GREATEST(CURRENT_DATE, COALESCE("starts_on", CURRENT_DATE))
-        WHERE "member_id" = ${member.memberId} AND "ends_on" IS NULL`;
+      await transaction.eventRegistration.updateMany({ where: { reviewedByMemberId: member.memberId }, data: { reviewedByMemberId: null } });
+      await transaction.eventRegistration.updateMany({ where: { checkedInByMemberId: member.memberId }, data: { checkedInByMemberId: null } });
+      await transaction.eventRegistration.updateMany({ where: { excusedByMemberId: member.memberId }, data: { excusedByMemberId: null } });
+      await transaction.registrationBlacklistEntry.updateMany({ where: { resolvedByMemberId: member.memberId }, data: { resolvedByMemberId: null } });
+      await transaction.membershipRequestCommittee.updateMany({ where: { decidedByMemberId: member.memberId }, data: { decidedByMemberId: null } });
+      await transaction.membershipRequestGlobalRole.updateMany({ where: { decidedByMemberId: member.memberId }, data: { decidedByMemberId: null } });
+      await transaction.memberRole.updateMany({ where: { assignedBy: member.memberId }, data: { assignedBy: null } });
+      await transaction.committeePointEntry.updateMany({ where: { awardedByMemberId: member.memberId }, data: { awardedByMemberId: null } });
+      await transaction.globalPointEntry.updateMany({ where: { awardedByMemberId: member.memberId }, data: { awardedByMemberId: null } });
+
+      await transaction.announcement.deleteMany({ where: { publishedByMemberId: member.memberId } });
+      await transaction.committeeTask.deleteMany({
+        where: { OR: [{ assignedMemberId: member.memberId }, { createdByMemberId: member.memberId }] },
+      });
+      await transaction.committeePointEntry.deleteMany({ where: { memberId: member.memberId } });
+      await transaction.globalPointEntry.deleteMany({ where: { memberId: member.memberId } });
+      await transaction.walletBarcodeAlias.deleteMany({ where: { link: { memberId: member.memberId } } });
+      await transaction.walletMembershipLink.deleteMany({ where: { memberId: member.memberId } });
+      await transaction.memberSkill.deleteMany({ where: { memberId: member.memberId } });
+      await transaction.memberCommittee.deleteMany({ where: { memberId: member.memberId } });
+      await transaction.memberRole.deleteMany({ where: { memberId: member.memberId } });
+      await transaction.member.delete({ where: { memberId: member.memberId } });
 
       return {
         memberId: String(member.memberId),
