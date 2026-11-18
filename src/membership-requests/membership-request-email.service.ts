@@ -63,7 +63,8 @@ export class MembershipRequestEmailService {
       return;
     }
 
-    const targetName = email.committeeName ?? email.globalRoleName ?? 'إحدى لجان GDG';
+    const isCommitteeDecision = Boolean(email.committeeName);
+    const targetName = email.committeeName ?? email.globalRoleName ?? 'الدور المطلوب';
     const roleName = email.roleName === 'Member'
       ? 'عضو'
       : email.roleName === 'Leader'
@@ -71,14 +72,22 @@ export class MembershipRequestEmailService {
         : email.roleName === 'Co-Leader'
           ? 'قائد مشارك'
           : email.roleName;
-    const roleDescriptor = roleName ? ` ${roleName}` : '';
+    const committeeRoleDescriptor = roleName ? ` كـ${roleName}` : '';
     const subject = email.decision === 'APPROVED'
-      ? ` مُبارك تم قبولك في ${targetName} !✨`
-      : `تحديث بخصوص طلبك للانضمام إلى ${targetName}`;
+      ? isCommitteeDecision
+        ? `مبارك تم قبولك في لجنة ${targetName}! ✨`
+        : 'مبارك تم قبولك! ✨'
+      : isCommitteeDecision
+        ? `تحديث بخصوص طلبك للانضمام إلى لجنة ${targetName}`
+        : `تحديث بخصوص طلبك للدور ${targetName}`;
     const greeting = `مرحبًا ${email.recipientName}،`;
     const body = email.decision === 'APPROVED'
-      ? `يُسعدنا إبلاغك بأنه تم قبولك في لجنة ${targetName}${roleDescriptor ? ` كـ${roleDescriptor.trim()}` : ''}! !🎈\n\nسعداء بانضمامك إلى مجموعننا، ونؤمن بأن شغفك وأفكارك ستكون إضافة مميزة للجنة، ونتطلع إلى ما ستقدّمه من إبداع، وإلى ما سنحققه معًا من خطوات وإنجازات مميزة💡🚀!`
-      : `نشكر لك اهتمامك بالتقديم إلى لجنة ${targetName}${roleDescriptor ? ` كـ${roleDescriptor.trim()}` : ''}، ونقدّر الوقت والجهد اللذين بذلتهما في طلبك.\n\nنأسف لإبلاغك بأنه لم يقع عليك الاختيار هذه المرة. نعرف أن هذا الخبر قد يكون محبطًا، لكن قرار اللجنة لا يقلل من إمكاناتك أو من قيمة ما قدمته. نتمنى لك التوفيق، ويسعدنا أن نراك تتقدم مرة أخرى في فرص قادمة. 💛`;
+      ? isCommitteeDecision
+        ? `يسعدنا إبلاغك بأنه تم قبولك في لجنة ${targetName}${committeeRoleDescriptor}! 🎈\n\nسعداء بانضمامك إلى مجموعتنا، ونؤمن بأن شغفك وأفكارك ستكون إضافة مميزة للجنة، ونتطلع إلى ما ستقدّمه من إبداع، وإلى ما سنحققه معًا من خطوات وإنجازات مميزة 💡🚀!`
+        : `يسعدنا إبلاغك بأنه تم قبولك كـ ${targetName}! 🎈\n\nسعداء بانضمامك إلى مجموعتنا، ونؤمن بأن شغفك وأفكارك ستكون إضافة مميزة لفريقنا، ونتطلع إلى ما ستقدّمه من إبداع، وإلى ما سنحققه معًا من خطوات وإنجازات مميزة 💡🚀!`
+      : isCommitteeDecision
+        ? `نشكر لك اهتمامك بالتقديم إلى لجنة ${targetName}${committeeRoleDescriptor}، ونقدّر الوقت والجهد اللذين بذلتهما في طلبك.\n\nنأسف لإبلاغك بأنه لم يقع عليك الاختيار هذه المرة. نعرف أن هذا الخبر قد يكون محبطًا، لكن قرار اللجنة لا يقلل من إمكاناتك أو من قيمة ما قدمته. نتمنى لك التوفيق، ويسعدنا أن نراك تتقدم مرة أخرى في فرص قادمة. 💛`
+        : `نشكر لك اهتمامك بالتقديم لدور ${targetName}، ونقدّر الوقت والجهد اللذين بذلتهما في طلبك.\n\nنأسف لإبلاغك بأنه لم يقع عليك الاختيار هذه المرة. نعرف أن هذا الخبر قد يكون محبطًا، لكن القرار لا يقلل من إمكاناتك أو من قيمة ما قدمته. نتمنى لك التوفيق، ويسعدنا أن نراك تتقدم مرة أخرى في فرص قادمة. 💛`;
 
     const text = [
       greeting,
