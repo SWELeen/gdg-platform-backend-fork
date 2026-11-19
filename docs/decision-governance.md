@@ -53,6 +53,15 @@ Each new decision should record: date, owner/approver, status, context, decision
 - Production requires verified card mappings, scoped credentials and activation of the guest relay. For confirmed guests, Wallet publishes the temporary pass and GDG emails its link and attendance QR using its existing mail service. GDG retains the recipient address and tracks delivery.
 - The signing worker runs as a private process in the owner's existing CranL app. It uses durable private storage and scoped publication credentials. The GDG backend uses separate credentials for approved member updates and guest requests.
 
+## 2026-11-19 Event attendance QR for all attendees
+
+- Owner/approver: project user in this chat.
+- Status: approved; supersedes the 2026-11-06 event-attendance decision that active members use their membership-card barcode for event check-in.
+- Decision: every attendee, including an active group member, receives a registration-specific attendance QR after confirming a seat. Show that QR on the attendee's registration page and send it in the confirmation email. PR staff use the same QR check-in flow for all attendees. Do not rely on membership Wallet cards for event attendance. Preserve legacy membership-barcode acceptance for already-confirmed historical registrations during transition.
+- Affected repositories: frontend and backend.
+- Migration/rollback: no schema change or production migration is required. Existing stored registration tokens and historical card registrations remain readable; application rollback returns newly confirmed members to the former membership-card behavior.
+- Source: explicit user instruction in the current chat on 2026-11-19.
+
 ## Legacy-source clarification
 
 Web Doc Final describes some Next.js full-stack capabilities, including Server Actions. For this platform's backend responsibilities, that guidance is superseded by the approved separate-repository architecture: Next.js is frontend only and NestJS is authoritative.

@@ -278,12 +278,10 @@ export class EventRegistrationService {
       const confirmedAt = new Date();
       if (!event.published) throw registrationClosed();
       if (event.startsAt <= confirmedAt) throw eventStarted();
-      const member = await tx.member.findUnique({
-        where: { personId },
-        select: { isActive: true },
-      });
-      const attendanceMethod = member?.isActive ? AttendanceMethod.MEMBER_CARD : AttendanceMethod.GUEST_QR;
-      const issued = attendanceMethod === AttendanceMethod.GUEST_QR ? this.tokens.issue() : null;
+      // Attendance is event-specific: every confirmed attendee gets a QR,
+      // regardless of whether they are an active group member.
+      const attendanceMethod = AttendanceMethod.GUEST_QR;
+      const issued = this.tokens.issue();
       const { count } = await tx.eventRegistration.updateMany({
         where: {
           registrationId,
@@ -299,7 +297,7 @@ export class EventRegistrationService {
         },
       });
       if (count === 0) throw this.cannotRespond(registration);
-      if (issued) await tx.registrationEmailDelivery.create({ data: { registrationId, kind: 'CONFIRMED' } });
+      await tx.registrationEmailDelivery.create({ data: { registrationId, kind: 'CONFIRMED' } });
       return { confirmedAt, attendanceMethod, issued };
     });
 

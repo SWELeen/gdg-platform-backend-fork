@@ -11,21 +11,21 @@ paths:
       summary: Confirm the signed-in attendee's offered seat
       responses:
         '200':
-          description: Confirmation. A member receives MEMBER_CARD and a null QR. A guest receives GUEST_QR, a token and a PNG data URL.
+          description: Confirmation issues a registration-specific attendance QR to every attendee, including active members. The response includes the GUEST_QR method, token and PNG data URL.
           content:
             application/json:
               schema:
                 properties:
                   data:
                     type: object
-                    required: [registrationId, status, confirmedAt, attendanceMethod, attendanceQrCodeDataUrl]
+                    required: [registrationId, status, confirmedAt, attendanceMethod, attendanceToken, attendanceQrCodeDataUrl]
                     properties:
                       registrationId: { type: integer }
                       status: { const: CONFIRMED }
                       confirmedAt: { type: string, format: date-time }
                       attendanceMethod: { $ref: '#/components/schemas/AttendanceMethod' }
                       attendanceToken: { type: string }
-                      attendanceQrCodeDataUrl: { type: [string, 'null'] }
+                      attendanceQrCodeDataUrl: { type: string, format: uri }
         '403': { description: Registration belongs to another account. }
         '409': { description: Seat is unavailable, expired, or the event has started. }
   /events/{eventId}/check-in:
@@ -36,7 +36,7 @@ paths:
         schema: { type: integer }
     post:
       security: [{ accessCookie: [] }]
-      summary: Check in with a guest QR or a verified active membership-card barcode
+      summary: Check in an attendee with their registration-specific attendance QR
       requestBody:
         required: true
         content:

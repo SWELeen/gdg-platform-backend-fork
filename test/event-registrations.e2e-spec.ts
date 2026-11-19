@@ -705,35 +705,25 @@ describe('POST /events/:eventId/check-in', () => {
     });
   });
 
-  it('confirms a member without a workshop QR and checks two linked card codes in only once', async () => {
+  it('confirms a member with an event QR and checks in through the shared QR flow', async () => {
     const event = await createEvent();
     const personId = await createPerson();
-    const member = await prisma.member.create({ data: { personId } });
-    const codes = [`GDG-UJ:MEMBER:${randomUUID()}`, `gdg:${randomUUID()}`];
-    for (const token of codes) {
-      await prisma.walletMembershipLink.create({
-        data: {
-          walletPublicId: randomUUID(),
-          memberId: member.memberId,
-          barcodeAliases: {
-            create: {
-              barcodeHash: createHash('sha256').update(token).digest('hex'),
-            },
-          },
-        },
-      });
-    }
+    await prisma.member.create({ data: { personId } });
     const registrationId = await registerVia(event.eventId, personId);
     await review.review(registrationId, 'ACCEPT', prMemberId);
     const confirmed = await as(personId)
       .post(`/registrations/${registrationId}/confirm`)
       .expect(200);
     expect(confirmed.body.data).toMatchObject({
-      attendanceMethod: 'MEMBER_CARD',
-      attendanceQrCodeDataUrl: null,
+      attendanceMethod: 'GUEST_QR',
+      attendanceQrCodeDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
     });
-    expect(confirmed.body.data).not.toHaveProperty('attendanceToken');
-    expect((await statusOf(registrationId)).attendanceTokenHash).toBeNull();
+    const token = confirmed.body.data.attendanceToken as string;
+    expect(token).toBeTruthy();
+    expect((await statusOf(registrationId)).attendanceTokenHash).not.toBeNull();
+    expect(await prisma.registrationEmailDelivery.findFirst({
+      where: { registrationId, kind: 'CONFIRMED', state: 'PENDING' },
+    })).not.toBeNull();
 
     const startsAt = new Date(Date.now() + 30 * 60_000);
     await prisma.event.update({
@@ -741,13 +731,9 @@ describe('POST /events/:eventId/check-in', () => {
       data: { registrationDeadline: startsAt, startsAt },
     });
     const path = `/events/${event.eventId}/check-in`;
-    const results = await Promise.all(
-      codes.map((token) => asPrStaff().post(path).send({ token })),
-    );
-    expect(results.map(({ status }) => status).sort()).toEqual([200, 409]);
-    expect(results.find(({ status }) => status === 409)?.body.error.code).toBe(
-      'ALREADY_CHECKED_IN',
-    );
+    const result = await asPrStaff().post(path).send({ token }).expect(200);
+    expect(result.body.data).toMatchObject({ registrationId, name: 'Guest' });
+    await asPrStaff().post(path).send({ token }).expect(409);
   });
 
   it('requeues only the failed email without creating a second decision or attendance QR', async () => {
