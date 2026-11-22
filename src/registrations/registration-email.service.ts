@@ -135,7 +135,6 @@ export class RegistrationEmailService {
       email.kind === 'CONFIRMED'
         ? 'Your attendance QR code is attached. Show it to the PR team at the event entrance.'
         : '',
-      email.walletUrl ? `Add to Apple Wallet: ${email.walletUrl}` : '',
       '',
       'GDG on Campus - University of Jeddah',
     ]
@@ -144,10 +143,7 @@ export class RegistrationEmailService {
     const responseLink = requiresResponse
       ? `<a href="${escapeHtml(eventUrl)}">Open your event registration</a>`
       : '';
-    const walletLink = email.walletUrl
-      ? `<p><a style="display:inline-block;background:#202124;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none" href="${escapeHtml(email.walletUrl)}">Add to Apple Wallet</a></p>`
-      : '';
-    const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#202124;line-height:1.6"><h2>${escapeHtml(subject)}</h2><p>${escapeHtml(message)}</p>${details.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}${qrHtml}${walletLink}<p>${responseLink}</p><p>GDG on Campus - University of Jeddah</p></body></html>`;
+    const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#202124;line-height:1.6"><h2>${escapeHtml(subject)}</h2><p>${escapeHtml(message)}</p>${details.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}${qrHtml}<p>${responseLink}</p><p>GDG on Campus - University of Jeddah</p></body></html>`;
     await this.smtp.sendMail({
       from,
       to: email.to,
