@@ -8,7 +8,7 @@ import {
 import { SmtpEmailService } from '../common/email/smtp-email.service.js';
 
 export type RegistrationEmailKind =
-  'ACCEPTED' | 'REJECTED' | 'PROMOTED' | 'CONFIRMED';
+  'ACCEPTED' | 'REJECTED' | 'WAITLISTED' | 'PROMOTED' | 'CONFIRMED';
 
 export interface RegistrationEmail {
   kind: RegistrationEmailKind;
@@ -22,7 +22,9 @@ export interface RegistrationEmail {
   attendanceQrCodeDataUrl?: string;
   walletUrl?: string;
   eventStartsAt?: Date;
+  eventType?: string | null;
   eventLocation?: string | null;
+  eventMapsLink?: string | null;
 }
 
 function escapeHtml(value: string): string {
@@ -39,12 +41,37 @@ function escapeHtml(value: string): string {
   );
 }
 
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat('en', {
+function formatDate(date: Date, locale: 'en' | 'ar'): string {
+  return new Intl.DateTimeFormat(locale === 'ar' ? 'ar-SA' : 'en', {
     dateStyle: 'full',
     timeStyle: 'short',
     timeZone: 'Asia/Riyadh',
   }).format(date);
+}
+
+const EVENT_TYPE_LABELS: Record<string, { ar: string; en: string }> = {
+  Workshop: { ar: 'ورشة عمل', en: 'Workshop' },
+  Conference: { ar: 'مؤتمر', en: 'Conference' },
+  Talk: { ar: 'محاضرة', en: 'Talk' },
+  Panel: { ar: 'جلسة حوارية', en: 'Panel' },
+  Hackathon: { ar: 'هاكاثون', en: 'Hackathon' },
+  Trip: { ar: 'رحلة', en: 'Trip' },
+};
+
+function eventTypeLabel(
+  type: string | null | undefined,
+  locale: 'ar' | 'en',
+): string | null {
+  return type ? EVENT_TYPE_LABELS[type]?.[locale] ?? type : null;
+}
+
+function eventDisplayName(
+  name: string,
+  type: string | null | undefined,
+  locale: 'ar' | 'en',
+): string {
+  const label = eventTypeLabel(type, locale);
+  return label ? `${label} «${name}»` : name;
 }
 
 @Injectable()
@@ -77,15 +104,32 @@ export class RegistrationEmailService {
     const frontendUrl =
       this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
     const eventUrl = new URL('/en/registrations', frontendUrl).toString();
-    const details = [
+    const eventNameAr = eventDisplayName(email.eventName, email.eventType, 'ar');
+    const eventNameEn = eventDisplayName(email.eventName, email.eventType, 'en');
+    const detailLines = (locale: 'ar' | 'en') => [
       email.confirmationDeadline
-        ? `Confirm your place by ${formatDate(email.confirmationDeadline)}.`
+        ? locale === 'ar'
+          ? `آخر موعد لتأكيد الحضور: ${formatDate(email.confirmationDeadline, locale)}`
+          : `Attendance confirmation deadline: ${formatDate(email.confirmationDeadline, locale)}`
         : '',
       email.eventStartsAt
-        ? `Event date: ${formatDate(email.eventStartsAt)}.`
+          ? locale === 'ar'
+          ? `${email.eventType ? `موعد ${eventTypeLabel(email.eventType, locale)}` : 'الموعد'}: ${formatDate(email.eventStartsAt, locale)}`
+          : `${eventTypeLabel(email.eventType, locale) ? `${eventTypeLabel(email.eventType, locale)} date` : 'Date'}: ${formatDate(email.eventStartsAt, locale)}`
         : '',
-      email.eventLocation ? `Location: ${email.eventLocation}.` : '',
+      email.eventLocation
+        ? locale === 'ar'
+          ? `الموقع: ${email.eventLocation}`
+          : `Location: ${email.eventLocation}`
+        : '',
+      email.eventMapsLink
+        ? locale === 'ar'
+          ? `رابط الموقع: ${email.eventMapsLink}`
+          : `Location link: ${email.eventMapsLink}`
+        : '',
     ].filter(Boolean);
+    const detailsAr = detailLines('ar');
+    const detailsEn = detailLines('en');
     const attachments: {
       filename: string;
       content: Buffer;
@@ -105,45 +149,65 @@ export class RegistrationEmailService {
         cid: 'event-attendance-qr',
       });
       qrHtml =
-        '<p><img src="cid:event-attendance-qr" alt="Event attendance QR code" width="240" height="240"></p><p>The QR code is also attached as a PNG file. Show it to the PR team at the event entrance.</p>';
+        '<p style="text-align:center"><img src="cid:event-attendance-qr" alt="Event attendance QR code / رمز QR للحضور" width="240" height="240"></p>';
     }
 
     const requiresResponse =
       (email.kind === 'ACCEPTED' || email.kind === 'PROMOTED') && !!email.confirmationDeadline;
-    const subject =
+    const hasRegistrationLink = requiresResponse || email.kind === 'WAITLISTED';
+    const subjectAr =
       email.kind === 'REJECTED'
-        ? `Update on your registration: ${email.eventName}`
+        ? `بخصوص طلب تسجيلك في ${eventNameAr}`
+        : email.kind === 'WAITLISTED'
+          ? `تمت إضافتك إلى قائمة الانتظار لـ${eventNameAr}`
+        : email.kind === 'PROMOTED'
+          ? `هناك مقعد متاح لك في ${eventNameAr}، أكّد حضورك`
         : requiresResponse
-          ? `You have a place at ${email.eventName} - please confirm`
-          : `Your attendance is confirmed: ${email.eventName}`;
-    const message =
+          ? `مُبارك قبولك في ${eventNameAr}، أكّد حضورك`
+          : `تم تأكيد حضورك في ${eventNameAr}! ✨`;
+    const subjectEn = email.kind === 'REJECTED'
+      ? `Regarding Your Registration for ${eventNameEn}`
+      : email.kind === 'WAITLISTED'
+        ? `You’re on the Waitlist for ${eventNameEn}`
+      : email.kind === 'PROMOTED'
+        ? `A Place Is Available for ${eventNameEn} – Confirm Your Attendance`
+      : requiresResponse
+        ? `Congratulations on Your Acceptance to ${eventNameEn} — Confirm Your Attendance`
+        : `Your Attendance Is Confirmed: ${eventNameEn} ✨`;
+    const subject = `${subjectAr} | ${subjectEn}`;
+    const messageAr =
       email.kind === 'REJECTED'
-        ? `Your registration for ${email.eventName} was not accepted this time.`
+        ? `نؤمن بأن لكل موهبة فرصة تستحقها، ونقدّر شغفك وحرصك على تطوير مهاراتك. نعتذر عن عدم قبول تسجيلك في ${eventNameAr} نظرًا لمحدودية المقاعد المتاحة. نتطلع إلى لقائك في محطات آفاق القادمة، فطموحك يفتح آفاقًا جديدة! ✨`
+        : email.kind === 'WAITLISTED'
+          ? `تمت إضافتك إلى قائمة الانتظار لـ${eventNameAr} ضمن محطات آفاق مجموعة مطوّري جوجل بجامعة جدة. سنرسل إليك رسالة إذا توفر مقعد، ونرجو متابعة بريدك الإلكتروني لمعرفة أي تحديثات.`
         : email.kind === 'CONFIRMED'
-          ? `Your attendance for ${email.eventName} is confirmed. Your QR code is below and attached.`
-          : !requiresResponse
-            ? `Good news, ${email.recipientName}: your place at ${email.eventName} is confirmed. Use your membership card at check-in.`
-            : email.kind === 'PROMOTED'
-            ? `Good news, ${email.recipientName}: a place has become available for ${email.eventName}. Confirm it before the deadline.`
-            : `Good news, ${email.recipientName}: your registration for ${email.eventName} has been accepted. Please confirm your place before the deadline.`;
+          ? `يُسعدنا تأكيد حجز مقعدك في ${eventNameAr}، ضمن محطات آفاق مجموعة مطوّري جوجل بجامعة جدة! ✨ أصبح مقعدك مؤكدًا، ونترقّب مشاركتك معنا في هذه التجربة 🎈`
+          : email.kind === 'PROMOTED'
+            ? `أصبح هناك مقعد متاح لك في ${eventNameAr} ضمن محطات آفاق مجموعة مطوّري جوجل بجامعة جدة! ✨ نرجو تأكيد حضورك قبل انتهاء المهلة المحددة لضمان مقعدك.`
+            : `يُسعدنا إبلاغك بقبولك في ${eventNameAr}، ضمن محطات آفاق مجموعة مطوّري جوجل بجامعة جدة! ✨ نترقّب مشاركتك معنا، ونرجو تأكيد حضورك قبل انتهاء المهلة المحددة لضمان مقعدك!`;
+    const messageEn = email.kind === 'REJECTED'
+      ? `We believe every talent deserves an opportunity, and we truly appreciate your enthusiasm and dedication to developing your skills. Unfortunately, your registration for ${eventNameEn} was not accepted due to limited seat availability. We look forward to seeing you at upcoming Afaq events. Your ambition opens new horizons! ✨`
+      : email.kind === 'WAITLISTED'
+        ? `You have been added to the waitlist for ${eventNameEn}, part of the Afaq series by Google Developer Group on Campus, University of Jeddah. We’ll email you if a place becomes available. Please keep an eye on your inbox for updates.`
+      : email.kind === 'CONFIRMED'
+        ? `We’re pleased to confirm your place at ${eventNameEn}, part of the Afaq series by Google Developer Group on Campus, University of Jeddah! ✨ Your seat is secured, and we look forward to having you with us. 🎈`
+        : email.kind === 'PROMOTED'
+          ? `A place has become available for you at ${eventNameEn}, part of the Afaq series by Google Developer Group on Campus, University of Jeddah! ✨ Please confirm your attendance before the deadline to secure your place.`
+          : `We’re pleased to inform you that your application to attend ${eventNameEn}, part of the Afaq series by Google Developer Group on Campus, University of Jeddah, has been accepted! ✨ Please confirm your attendance before the deadline to secure your place.`;
+    const signoffAr = 'مع خالص التمنيات بالتوفيق،\nمجموعة مطوّري جوجل بجامعة جدة';
+    const signoffEn = 'Best regards,\nGoogle Developer Group on Campus, University of Jeddah';
     const text = [
-      message,
-      ...details,
-      requiresResponse
-        ? `Open your event registration to confirm or decline: ${eventUrl}`
-        : '',
-      email.kind === 'CONFIRMED'
-        ? 'Your attendance QR code is attached. Show it to the PR team at the event entrance.'
-        : '',
-      '',
-      'GDG on Campus - University of Jeddah',
-    ]
-      .filter(Boolean)
-      .join('\n');
-    const responseLink = requiresResponse
-      ? `<a href="${escapeHtml(eventUrl)}">Open your event registration</a>`
-      : '';
-    const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#202124;line-height:1.6"><h2>${escapeHtml(subject)}</h2><p>${escapeHtml(message)}</p>${details.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}${qrHtml}<p>${responseLink}</p><p>GDG on Campus - University of Jeddah</p></body></html>`;
+      subjectAr, '', messageAr, ...detailsAr,
+      ...(hasRegistrationLink ? [`${email.kind === 'WAITLISTED' ? 'متابعة حالة التسجيل' : 'تأكيد الحضور'}: ${eventUrl}`] : []),
+      ...(email.kind === 'CONFIRMED' ? ['يرجى إبراز الباركود الخاص بك عند الوصول لتسجيل حضورك.'] : []),
+      '', signoffAr, '', '---', '', subjectEn, '', messageEn, ...detailsEn,
+      ...(hasRegistrationLink ? [`${email.kind === 'WAITLISTED' ? 'View registration status' : 'Confirm attendance'}: ${eventUrl}`] : []),
+      ...(email.kind === 'CONFIRMED' ? ['Please present your QR code on arrival to check in.'] : []),
+      '', signoffEn,
+    ].join('\n');
+    const registrationLink = (label: string) => `<p><a href="${escapeHtml(eventUrl)}">${label}</a></p>`;
+    const section = (locale: 'ar' | 'en', title: string, message: string, details: string[], signoff: string) => `<section dir="${locale === 'ar' ? 'rtl' : 'ltr'}" style="text-align:${locale === 'ar' ? 'right' : 'left'}"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p>${details.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}${locale === 'ar' && email.kind === 'CONFIRMED' ? '<p>يرجى إبراز الباركود الخاص بك عند الوصول لتسجيل حضورك.</p>' : ''}${locale === 'en' && email.kind === 'CONFIRMED' ? '<p>Please present your QR code on arrival to check in.</p>' : ''}${hasRegistrationLink && locale === 'ar' ? registrationLink(email.kind === 'WAITLISTED' ? 'متابعة حالة التسجيل' : 'تأكيد الحضور') : ''}${hasRegistrationLink && locale === 'en' ? registrationLink(email.kind === 'WAITLISTED' ? 'View registration status' : 'Confirm attendance') : ''}<p>${escapeHtml(signoff).replace(/\n/g, '<br>')}</p></section>`;
+    const html = `<!doctype html><html lang="ar" dir="rtl"><body style="font-family:Arial,Tahoma,sans-serif;color:#202124;line-height:1.8"><main style="max-width:600px;margin:auto;padding:24px">${section('ar', subjectAr, messageAr, detailsAr, signoffAr)}<hr style="border:0;border-top:1px solid #dadce0;margin:28px 0">${section('en', subjectEn, messageEn, detailsEn, signoffEn)}${qrHtml}</main></body></html>`;
     await this.smtp.sendMail({
       from,
       to: email.to,

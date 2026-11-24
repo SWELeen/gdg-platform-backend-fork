@@ -26,7 +26,11 @@ describe('auth email rendering', () => {
         expect(result.html).toContain('name="color-scheme"');
         expect(result.html).toContain('v:roundrect');
         expect(result.html).toContain('max-width:600px');
-        expect(result.html.match(/class="cta"/g)).toHaveLength(1);
+        expect(result.html.match(/class="cta"/g)).toHaveLength(2);
+        expect(result.html).toContain('dir="rtl"');
+        expect(result.html).toContain('dir="ltr"');
+        expect(result.text).toContain('Verify my email');
+        expect(result.text).toContain('تأكيد بريدي الإلكتروني');
         expect(result.html).not.toMatch(/data:image|<script|<svg/);
         expect(Buffer.byteLength(result.html)).toBeLessThan(100_000);
         expect(result.text).toContain(EMAIL_BRAND.linkedin);

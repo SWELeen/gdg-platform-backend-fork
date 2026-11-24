@@ -180,9 +180,11 @@ export class RegistrationEmailDeliveryService {
               event: {
                 select: {
                   name: true,
+                  eventType: true,
                   startsAt: true,
                   endsAt: true,
                   location: true,
+                  mapsLink: true,
                   status: true,
                 },
               },
@@ -209,6 +211,8 @@ export class RegistrationEmailDeliveryService {
     if (!person.isActive || event.status === 'CANCELLED') return false;
     if (kind === 'REJECTED') {
       if (status !== 'REJECTED') return false;
+    } else if (kind === 'WAITLISTED') {
+      if (status !== 'WAITLISTED' || event.startsAt <= new Date()) return false;
     } else {
       if (event.endsAt <= new Date()) return false;
       if (
@@ -236,8 +240,10 @@ export class RegistrationEmailDeliveryService {
       to,
       recipientName: person.fullName,
       eventName: event.name,
+      eventType: event.eventType,
       eventStartsAt: event.startsAt,
       eventLocation: event.location,
+      eventMapsLink: event.mapsLink,
       confirmationDeadline: offered
         ? (registration.confirmationDeadline ?? undefined)
         : undefined,

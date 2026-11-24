@@ -1,0 +1,1 @@
+ALTER TYPE "RegistrationEmailKind" ADD VALUE 'WAITLISTED';

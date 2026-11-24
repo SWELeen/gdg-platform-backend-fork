@@ -25,6 +25,7 @@ import {
   invalidStatusTransition,
   registrationForbidden,
   registrationNotFound,
+  waitlistOrderImmutable,
 } from './registration-errors.js';
 
 export type ReviewDecision = 'ACCEPT' | 'REJECT';
@@ -134,6 +135,19 @@ export class RegistrationReviewService {
         throw invalidStatusTransition();
       }
 
+      const currentWaitlist = await tx.eventRegistration.findMany({
+        where: { eventId, status: RegistrationStatus.WAITLISTED },
+        orderBy: { waitlistPosition: 'asc' },
+        select: { registrationId: true },
+      });
+      if (
+        currentWaitlist.some(
+          (row, index) => registrationIds[index] !== row.registrationId,
+        )
+      ) {
+        throw waitlistOrderImmutable();
+      }
+
       await tx.eventRegistration.updateMany({
         where: {
           eventId,
@@ -156,6 +170,11 @@ export class RegistrationReviewService {
             ...(wasPending ? { reviewedByMemberId: actorMemberId } : {}),
           },
         });
+        if (wasPending) {
+          await tx.registrationEmailDelivery.create({
+            data: { registrationId, kind: 'WAITLISTED' },
+          });
+        }
       }
 
       return registrationIds.map((registrationId, index) => ({

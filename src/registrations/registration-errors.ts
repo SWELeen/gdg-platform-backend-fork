@@ -27,6 +27,13 @@ export function invalidStatusTransition(): ConflictException {
   );
 }
 
+export function waitlistOrderImmutable(): ConflictException {
+  return new ConflictException(
+    'The existing waitlist order cannot be changed. New applicants can only be added to the end.',
+    { errorCode: 'WAITLIST_ORDER_IMMUTABLE' },
+  );
+}
+
 export function registrationNotFound(): NotFoundException {
   return new NotFoundException('The registration was not found.', {
     errorCode: 'REGISTRATION_NOT_FOUND',

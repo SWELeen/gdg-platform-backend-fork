@@ -39,6 +39,7 @@ enum AttendanceMethod {
 enum RegistrationEmailKind {
   ACCEPTED
   REJECTED
+  WAITLISTED
   PROMOTED
   CONFIRMED
 }
