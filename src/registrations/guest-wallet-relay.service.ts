@@ -216,6 +216,6 @@ export class GuestWalletRelayService {
         walletUrl.search || walletUrl.hash || !/^\/m\/[A-Za-z0-9_-]{32,256}\/id\.pkpass$/.test(walletUrl.pathname)) {
       throw new Error('Unexpected guest card URL');
     }
-    await this.delivery.deliver(deliveryId, walletUrl.toString());
+    await this.delivery.deliver(deliveryId);
   }
 }

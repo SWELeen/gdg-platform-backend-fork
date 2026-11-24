@@ -1,5 +1,4 @@
 import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { AttendanceTokenService } from '../event-registrations/attendance-token.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -12,11 +11,6 @@ import {
   registrationForbidden,
   registrationNotFound,
 } from './registration-errors.js';
-import {
-  guestWalletRelayScope,
-  guestWalletScope,
-} from './guest-wallet-scope.js';
-import type { Prisma } from '../generated/prisma/client.js';
 
 @Injectable()
 export class RegistrationEmailDeliveryService {
@@ -30,7 +24,6 @@ export class RegistrationEmailDeliveryService {
     private readonly tokens: AttendanceTokenService,
     @Inject(CommitteeAccessService)
     private readonly access: CommitteeAccessService,
-    @Inject(ConfigService) private readonly config: ConfigService,
   ) {}
 
   async retry(registrationId: number, actorMemberId: number) {
@@ -47,39 +40,17 @@ export class RegistrationEmailDeliveryService {
       select: {
         id: true,
         kind: true,
-        registration: {
-          select: {
-            attendanceMethod: true,
-            event: {
-              select: { committee: { select: { committeeCode: true } } },
-            },
-          },
-        },
       },
     });
     if (!delivery) throw registrationNotFound();
-    const relay = guestWalletRelayScope(this.config);
-    const newAttempt =
-      relay &&
-      delivery.kind === 'CONFIRMED' &&
-      delivery.registration.attendanceMethod === 'GUEST_QR' &&
-      relay.committeeCodes.includes(
-        delivery.registration.event.committee.committeeCode,
-      );
-    await this.prisma.$transaction(async (tx) => {
-      const { count } = await tx.registrationEmailDelivery.updateMany({
-        where: { id: delivery.id, state: 'FAILED' },
-        data: { state: newAttempt ? 'SKIPPED' : 'PENDING' },
-      });
-      if (!count)
-        throw new ConflictException(
-          'Only a failed registration email can be retried.',
-        );
-      if (newAttempt)
-        await tx.registrationEmailDelivery.create({
-          data: { registrationId, kind: delivery.kind },
-        });
+    const { count } = await this.prisma.registrationEmailDelivery.updateMany({
+      where: { id: delivery.id, state: 'FAILED' },
+      data: { state: 'PENDING' },
     });
+    if (!count)
+      throw new ConflictException(
+        'Only a failed registration email can be retried.',
+      );
     return { emailState: 'PENDING' as const };
   }
 
@@ -94,45 +65,8 @@ export class RegistrationEmailDeliveryService {
       where: { state: 'SENDING', leaseExpiresAt: { lt: new Date() } },
       data: { state: 'FAILED', leaseExpiresAt: null },
     });
-    const scope =
-      guestWalletRelayScope(this.config) ?? guestWalletScope(this.config);
-    const walletDelivery:
-      Prisma.RegistrationEmailDeliveryWhereInput | undefined = scope
-      ? {
-          kind: 'CONFIRMED',
-          registration: {
-            attendanceMethod: 'GUEST_QR',
-            event: {
-              committee: { committeeCode: { in: scope.committeeCodes } },
-            },
-          },
-        }
-      : undefined;
-    if (walletDelivery) {
-      await this.prisma.registrationEmailDelivery.updateMany({
-        where: {
-          state: 'PENDING',
-          AND: [
-            walletDelivery,
-            {
-              registration: {
-                NOT: {
-                  status: 'CONFIRMED',
-                  person: { isActive: true },
-                  event: { status: 'PUBLISHED', endsAt: { gt: new Date() } },
-                },
-              },
-            },
-          ],
-        },
-        data: { state: 'SKIPPED' },
-      });
-    }
     const jobs = await this.prisma.registrationEmailDelivery.findMany({
-      where: {
-        state: 'PENDING',
-        ...(walletDelivery ? { NOT: walletDelivery } : {}),
-      },
+      where: { state: 'PENDING' },
       orderBy: { id: 'asc' },
       take: 10,
       select: { id: true },
@@ -141,7 +75,7 @@ export class RegistrationEmailDeliveryService {
     for (const { id } of jobs) await this.deliver(id);
   }
 
-  async deliver(id: number, walletUrl?: string) {
+  async deliver(id: number) {
     const leaseExpiresAt = new Date(Date.now() + 10 * 60_000);
     const { count } = await this.prisma.registrationEmailDelivery.updateMany({
       where: { id, state: 'PENDING' },
@@ -150,7 +84,7 @@ export class RegistrationEmailDeliveryService {
     if (!count) return;
     let state: 'SENT' | 'FAILED' | 'SKIPPED';
     try {
-      state = (await this.sendCurrent(id, walletUrl)) ? 'SENT' : 'SKIPPED';
+      state = (await this.sendCurrent(id)) ? 'SENT' : 'SKIPPED';
     } catch {
       this.logger.warn({
         event: 'registration_email_failed',
@@ -164,7 +98,7 @@ export class RegistrationEmailDeliveryService {
     });
   }
 
-  private async sendCurrent(id: number, walletUrl?: string) {
+  private async sendCurrent(id: number) {
     const { kind, registration } =
       await this.prisma.registrationEmailDelivery.findUniqueOrThrow({
         where: { id },
@@ -192,7 +126,6 @@ export class RegistrationEmailDeliveryService {
                 select: {
                   fullName: true,
                   emailPersonal: true,
-                  emailPersonalVerifiedAt: true,
                   emailUniversity: true,
                   isActive: true,
                 },
@@ -222,11 +155,7 @@ export class RegistrationEmailDeliveryService {
       )
         return false;
     }
-    if (walletUrl && (kind !== 'CONFIRMED' || attendanceMethod !== 'GUEST_QR' || event.status !== 'PUBLISHED'))
-      return false;
-    const to = walletUrl
-      ? person.emailPersonalVerifiedAt && person.emailPersonal
-      : person.emailPersonal ?? person.emailUniversity;
+    const to = person.emailPersonal ?? person.emailUniversity;
     if (!to) throw new Error('Missing recipient');
     const attendanceQrCodeDataUrl =
       kind === 'CONFIRMED' && registration.attendanceTokenEncrypted
@@ -248,7 +177,6 @@ export class RegistrationEmailDeliveryService {
         ? (registration.confirmationDeadline ?? undefined)
         : undefined,
       attendanceQrCodeDataUrl,
-      walletUrl,
     });
     return true;
   }

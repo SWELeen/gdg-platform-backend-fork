@@ -157,49 +157,13 @@ export class GuestWalletWorkerController {
   @Header('Cache-Control', 'no-store')
   async claim(
     @Headers('authorization') authorization: string | undefined,
-    @Param('id', ParseIntPipe) id: number,
-    @Body() issued: DeliveryClaim,
+    @Param('id', ParseIntPipe) _id: number,
+    @Body() _issued: DeliveryClaim,
   ) {
-    const scope = this.scope(authorization);
-    return this.prisma.$transaction(async (tx) => {
-      // Use the same event lock as schedule changes and confirmation. Recheck
-      // after acquiring it so an old build cannot claim delivery for a new time.
-      const target = await tx.eventRegistration.findFirst({
-        where: { ...scope, registrationId: id },
-        select: { eventId: true },
-      });
-      if (!target) throw new NotFoundException();
-      await tx.$queryRaw`SELECT event_id FROM events WHERE event_id = ${target.eventId} FOR UPDATE`;
-      const row = await this.find(id, scope, tx);
-      if (
-        !eligible(row) ||
-        row.event.startsAt.getTime() !== Date.parse(issued.startsAt) ||
-        row.event.endsAt.getTime() !== Date.parse(issued.endsAt)
-      )
-        throw new ConflictException();
-      const delivery = await tx.registrationEmailDelivery.findFirst({
-        where: { registrationId: id, kind: 'CONFIRMED' },
-        orderBy: { id: 'desc' },
-      });
-      if (!delivery || delivery.state !== 'PENDING') return { email: null };
-      if (!row.person.emailPersonal || !row.person.emailPersonalVerifiedAt) {
-        await tx.registrationEmailDelivery.updateMany({
-          where: { id: delivery.id, state: 'PENDING' },
-          data: { state: 'FAILED' },
-        });
-        return { email: null };
-      }
-      const leaseExpiresAt = new Date(Date.now() + 10 * 60_000);
-      const claimed = await tx.registrationEmailDelivery.updateMany({
-        where: { id: delivery.id, state: 'PENDING' },
-        data: { state: 'SENDING', leaseExpiresAt },
-      });
-      return {
-        email: claimed.count
-          ? { recipient: row.person.emailPersonal, lease: leaseExpiresAt }
-          : null,
-      };
-    });
+    this.scope(authorization);
+    // Confirmation emails are sent by the GDG backend with the inline QR.
+    // The legacy Wallet worker must not claim or suppress that email.
+    return { email: null };
   }
 
   @Post(':id/email/result')

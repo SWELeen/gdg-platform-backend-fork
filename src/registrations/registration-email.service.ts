@@ -20,7 +20,6 @@ export interface RegistrationEmail {
   confirmationDeadline?: Date;
   // Set for CONFIRMED: inline QR and a PNG attachment are sent to the member.
   attendanceQrCodeDataUrl?: string;
-  walletUrl?: string;
   eventStartsAt?: Date;
   eventType?: string | null;
   eventLocation?: string | null;
