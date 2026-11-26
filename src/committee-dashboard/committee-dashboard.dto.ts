@@ -281,6 +281,12 @@ export class CreateCommitteeEventDto {
   @MaxLength(500)
   mapsLink?: string;
 
+  @IsOptional()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  @Matches(/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]{8,128}\/?$/i)
+  @MaxLength(500)
+  whatsappGroupLink?: string;
+
   @IsInt()
   @Min(1)
   @Max(5000)
@@ -362,6 +368,12 @@ export class UpdateCommitteeEventDto {
   @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   @MaxLength(500)
   mapsLink?: string | null;
+
+  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @IsString()
+  @Matches(/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]{8,128}\/?$/i)
+  @MaxLength(500)
+  whatsappGroupLink?: string | null;
 
   @ValidateIf((_object, value) => value !== undefined)
   @IsString()

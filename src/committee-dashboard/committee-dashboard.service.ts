@@ -585,6 +585,7 @@ export class CommitteeDashboardService {
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
     const registrationDeadline = new Date(dto.registrationDeadline);
+    const whatsappGroupLink = dto.whatsappGroupLink?.trim() || null;
     const questions = (dto.questions ?? []).map((question) => ({
       ...question,
       text: question.text.trim(),
@@ -615,6 +616,7 @@ export class CommitteeDashboardService {
         registrationDeadline,
         location: dto.location.trim(),
         mapsLink: dto.mapsLink?.trim() || null,
+        whatsappGroupLink,
         capacity: dto.capacity,
         imageUrl: dto.imageUrl?.trim() || null,
         speakers: dto.speakers?.trim() || null,
@@ -656,6 +658,7 @@ export class CommitteeDashboardService {
       select: {
         eventId: true, name: true, description: true, eventType: true, status: true,
         startsAt: true, endsAt: true, registrationDeadline: true, location: true, mapsLink: true,
+        whatsappGroupLink: true,
         capacity: true, speakers: true, requirements: true, imageUrl: true, requiredRegistrantFields: true,
         questions: {
           orderBy: { position: 'asc' },
@@ -714,9 +717,11 @@ export class CommitteeDashboardService {
     const event = await this.prisma.$transaction(async (transaction) => {
       const [locked] = await transaction.$queryRaw<Array<{
         published: boolean; draft: boolean; startsAt: Date; endsAt: Date; registrationDeadline: Date;
+        eventType: string | null; whatsappGroupLink: string | null;
       }>>`
         SELECT status = 'published' AS published, status = 'draft' AS draft,
-               starts_at AS "startsAt", ends_at AS "endsAt", registration_deadline AS "registrationDeadline"
+               starts_at AS "startsAt", ends_at AS "endsAt", registration_deadline AS "registrationDeadline",
+               event_type AS "eventType", whatsapp_group_link AS "whatsappGroupLink"
         FROM events
         WHERE event_id = ${eventId} AND committee_id = ${committee.committeeId}
         FOR UPDATE
@@ -727,6 +732,10 @@ export class CommitteeDashboardService {
       const endsAt = dto.endsAt === undefined ? locked.endsAt : new Date(dto.endsAt);
       const registrationDeadline = dto.registrationDeadline === undefined
         ? locked.registrationDeadline : new Date(dto.registrationDeadline);
+      const nextEventType = dto.eventType ?? locked.eventType;
+      const nextWhatsappGroupLink = dto.whatsappGroupLink === undefined
+        ? locked.whatsappGroupLink
+        : dto.whatsappGroupLink?.trim() || null;
       const errors: ApiErrorDetail[] = [];
       if (endsAt <= startsAt) errors.push({ pointer: '/endsAt', message: 'The event must end after it starts.' });
       if (registrationDeadline > startsAt) errors.push({ pointer: '/registrationDeadline', message: 'Registration must close before the event starts.' });
@@ -772,6 +781,7 @@ export class CommitteeDashboardService {
           ...(dto.location !== undefined ? { location: dto.location.trim() } : {}),
           ...(dto.capacity !== undefined ? { capacity: dto.capacity } : {}),
           ...(dto.mapsLink !== undefined ? { mapsLink: dto.mapsLink?.trim() || null } : {}),
+          ...(dto.whatsappGroupLink !== undefined ? { whatsappGroupLink: dto.whatsappGroupLink?.trim() || null } : {}),
           ...(dto.speakers !== undefined ? { speakers: dto.speakers.trim() || null } : {}),
           ...(dto.requirements !== undefined ? { requirements: dto.requirements.trim() || null } : {}),
           ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl?.trim() || null } : {}),

@@ -568,6 +568,7 @@ model Event {
   eventType               String?     @map("event_type") @db.VarChar(30)
   speakers                String?     @db.Text
   mapsLink                String?     @map("maps_link") @db.VarChar(500)
+  whatsappGroupLink       String?     @map("whatsapp_group_link") @db.VarChar(500)
   requiredRegistrantFields String[]   @default([]) @map("required_registrant_fields")
   status                  EventStatus @default(DRAFT)
   createdByMemberId       Int?        @map("created_by_member_id")

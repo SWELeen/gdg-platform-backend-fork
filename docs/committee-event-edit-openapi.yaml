@@ -2,10 +2,46 @@
 info:
   title: GDG Main Platform Committee Event Editing API
   version: 1.0.0
-  description: Contract for updating committee event details from the committee dashboard.
+  description: Contract for creating and updating committee event details from the committee dashboard.
 servers:
   - url: http://localhost:3001
 paths:
+  /committees/{committeeCode}/events:
+    post:
+      operationId: createCommitteeEvent
+      summary: Create a committee event
+      description: >-
+        Creates an event for an authorized committee member. An optional WhatsApp group invite is stored as
+        restricted event data and included only in the confirmation email sent after an attendee confirms
+        their accepted seat. If omitted, the usual confirmation email is sent without the invite. It is not
+        returned in public event representations.
+      security:
+        - accessCookie: []
+      parameters:
+        - name: committeeCode
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommitteeEventRequest'
+      responses:
+        '201':
+          description: Event created.
+        '400':
+          description: Invalid event details or WhatsApp group invite URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFailure'
+        '401':
+          description: Authentication required.
+        '403':
+          description: Event creation permission is required.
   /committees/{committeeCode}/events/images:
     post:
       operationId: uploadCommitteeEventImage
@@ -185,7 +221,7 @@ components:
           maxLength: 5000
         eventType:
           type: string
-          enum: [Workshop, Conference, Talk, Panel, Hackathon]
+          enum: [Workshop, Conference, Talk, Panel, Hackathon, Trip]
         startsAt:
           type: string
           format: date-time
@@ -207,6 +243,11 @@ components:
           type: [string, 'null']
           maxLength: 500
           format: uri
+        whatsappGroupLink:
+          type: [string, 'null']
+          maxLength: 500
+          pattern: '^https://chat\.whatsapp\.com/[A-Za-z0-9_-]{8,128}/?$'
+          description: Restricted group invite URL. Only authorized committee event managers can read/update it.
         speakers:
           type: string
           maxLength: 2000
@@ -222,6 +263,70 @@ components:
           maxItems: 50
           items:
             $ref: '#/components/schemas/EventQuestion'
+    CreateCommitteeEventRequest:
+      type: object
+      additionalProperties: false
+      required: [name, description, eventType, startsAt, endsAt, registrationDeadline, location, capacity, status]
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 150
+        description:
+          type: string
+          maxLength: 5000
+        eventType:
+          type: string
+          enum: [Workshop, Conference, Talk, Panel, Hackathon, Trip]
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        registrationDeadline:
+          type: string
+          format: date-time
+        location:
+          type: string
+          minLength: 3
+          maxLength: 120
+        mapsLink:
+          type: string
+          maxLength: 500
+          format: uri
+        whatsappGroupLink:
+          type: string
+          maxLength: 500
+          pattern: '^https://chat\.whatsapp\.com/[A-Za-z0-9_-]{8,128}/?$'
+          description: Required for Trip. Never returned by public event APIs; emailed only after seat confirmation.
+        imageUrl:
+          type: string
+          maxLength: 2000
+          format: uri
+        speakers:
+          type: string
+          maxLength: 2000
+        requirements:
+          type: string
+          maxLength: 5000
+        requiredRegistrantFields:
+          type: array
+          items:
+            type: string
+            enum: [fullName, college, major, phone, email, membership]
+        questions:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/EventQuestion'
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 5000
+        status:
+          type: string
+          enum: [PUBLISHED, DRAFT]
     EventQuestion:
       type: object
       additionalProperties: false

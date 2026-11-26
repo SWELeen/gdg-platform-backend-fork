@@ -119,6 +119,7 @@ export class RegistrationEmailDeliveryService {
                   endsAt: true,
                   location: true,
                   mapsLink: true,
+                  whatsappGroupLink: true,
                   status: true,
                 },
               },
@@ -177,6 +178,9 @@ export class RegistrationEmailDeliveryService {
         ? (registration.confirmationDeadline ?? undefined)
         : undefined,
       attendanceQrCodeDataUrl,
+      ...(kind === 'CONFIRMED' && event.eventType === 'Trip'
+        ? { whatsappGroupLink: event.whatsappGroupLink }
+        : {}),
     });
     return true;
   }
