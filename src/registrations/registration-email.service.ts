@@ -78,7 +78,7 @@ function safeWhatsAppGroupInvite(value: string | null | undefined): string | und
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    if (url.protocol !== 'https:' || url.hostname !== 'chat.whatsapp.com' || url.port || url.username || url.password || url.search || url.hash || !/^\/[A-Za-z0-9_-]{8,128}\/?$/.test(url.pathname)) return undefined;
+    if (url.protocol !== 'https:' || url.hostname !== 'chat.whatsapp.com' || url.port || url.username || url.password || url.hash || (url.search && !/^\?[A-Za-z0-9._~!$&()*+,;=:@\/?%-]{1,400}$/.test(url.search)) || !/^\/[A-Za-z0-9_-]{8,128}\/?$/.test(url.pathname)) return undefined;
     return url.toString();
   } catch {
     return undefined;

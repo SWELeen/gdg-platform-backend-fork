@@ -283,7 +283,7 @@ export class CreateCommitteeEventDto {
 
   @IsOptional()
   @IsUrl({ protocols: ['https'], require_protocol: true })
-  @Matches(/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]{8,128}\/?$/i)
+  @Matches(/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]{8,128}\/?(?:\?[A-Za-z0-9._~!$&()*+,;=:@\/?%-]{1,400})?$/i)
   @MaxLength(500)
   whatsappGroupLink?: string;
 
@@ -371,7 +371,7 @@ export class UpdateCommitteeEventDto {
 
   @ValidateIf((_object, value) => value !== undefined && value !== null)
   @IsString()
-  @Matches(/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]{8,128}\/?$/i)
+  @Matches(/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]{8,128}\/?(?:\?[A-Za-z0-9._~!$&()*+,;=:@\/?%-]{1,400})?$/i)
   @MaxLength(500)
   whatsappGroupLink?: string | null;
 

@@ -246,7 +246,7 @@ components:
         whatsappGroupLink:
           type: [string, 'null']
           maxLength: 500
-          pattern: '^https://chat\.whatsapp\.com/[A-Za-z0-9_-]{8,128}/?$'
+          pattern: '^https://chat\.whatsapp\.com/[A-Za-z0-9_-]{8,128}/?(\?[A-Za-z0-9._~!$&()*+,;=:@/?%-]{1,400})?$'
           description: Restricted group invite URL. Only authorized committee event managers can read/update it.
         speakers:
           type: string
@@ -298,7 +298,7 @@ components:
         whatsappGroupLink:
           type: string
           maxLength: 500
-          pattern: '^https://chat\.whatsapp\.com/[A-Za-z0-9_-]{8,128}/?$'
+          pattern: '^https://chat\.whatsapp\.com/[A-Za-z0-9_-]{8,128}/?(\?[A-Za-z0-9._~!$&()*+,;=:@/?%-]{1,400})?$'
           description: Required for Trip. Never returned by public event APIs; emailed only after seat confirmation.
         imageUrl:
           type: string
