@@ -178,7 +178,7 @@ export class RegistrationEmailDeliveryService {
         ? (registration.confirmationDeadline ?? undefined)
         : undefined,
       attendanceQrCodeDataUrl,
-      ...(kind === 'CONFIRMED' && event.eventType === 'Trip'
+      ...(kind === 'CONFIRMED'
         ? { whatsappGroupLink: event.whatsappGroupLink }
         : {}),
     });

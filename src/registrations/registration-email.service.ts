@@ -117,7 +117,7 @@ export class RegistrationEmailService {
     const eventUrl = new URL('/en/registrations', frontendUrl).toString();
     const eventNameAr = eventDisplayName(email.eventName, email.eventType, 'ar');
     const eventNameEn = eventDisplayName(email.eventName, email.eventType, 'en');
-    const whatsappGroupLink = email.kind === 'CONFIRMED' && email.eventType === 'Trip'
+    const whatsappGroupLink = email.kind === 'CONFIRMED'
       ? safeWhatsAppGroupInvite(email.whatsappGroupLink)
       : undefined;
     const detailLines = (locale: 'ar' | 'en') => [
@@ -212,19 +212,19 @@ export class RegistrationEmailService {
     const signoffEn = 'Best regards,\nGoogle Developer Group on Campus, University of Jeddah';
     const text = [
       subjectAr, '', messageAr, ...detailsAr,
-      ...(whatsappGroupLink ? [`رابط مجموعة WhatsApp للرحلة: ${whatsappGroupLink}`] : []),
+      ...(whatsappGroupLink ? [`رابط مجموعة WhatsApp: ${whatsappGroupLink}`] : []),
       ...(hasRegistrationLink ? [`${email.kind === 'WAITLISTED' ? 'متابعة حالة التسجيل' : 'تأكيد الحضور'}: ${eventUrl}`] : []),
       ...(email.kind === 'CONFIRMED' ? ['يرجى إبراز الباركود الخاص بك عند الوصول لتسجيل حضورك.'] : []),
       '', signoffAr, '', '---', '', subjectEn, '', messageEn, ...detailsEn,
       ...(hasRegistrationLink ? [`${email.kind === 'WAITLISTED' ? 'View registration status' : 'Confirm attendance'}: ${eventUrl}`] : []),
       ...(email.kind === 'CONFIRMED' ? ['Please present your QR code on arrival to check in.'] : []),
-      ...(whatsappGroupLink ? [`Trip WhatsApp group: ${whatsappGroupLink}`] : []),
+      ...(whatsappGroupLink ? [`WhatsApp group: ${whatsappGroupLink}`] : []),
       '', signoffEn,
     ].join('\n');
     const registrationLink = (label: string) => `<p><a href="${escapeHtml(eventUrl)}">${label}</a></p>`;
     const section = (locale: 'ar' | 'en', title: string, message: string, details: string[], signoff: string) => `<section dir="${locale === 'ar' ? 'rtl' : 'ltr'}" style="text-align:${locale === 'ar' ? 'right' : 'left'}"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p>${details.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}${locale === 'ar' && email.kind === 'CONFIRMED' ? '<p>يرجى إبراز الباركود الخاص بك عند الوصول لتسجيل حضورك.</p>' : ''}${locale === 'en' && email.kind === 'CONFIRMED' ? '<p>Please present your QR code on arrival to check in.</p>' : ''}${hasRegistrationLink && locale === 'ar' ? registrationLink(email.kind === 'WAITLISTED' ? 'متابعة حالة التسجيل' : 'تأكيد الحضور') : ''}${hasRegistrationLink && locale === 'en' ? registrationLink(email.kind === 'WAITLISTED' ? 'View registration status' : 'Confirm attendance') : ''}<p>${escapeHtml(signoff).replace(/\n/g, '<br>')}</p></section>`;
     const whatsappHtml = whatsappGroupLink
-      ? `<p dir="rtl" style="text-align:right"><a href="${escapeHtml(whatsappGroupLink)}" target="_blank" rel="noopener noreferrer">الانضمام إلى مجموعة الرحلة على WhatsApp</a></p><p dir="ltr" style="text-align:left"><a href="${escapeHtml(whatsappGroupLink)}" target="_blank" rel="noopener noreferrer">Join the trip WhatsApp group</a></p>`
+      ? `<p dir="rtl" style="text-align:right"><a href="${escapeHtml(whatsappGroupLink)}" target="_blank" rel="noopener noreferrer">الانضمام إلى مجموعة WhatsApp</a></p><p dir="ltr" style="text-align:left"><a href="${escapeHtml(whatsappGroupLink)}" target="_blank" rel="noopener noreferrer">Join the WhatsApp group</a></p>`
       : '';
     const html = `<!doctype html><html lang="ar" dir="rtl"><body style="font-family:Arial,Tahoma,sans-serif;color:#202124;line-height:1.8"><main style="max-width:600px;margin:auto;padding:24px">${section('ar', subjectAr, messageAr, detailsAr, signoffAr)}<hr style="border:0;border-top:1px solid #dadce0;margin:28px 0">${section('en', subjectEn, messageEn, detailsEn, signoffEn)}${whatsappHtml}${qrHtml}</main></body></html>`;
     await this.smtp.sendMail({
